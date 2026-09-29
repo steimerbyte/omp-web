@@ -5,7 +5,30 @@ import {
   type WebAuthStoreOptions,
 } from "../bin/web-auth-store.js";
 
-export const OMP_WEB_AUTH_USERNAME = "omp";
+/**
+ * Resolve the Basic Auth username omp-web accepts, defaulting to `omp`.
+ *
+ * Read at request time — not cached at module load — so changing
+ * `OMP_WEB_USERNAME` in the environment between requests takes effect without
+ * a restart. The default `omp` keeps every existing deployment and credential
+ * file working unchanged; trimming an empty value back to the default rather
+ * than rejecting it means `OMP_WEB_USERNAME=""` is identical to leaving it
+ * unset, which is the same forgiving shape `OMP_WEB_PASSWORD` already uses.
+ */
+export function getExpectedUsername(env = process.env): string {
+  const raw = env.OMP_WEB_USERNAME;
+  if (typeof raw !== "string") return "omp";
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : "omp";
+}
+
+/**
+ * Constant form of `getExpectedUsername()` for callers that need a value at
+ * module scope (settings UI copy, `proxy.ts` headers, tests). The whole repo
+ * imports this name as a constant, so the export stays a string and just
+ * snapshots whatever the environment said when the module loaded.
+ */
+export const OMP_WEB_AUTH_USERNAME = getExpectedUsername();
 
 /**
  * Outcome of checking one request's credentials.
@@ -66,7 +89,7 @@ export function isValidBasicAuthorization(
   const credentials = parseBasicCredentials(authorization);
   if (!credentials) return false;
 
-  const usernameMatches = secretsEqual(credentials.username, OMP_WEB_AUTH_USERNAME);
+  const usernameMatches = secretsEqual(credentials.username, getExpectedUsername());
   const passwordMatches = secretsEqual(credentials.password, password);
   return usernameMatches && passwordMatches;
 }
@@ -85,7 +108,7 @@ export function authorizeWebRequest(
   if (policy.mode === "unavailable") return "unavailable";
 
   const credentials = parseBasicCredentials(authorization);
-  if (!credentials || !secretsEqual(credentials.username, OMP_WEB_AUTH_USERNAME)) {
+  if (!credentials || !secretsEqual(credentials.username, getExpectedUsername())) {
     return "unauthorized";
   }
   return verifyWebPassword(credentials.password, { ...options, policy }) ? "allow" : "unauthorized";
