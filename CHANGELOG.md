@@ -43,6 +43,22 @@ that lived in an inline `<style>` block inside `AppShell` are gone with them.
   so it is now the same `whileTap` as the plain variant.
 - SMIL `<animateTransform>` on the subagent spinner is replaced by motion.
   SMIL and motion on the same node fight each other.
+- **The shimmer is on every surface now, for loading and for pop-up.** Two
+  things had to be fixed for that to be true, and neither showed up in the code
+  review:
+  - The loading placeholder set `background` as a shorthand, which overwrote
+    `background-image` — the gradient itself — so the shimmer rendered as a
+    flat block. It is `backgroundColor` now.
+  - The wash ran at 26 % accent and was invisible against the panel colour in
+    both themes. It runs at 46 % with a light core, and it follows the active
+    theme either way.
+  - A panel that pops up now plays a one-shot wash on the way in. Rising and
+    un-blurring alone says "it appeared"; the sweep says "it arrived". The
+    endless variant belongs to loading surfaces only — on a finished panel it
+    would never stop.
+  - The plugins list, the access and account panels, and the two top-bar
+    panels (system prompt and language) showed plain text or rendered as bare
+    elements with no entrance at all. They shimmer now.
 
 **Not verified in this release.** Stated plainly, because a release note that
 claims more than was tested is worse than one that admits the gap:
