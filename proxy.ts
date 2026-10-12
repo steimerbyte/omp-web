@@ -41,6 +41,15 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
  * `curl --anyauth`, and the Go, Java and Rust stacks, all wait. Losing the
  * header would not change their status code, only stop them from ever
  * authenticating.
+ *
+ * The test is the same Fetch Metadata that `isNavigation` reads, on purpose:
+ * the two answers must be reachable through one door. If `isNavigation` sends
+ * a browser-shaped caller to `/login` while this function hands it the
+ * challenge, the caller is offered both a login page and a native dialog for
+ * one locked door — and a caller classified as a script here while
+ * `isNavigation` hands it the 302 loses the challenge it needs to
+ * authenticate at all. Both axes therefore read `sec-fetch-mode` OR
+ * `sec-fetch-site`, and any new axis added to one belongs in the other.
  */
 function rejectionHeaders(request: NextRequest): Record<string, string> {
   const isBrowser = request.headers.has("sec-fetch-mode") || request.headers.has("sec-fetch-site");
@@ -189,6 +198,35 @@ export function proxy(request: NextRequest) {
 }
 
 /**
+ * Whether the client named an HTML document in `Accept`.
+ *
+ * `Accept` is the one header that states the *response format* rather than the
+ * request's provenance, which is what the question here is really about: not
+ * "did this come from a browser window", but "can the answer be shown as a
+ * document". A caller that asks for `text/html` and is answered with
+ * `{"error":"Authentication required"}` gets a JSON document it cannot render,
+ * and the login page it should have been sent to is one redirect away.
+ *
+ * Only `text/html` counts. A bare `fetch()` sends a wildcard for every media
+ * type, and that says nothing about wanting a page — it is the default, not a
+ * request for one.
+ * `text/html;q=0` is an explicit refusal and is read as such.
+ */
+function acceptsHtmlDocument(request: NextRequest): boolean {
+  const accept = request.headers.get("accept");
+  if (accept === null) return false;
+
+  return accept.split(",").some((entry) => {
+    const [type, ...parameters] = entry.trim().toLowerCase().split(";");
+    if (type !== "text/html") return false;
+    return !parameters.some((parameter) => {
+      const [name, value] = parameter.split("=");
+      return name.trim() === "q" && Number.parseFloat(value) === 0;
+    });
+  });
+}
+
+/**
  * Whether this caller is loading a document into a browser window, as opposed
  * to a script asking for data. Only a real navigation is handed the login page
  * redirect; a client call stays on the 401 so its caller can react to it.
@@ -196,10 +234,12 @@ export function proxy(request: NextRequest) {
  * `x-requested-with` is the one signal that settles it on its own: jQuery and
  * everything built on it set it on an XHR, and no browser sets it on a
  * navigation, so its presence rules a navigation out even when the fetch
- * metadata below is absent.
+ * metadata below is absent. It is checked first for that reason — it is an
+ * explicit "I am a script call", and nothing later may overrule it.
  *
- * Past that, the two request kinds are told apart by `Sec-Fetch-Mode`, and
- * they differ in how a *missing* header is read — which is the whole point:
+ * Past that, `Sec-Fetch-Mode` says where the request came from, and the two
+ * request kinds differ in how a *missing* header is read — which is the whole
+ * point:
  *
  *   - A page URL falls back to "navigation". No header means no promise of any
  *     kind, and `curl http://host/` has to be one, because the browser needs
@@ -215,11 +255,61 @@ export function proxy(request: NextRequest) {
  *     top-level load — including of an `/api/*` URL typed into the address
  *     bar, which is a document load and would raise the dialog just like `/`
  *     does. No script sends that header by accident.
+ *
+ * Two gaps closed on top of that, both cases where a browser used to be handed
+ * a JSON body it cannot display. Neither weakens the rejection — same
+ * `decision`, same 401 for scripts, only the *form* of the answer differs.
+ *
+ *   1. `Sec-Fetch-Mode` present but not `navigate` used to end the question,
+ *      so `GET /` with `Sec-Fetch-Mode: cors` fell through to the 401 JSON.
+ *      That shape is wrong for a browser: Chrome and Firefox send `navigate`
+ *      for every document load, and `cors` on a top-level URL comes from a
+ *      `fetch()` or an XHR. But "which mode" is the wrong question for a page
+ *      URL — the right one is "does this client want a document", and `Accept`
+ *      answers exactly that. So a page URL whose `Accept` names `text/html` is
+ *      a document load whatever the mode claims, and goes to `/login`.
+ *
+ *      The `!isApiRequest` guard is load-bearing. The rule is about the *page*
+ *      namespace only; applying it to `/api/*` would let the app's own
+ *      `fetch()` be redirected the moment it set `Accept: text/html` on an API
+ *      call, and a redirected XHR cannot read its 401. No real browser sends
+ *      `cors` + `text/html` to an `/api/*` URL anyway — a browser that shows
+ *      one in a window sends `navigate` and is handled above — so nothing is
+ *      lost by leaving the API namespace on the mode rule alone. A page URL
+ *      fetched with `Accept: application/json` also stays on the 401: it asked
+ *      for JSON, and JSON is what it gets.
+ *
+ *   2. `Sec-Fetch-Site` was not read at all, so `GET /api/whoami` with
+ *      `Sec-Fetch-Site: same-origin` and no `Sec-Fetch-Mode` took the API
+ *      branch above and answered 401 JSON. Fetch Metadata is sent as a set —
+ *      a real `fetch()` and a real XHR carry *both* `Sec-Fetch-Mode: cors` and
+ *      `Sec-Fetch-Site` — so "site without mode" is not a browser fetch. It is
+ *      a client carrying browser metadata over some other channel, and it is
+ *      read here as what it is: a browser-shaped caller wanting a page. No
+ *      genuine `fetch()` of `/api/*` is affected, because that one always has
+ *      `Sec-Fetch-Mode: cors` and never reaches this branch.
+ *
+ * The two axes stay consistent with `rejectionHeaders`, which withholds
+ * `WWW-Authenticate` from anything carrying either header. A browser-shaped
+ * caller therefore never receives a challenge: it either leaves on the 302, or
+ * it stays on a 401 without the header that raises the native dialog. The
+ * challenge remains exactly where a challenge-response client can use it —
+ * behind the redirect decision, on requests with no Fetch Metadata at all.
  */
-function isNavigation(request: NextRequest, isApiRequest: boolean): boolean {
+export function isNavigation(request: NextRequest, isApiRequest: boolean): boolean {
   if (request.headers.get("x-requested-with")) return false;
-  if (!request.headers.has("sec-fetch-mode")) return !isApiRequest;
-  return request.headers.get("sec-fetch-mode") === "navigate";
+
+  const mode = request.headers.get("sec-fetch-mode");
+  if (mode === "navigate") return true;
+
+  // A page URL that asked for a document gets one, whatever its mode says.
+  if (!isApiRequest && acceptsHtmlDocument(request)) return true;
+
+  // No mode at all: the page/API fallback above, tightened by `Sec-Fetch-Site`
+  // for the API side — see gap 2 in this function's doc comment.
+  if (mode === null) return !isApiRequest || request.headers.has("sec-fetch-site");
+
+  return false;
 }
 
 export const config = { matcher: ["/", "/login", "/recover", "/api/:path*"] };
