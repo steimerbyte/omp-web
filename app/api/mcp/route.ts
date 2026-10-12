@@ -1,16 +1,88 @@
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import { NextResponse } from "next/server";
-import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
 import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
 import type { MCPServer } from "@oh-my-pi/pi-coding-agent/capability/mcp";
 import { setMcpServerEnabled } from "@oh-my-pi/pi-coding-agent/mcp/config-writer";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
-import { getRequestIdentity } from "@/lib/request-identity";
+import { getRequestIdentity, isAdminIdentity, type WebIdentity } from "@/lib/request-identity";
+import { resolveTenantAgentDir } from "@/lib/tenant-config";
 import { writePrivateFileAtomicSync } from "@/lib/atomic-file";
 import type { McpConfigResponse, McpScopeConfig, McpServerConfig, McpServerEntry } from "@/lib/settings-api";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * MCP-Konfiguration: pro Projekt mandantenfaehig, auf Prozessebene Admin-only.
+ *
+ * ### Der Befund, den diese Datei einmal hatte
+ *
+ * `configPath` las fuer `scope: "user"` `getAgentDir()` — das Agent-Verzeichnis
+ * des **Prozesskontos** — und `validatedCwd` rief `getRequestIdentity` nur dann
+ * auf, wenn ueberhaupt ein `cwd`-Parameter mitkam. `PUT` mit
+ * `{ scope: "user" }` und ohne `cwd` lief damit durch *keine* Identitaets- und
+ * *keine* Mandantenpruefung: jedes angemeldete Konto, auch ein Nicht-Admin,
+ * schrieb in die gemeinsame `mcp.json` aller. Ein Eintrag darin traegt `command`,
+ * `args` und `env`, und MCP-Server werden als Kindprozesse gestartet — das war
+ * ein Schreibpfad in eine prozessweite Ausfuehrungskonfiguration.
+ *
+ * ### Warum das nicht `requireIdentity` sein kann
+ *
+ * `lib/tenant-config.ts` hat `resolveTenantAgentDir` schon, und der naheliegende
+ * Fix waere gewesen, `scope: "user"` darueber zu loesen: ein Mandanten schreibt
+ * dann in `$HOME/<name>/.omp/agent/mcp.json` und niemand sonst. Das schliesst den
+ * Zugriff, **aber es liefert eine Datei, die niemand liest.** Zwei Belege aus
+ * diesem Repo:
+ *
+ * 1. `lib/rpc-manager.ts:1840` startet jede Session mit
+ *    `const agentDir = getAgentDir()` und reicht genau dieses `agentDir` an
+ *    `createAgentSession` weiter. Der User-Scope einer MCP-Konfiguration wird
+ *    fuer *jede* Session, auch die eines Mandanten, aus dem Prozessverzeichnis
+ *    gelesen. Eine Mandantendatei wuerde dort nie aufgeruegt.
+ * 2. `addDiscoveredServers` ruft `loadCapability("mcps", …)` ohne `home`-
+ *    Override; das SDK loest `~` ueber `os.homedir()` des Prozesses auf und
+ *    entdeckt ebenfalls nur die globale Datei.
+ *
+ * Ein Mandant, der einen MCP-Server eintraegt, bekam damit eine Erfolgsmeldung
+ * und einen Server, den keine Session startet — das ist kein Rechtefehler,
+ * sondern eine **Luege in der Oberflaeche**, und sie ist genau die, vor der
+ * `app/api/auth/api-key/[provider]/route.ts` warnt: "solange eine Zeile fuer
+ * alle gilt, ist 'mein Key' eine Behauptung des Clients und keine Eigenschaft
+ * des Datensatzes."
+ *
+ * Deshalb ist der User-Scope hier `requireAdmin`, aus **demselben** Grund und mit
+ * **derselben** Begruendung wie beim Modellschluessel: die Konfiguration ist
+ * prozessweit, es gibt heute keine Mandanten-Alternative, und ein Eintrag darin
+ * ist eine Ausfuehrungsanweisung. Was ein Mandanten *wirklich* besitzt, ist der
+ * Projekt-Scope — und der gehoert weiterhin jedem, dessen `cwd` die
+ * `validatedCwd`-Pruefung besteht.
+ *
+ * ### Warum `configPath` trotzdem die Identity braucht
+ *
+ * Der Admin-Guard und die Pfadableitung sind zwei unabhaengige Schichten, und
+ * die zweite ist hier keine Dekoration:
+ *
+ * `setMcpServerEnabled` faellt bei einem nicht gefundenen Server auf `userPath`
+ * zurueck und schreibt dort `disabledServers`/`enabledServers`
+ * (`@oh-my-pi/pi-coding-agent/mcp/config-writer`: `XB(userPath, …)` /
+ * `SAe(userPath, …)`). Ein Mandant, der `PATCH { scope: "project" }` mit einem
+ * **fremden** Servernamen schickt, landet damit auch bei `scope: "project"` in
+ * `userPath` — ein Admin-Guard auf `body.scope` allein wuerde daran vorbeigehen.
+ * Mit `resolveTenantAgentDir(identity)` ist `userPath` auch auf diesem Weg die
+ * Datei des Absenders.
+ *
+ * ### Fuer einen Admin aendert sich nichts
+ *
+ * `resolveTenantAgentDir` gibt fuer einen Admin `getAgentDir()` zurueck — der
+ * Prozess *ist* der Admin. Ein Admin schreibt also weiterhin in genau dieselbe
+ * globale Datei, in die er heute schreibt; das ist dieselbe Regel wie in
+ * `app/api/models-config/route.ts` und `lib/quick-phrases-store.ts`.
+ */
+
+/** Identitaet, oder `null` — und `null` ist hier 403. Muster wie `quick-phrases/route.ts`. */
+function requireIdentity(req: Request): WebIdentity | null {
+  return getRequestIdentity(req.headers);
+}
 
 const SERVER_NAME = /^[a-zA-Z0-9_.:-]{1,100}$/;
 const REDACTED_VALUE = "••••••••";
@@ -85,12 +157,27 @@ function restoreRedactedValues(submitted: unknown, existing: unknown, path: stri
   return submitted;
 }
 
-function configPath(scope: "user" | "project", cwd?: string): string {
-  return scope === "user" ? join(getAgentDir(), "mcp.json") : join(cwd!, ".omp", "mcp.json");
+/**
+ * Der Pfad einer MCP-Konfiguration — **mit** der Identitaet als Parameter.
+ *
+ * Bewusst kein Parameter-Default und kein `getRequestIdentity()` im Inneren:
+ * eine Ableitung, die ihre eigene Identitaet zieht, ist eine, die man beim
+ * Aufruf uebersieht. `models-config` und `quick-phrases` machen es genauso.
+ *
+ * Fuer `scope: "user"` ist das `resolveTenantAgentDir(identity)` — Admin
+ * bleibt global (Prozess = Admin), ein Mandanten bekommt sein eigenes
+ * Verzeichnis. Damit kann **kein** Aufrufer mehr in einen Pfad schreiben, der
+ * nicht der eigene ist, auch nicht der `setMcpServerEnabled`-Rueckfall auf
+ * `userPath` in `PATCH`.
+ */
+function configPath(identity: WebIdentity, scope: "user" | "project", cwd?: string): string {
+  return scope === "user"
+    ? join(resolveTenantAgentDir(identity), "mcp.json")
+    : join(cwd!, ".omp", "mcp.json");
 }
 
-function readScope(scope: "user" | "project", cwd?: string): McpScopeConfig {
-  const path = configPath(scope, cwd);
+function readScope(identity: WebIdentity, scope: "user" | "project", cwd?: string): McpScopeConfig {
+  const path = configPath(identity, scope, cwd);
   if (!existsSync(path)) return { scope, path, servers: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as McpDocument;
@@ -127,11 +214,36 @@ function discoveredConfig(server: MCPServer): McpServerConfig {
   });
 }
 
-async function addDiscoveredServers(response: McpConfigResponse, cwd?: string): Promise<void> {
+/**
+ * Die gefundenen Server in die Antwort einsortieren.
+ *
+ * `loadCapability` loest `~` ueber `os.homedir()` des **Prozesses** auf und
+ * entdeckt darum die globale `mcp.json` wieder — unabhaengig davon, welchen
+ * Pfad `configPath` zurueckgibt. Ohne den `filter` unten waere der Leseweg also
+ * trotz korrektem `configPath` offen: der Mandant bekaeme die Server des
+ * Prozesskontos als *entdeckt* zurueck, nur mit `editable: false`. Der Filter
+ * ist deshalb kein Feinschliff, sondern die Haelfte derselben Korrektur.
+ *
+ * `filter` und nicht `suppress`, weil ein verworfener Eintrag seinen
+ * Dedupe-Schluessel nicht beansprucht: ein gleichnamiger Server aus dem
+ * Projekt des Mandanten bleibt dadurch sichtbar, statt vom globalen Eintrag
+ * verdeckt zu werden.
+ *
+ * Nur der User-Scope wird gefiltert. `project` gehoert dem cwd und ist ueber
+ * `validatedCwd` geprueft, `native` wird ohnehin nicht einsortiert.
+ */
+async function addDiscoveredServers(
+  identity: WebIdentity,
+  response: McpConfigResponse,
+  cwd?: string,
+): Promise<void> {
   const discovered = await loadCapability<MCPServer>("mcps", {
     cwd: cwd ?? process.cwd(),
     includeDisabled: true,
     includeInvalid: true,
+    ...(isAdminIdentity(identity)
+      ? {}
+      : { filter: (item: MCPServer & { _source: { level: string } }) => item._source.level !== "user" }),
   });
   for (const server of discovered.items) {
     const target = server._source.level === "project"
@@ -154,8 +266,8 @@ async function addDiscoveredServers(response: McpConfigResponse, cwd?: string): 
   }
 }
 
-function applyEffectiveEnabledState(response: McpConfigResponse): void {
-  const userPath = configPath("user");
+function applyEffectiveEnabledState(identity: WebIdentity, response: McpConfigResponse): void {
+  const userPath = configPath(identity, "user");
   let document: McpDocument = {};
   if (existsSync(userPath)) {
     try {
@@ -214,23 +326,60 @@ function validateServer(entry: McpServerEntry): McpServerEntry {
   return { name, config, enabled: config.enabled !== false };
 }
 
-async function validatedCwd(req: Request): Promise<string | undefined> {
+/**
+ * Das `cwd` eines Requests, oder `undefined` — **mit** der bereits festgestellten
+ * Identitaet.
+ *
+ * Der Parameter ist nicht optional. Vorher zog diese Funktion die Identitaet
+ * selbst, aber nur in einem Zweig: `getRequestIdentity` wurde erst dann gerufen,
+ * wenn ueberhaupt ein `cwd` mitkam. Genau darin lag der Einbruch — `scope:
+ * "user"` ohne `cwd` lief an der Pruefung vorbei, ohne dass irgendetwas es
+ * gemerkt haette. Die Identitaet ist jetzt eine Tatsache des Requests, bevor
+ * irgendein Pfad abgeleitet wird, und `configPath` bekommt dieselbe.
+ */
+async function validatedCwd(identity: WebIdentity, req: Request): Promise<string | undefined> {
   const cwd = new URL(req.url).searchParams.get("cwd") ?? undefined;
   if (!cwd) return undefined;
-  const allowedRoots = await getAllowedFileRoots(getRequestIdentity(req.headers));
+  const allowedRoots = await getAllowedFileRoots(identity);
   if (!isExistingFilePathAllowed(cwd, allowedRoots)) throw new Error("Access denied");
   return cwd;
 }
 
+/**
+ * Der Guard fuer den User-Scope, und die Begruendung, warum er nicht in
+ * `requireAdmin` aufgeht.
+ *
+ * `requireAdmin` allein wuerde reichen, wenn der Guard vor jeder Verwendung von
+ * `configPath` stuende. Er steht es — in `PUT`. Der Weg, den er nicht sieht,
+ * ist `PATCH`: `setMcpServerEnabled` schreibt bei einem unbekannten Servernamen
+ * in `userPath`, auch wenn `body.scope === "project"` ist. Deshalb wird der
+ * User-Scope in **beiden** Mutationen geprueft, und `configPath` traegt die
+ * Identitaet zusaetzlich in sich: die Pfadableitung ist die zweite Schicht, und
+ * sie haengt nicht davon ab, dass jemand an den Guard gedacht hat.
+ */
+function requireUserScope(identity: WebIdentity, scope: "user" | "project"): Response | null {
+  if (scope !== "user") return null;
+  return isAdminIdentity(identity)
+    ? null
+    : Response.json(
+      { error: "Administrator access is required." },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+}
+
 export async function GET(req: Request) {
+  const identity = requireIdentity(req);
+  if (identity === null) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
   try {
-    const cwd = await validatedCwd(req);
+    const cwd = await validatedCwd(identity, req);
     const response: McpConfigResponse = {
-      user: readScope("user"),
-      project: cwd ? readScope("project", cwd) : null,
+      user: readScope(identity, "user"),
+      project: cwd ? readScope(identity, "project", cwd) : null,
     };
-    await addDiscoveredServers(response, cwd);
-    applyEffectiveEnabledState(response);
+    await addDiscoveredServers(identity, response, cwd);
+    applyEffectiveEnabledState(identity, response);
     return NextResponse.json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -239,20 +388,26 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+  const identity = requireIdentity(req);
+  if (identity === null) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
   try {
-    const cwd = await validatedCwd(req);
     const body = await req.json() as {
       scope?: "user" | "project";
       name?: string;
       enabled?: boolean;
     };
     if (body.scope !== "user" && body.scope !== "project") throw new Error("Invalid MCP scope");
+    const denied = requireUserScope(identity, body.scope);
+    if (denied) return denied;
+    const cwd = await validatedCwd(identity, req);
     if (body.scope === "project" && !cwd) throw new Error("cwd required for project MCP settings");
     if (typeof body.name !== "string" || !SERVER_NAME.test(body.name)) throw new Error("Invalid MCP server name");
     if (typeof body.enabled !== "boolean") throw new Error("enabled must be a boolean");
 
-    const userPath = configPath("user");
-    const projectPath = configPath("project", cwd ?? process.cwd());
+    const userPath = configPath(identity, "user");
+    const projectPath = configPath(identity, "project", cwd ?? process.cwd());
     const scopedPath = body.scope === "user" ? userPath : projectPath;
     let sourcePath: string | undefined;
     if (existsSync(scopedPath)) {
@@ -275,16 +430,22 @@ export async function PATCH(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const identity = requireIdentity(req);
+  if (identity === null) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
   try {
-    const cwd = await validatedCwd(req);
     const body = await req.json() as { scope?: "user" | "project"; servers?: McpServerEntry[] };
     if (body.scope !== "user" && body.scope !== "project") throw new Error("Invalid MCP scope");
+    const denied = requireUserScope(identity, body.scope);
+    if (denied) return denied;
+    const cwd = await validatedCwd(identity, req);
     if (body.scope === "project" && !cwd) throw new Error("cwd required for project MCP settings");
     if (!Array.isArray(body.servers)) throw new Error("servers must be an array");
     const servers = body.servers.map(validateServer);
     if (new Set(servers.map(({ name }) => name)).size !== servers.length) throw new Error("MCP server names must be unique");
 
-    const path = configPath(body.scope, cwd);
+    const path = configPath(identity, body.scope, cwd);
     let existing: McpDocument = {};
     if (existsSync(path)) {
       try {
@@ -304,7 +465,7 @@ export async function PUT(req: Request) {
     };
     mkdirSync(dirname(path), { recursive: true });
     writePrivateFileAtomicSync(path, `${JSON.stringify(document, null, 2)}\n`);
-    return NextResponse.json({ success: true, scope: readScope(body.scope, cwd) });
+    return NextResponse.json({ success: true, scope: readScope(identity, body.scope, cwd) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }
