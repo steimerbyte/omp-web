@@ -26,7 +26,15 @@ const MIN_PASSWORD_LENGTH = 8;
 /** Dieselbe Regel wie `validateAccountName` im Store, damit der Fehler hier greift. */
 const ACCOUNT_NAME_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
 
-type PendingAction = { kind: "disable" | "enable" | "password"; username: string } | null;
+/**
+ * Die Aktionen, die eine Bestaetigung brauchen. `grant-admin` und
+ * `revoke-admin` sind dabei, weil sie etwas veraendern, das nicht wieder
+ * einfach zurueckgenommen wird: wer einem Konto die Admin-Rolle gibt, gibt ihm
+ * den Zugriff auf jedes fremde Verzeichnis dieses Hosts.
+ */
+type PendingAction =
+  | { kind: "disable" | "enable" | "grant-admin" | "revoke-admin"; username: string }
+  | null;
 
 export function UsersConfig() {
   const [identity, setIdentity] = useState<WhoAmIResponse["user"]>(null);
@@ -44,6 +52,15 @@ export function UsersConfig() {
   const [confirmation, setConfirmation] = useState("");
   /** Das Passwort, das fuer ein Konto neu gesetzt werden soll. */
   const [passwordFor, setPasswordFor] = useState<string | null>(null);
+  /**
+   * Der angemeldete Benutzer hat sich gerade selbst die Admin-Rolle genommen.
+   *
+   * Der 403, der daraufhin auf `/api/web-access/users` kommt, ist die richtige
+   * Antwort — aber "Der Server hat die Kontenliste verweigert, obwohl er Sie
+   * als Administrator fuehrt, melden Sie sich ab und wieder an" waere die
+   * falsche Erklaerung fuer genau diesen Fall.
+   */
+  const [selfDemoted, setSelfDemoted] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -132,8 +149,9 @@ export function UsersConfig() {
   if (denied) {
     return (
       <div className={styles.empty}>
-        The server refused the account list for this session, although it reports you as an administrator.
-        Sign out and back in to refresh your session.
+        {selfDemoted
+          ? "You removed your own administrator role. It ended with this request — that is why the account list is now refused. Ask another administrator to grant it back."
+          : "The server refused the account list for this session, although it reports you as an administrator. Sign out and back in to refresh your session."}
       </div>
     );
   }
@@ -145,7 +163,9 @@ export function UsersConfig() {
         <p className={styles.contentDescription}>
           Every account gets a home directory under <code>{homeRoot}</code> when it is created here. There is no
           self-service: a login never creates a directory, so nobody can grant themselves one by signing up.
-          Admins may work in every directory; everyone else is limited to their own.
+          Admins may work in every directory; everyone else is limited to their own. A role takes effect from the
+          next request on — the server reads it fresh, so there is nothing to reload. If <code>OMP_WEB_ADMINS</code>
+          is set on the server, it decides alone and the buttons below are refused with an explanation.
         </p>
         {notice && <div className={styles.reloadNotice}><span>{notice}</span></div>}
       </header>
@@ -217,6 +237,18 @@ export function UsersConfig() {
                   }}
                 >
                   {passwordFor === account.username ? "Save password" : "Set password"}
+                </button>
+                <button
+                  type="button"
+                  className={styles.linkButton}
+                  disabled={busy}
+                  onClick={() => {
+                    setNotice(null);
+                    setError(null);
+                    setPending({ kind: account.isAdmin ? "revoke-admin" : "grant-admin", username: account.username });
+                  }}
+                >
+                  {account.isAdmin ? "Remove admin" : "Make admin"}
                 </button>
                 <button
                   type="button"
@@ -321,12 +353,21 @@ export function UsersConfig() {
             <div className={styles.mcpEditor}>
               <header className={styles.contentHeader}>
                 <h2 className={styles.contentTitle}>
-                  {pending.kind === "disable" ? `Disable ${pending.username}?` : `Enable ${pending.username}?`}
+                  {pending.kind === "disable" ? `Disable ${pending.username}?`
+                    : pending.kind === "enable" ? `Enable ${pending.username}?`
+                      : pending.kind === "grant-admin" ? `Make ${pending.username} an administrator?`
+                        : `Remove admin from ${pending.username}?`}
                 </h2>
                 <p className={styles.contentDescription}>
                   {pending.kind === "disable"
                     ? "They are signed out on their next request and cannot get back in until you enable the account again. The directory and its files are kept."
-                    : "They can sign in again with the password you set for them."}
+                    : pending.kind === "enable"
+                      ? "They can sign in again with the password you set for them."
+                      : pending.kind === "grant-admin"
+                        ? "They will be able to read and write in every directory on this host, not only in their own. It takes effect from their next request on."
+                        : pending.kind === "revoke-admin" && pending.username === identity?.username
+                          ? "You are removing your own role. This request still succeeds — the role was proven before it arrived — but every request after it is answered as a normal account. Another administrator has to grant it back."
+                          : "They keep their directory and everything in it, and lose access to every other directory on this host. It takes effect from their next request on."}
                 </p>
               </header>
               <div className={styles.editorActions}>
@@ -337,11 +378,27 @@ export function UsersConfig() {
                   disabled={busy}
                   onClick={() => {
                     const target = pending;
-                    void send("PATCH", { action: "set-enabled", username: target.username, enabled: target.kind === "enable" })
-                      .then((ok) => { if (ok) setNotice(target.kind === "disable" ? `${target.username} is disabled.` : `${target.username} is enabled.`); });
+                    const body = target.kind === "grant-admin" || target.kind === "revoke-admin"
+                      ? { action: "set-admin", username: target.username, isAdmin: target.kind === "grant-admin" }
+                      : { action: "set-enabled", username: target.username, enabled: target.kind === "enable" };
+                    // Muss **vor** `send` gesetzt werden: `send` laedt die Liste
+                    // neu, und der 403, der dann kommt, ist genau das hier.
+                    if (target.kind === "revoke-admin" && target.username === identity?.username) setSelfDemoted(true);
+                    void send("PATCH", body).then((ok) => {
+                      if (!ok) return;
+                      setNotice(
+                        target.kind === "disable" ? `${target.username} is disabled.`
+                          : target.kind === "enable" ? `${target.username} is enabled.`
+                            : target.kind === "grant-admin" ? `${target.username} is an administrator from their next request on.`
+                              : `${target.username} is no longer an administrator from their next request on.`,
+                      );
+                    });
                   }}
                 >
-                  {pending.kind === "disable" ? "Disable account" : "Enable account"}
+                  {pending.kind === "disable" ? "Disable account"
+                    : pending.kind === "enable" ? "Enable account"
+                      : pending.kind === "grant-admin" ? "Make administrator"
+                        : "Remove admin"}
                 </button>
               </div>
             </div>

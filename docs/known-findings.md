@@ -45,6 +45,57 @@ Tag, an dem es sonst um eingefrorene Farbbaender geht.
 `filterSessionsForIdentity`-Aufruf wie die Liste, mit derselben `null`-Semantik.
 Nicht einen eigenen Filter erfinden.
 
+## Modellschluessel sind prozessweit, nicht pro Konto
+
+**Schwere:** mittel — ein Mandant kann heute keinen fremden Schluessel setzen, aber
+die Trennung, die das verhindert, ist eine Rollenpruefung, keine Datentrennung.
+
+**Was:** `app/api/auth/api-key/[provider]/route.ts` schreibt ueber
+`authStorage.set()` in das `agent.db` des **Prozesskontos**, genauso der
+OAuth-Login in `app/api/auth/login/[provider]/route.ts` und das Loeschen in
+`app/api/auth/logout/[provider]/route.ts`. Der Runtime kommt aus `getOmpRuntime()`
+(`lib/omp-runtime.ts:50`), das ist ein `globalThis`-Singleton ueber genau ein
+`agentDir`. Es gibt also genau eine Zeile fuer alle Konten.
+
+**Warum das ein Problem ist:** die Anmeldung ist pro Mandant
+(`app/api/web-access/users/route.ts`), die Ablage nicht. "Mein Modellschluessel"
+ist damit eine Behauptung des Clients und keine Eigenschaft des Datensatzes — ein
+Mandant, der denkt, er schreibe seinen eigenen, verdient das Guthaben des
+Betreibers oder bricht den Betrieb, wenn sein Schluessel ungueltig ist.
+
+**Wie es heute aufgefangen wird:** `requireAdmin` auf POST und DELETE. Das ist
+korrekt, aber es ist eine **Sperre**, keine Trennung: es beantwortet die Frage
+"wer darf das", nicht die Frage "wessen Guthaben ist das". Und es hat eine
+unangenehme Folge, die bleiben wird, bis der Speicher umgestellt ist — ein
+Nicht-Admin kann seinen Anbieter **nicht** selbst konfigurieren. Das ist ein
+Schritt zurueck von dem, was die Oberfläche verspricht.
+
+**Warum nicht heute:** der Fix ist eine Speicherumstellung, kein Guard. Der
+Wegweiser ist bereits gelegt — `lib/tenant-config.ts` hat `resolveTenantAgentDir`
+und `ensureTenantAgentDir`, und `lib/models-config/route.ts:105,132` sowie
+`lib/quick-phrases-store.ts:52` nutzen sie fuer genau diese Trennung. Was fehlt,
+ist das Gegenstueck fuer die Credentials: `lib/omp-runtime.ts` hat
+`getSettingsForIdentity` fuer die `config.yml` je Konto (Cache pro `agentDir`),
+aber **kein** `getAuthStorageForIdentity` und **keinen** `ModelRegistry` je
+Mandant. Ein Aufruf davon braucht `discoverAuthStorage(tenantDir)` und einen
+Registry pro Verzeichnis; das ist eine eigene Aenderung an `lib/omp-runtime.ts`,
+kein zweiter Guard.
+
+**Ausloeser fuer die Umsetzung:** sobald Mandanten Modelle **selbst** konfigurieren
+sollen — also in dem Moment, in dem die Admin-Sperre zum Produktproblem wird, nicht
+nur zum Sicherheitsproblem. Der Kandidat dafuer ist eine gemischte Installation:
+Admin setzt den Providerschluessel, die Mandanten melden sich an und finden
+`configured: false`, ohne den Unterschied zu sehen.
+
+**Form des Fixes, wenn er anfaellt:** dieselbe Form wie bei den anderen beiden
+Mandanten-Routen — `ensureTenantAgentDir(identity)` als Quelle des `agentDir` in
+einer dem `getSettingsForIdentity` nachgebauten `getAuthStorageForIdentity`, mit
+einem Cache pro `agentDir` statt pro Prozess. Kein neuer Guard, keine
+Sonderregel fuer die api-key-Route: wenn die Ablage mandantenfaehig ist, faellt
+`requireAdmin` dort weg und `requireIdentity` reicht. Der Bestand bleibt
+dabei liegen, denn ein Admin *ist* das Prozesskonto — dieselbe Begruendung, die
+schon in `lib/tenant-config.ts` steht.
+
 ## `OMP_WEB_PASSWORD` schlaegt das gespeicherte Passwort
 
 **Kein Befund, sondern eine bewusste Entscheidung.** `resolveWebAuthPolicy()` in

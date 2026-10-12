@@ -90,6 +90,36 @@ export function requireAdmin(request: Request): Response | null {
 }
 
 /**
+ * Der Guard fuer die Routen, die **nur** ein angemeldetes Konto brauchen.
+ *
+ * Wofuer er gedacht ist: eine Route, die etwas aus dem Prozessbestand liest,
+ * das dem angemeldeten Konto gehoert oder ihm zusteht — seinen Kontostand, die
+ * Liste der Provider, die er ueberhaupt nutzen kann — ohne dass sie etwas
+ * aendert, das dem ganzen Host gehoert. `requireAdmin` waere dort die falsche
+ * Antwort: sie sperrt genau die Nutzer aus, deren eigenes Konto die Route
+ * bedient.
+ *
+ * Der Unterschied zu `requireAdmin` ist die Rolle, nicht die Strenge. Beide
+ * lehnen eine fehlende Identitaet mit 403 ab — es gibt hier keinen Fallback auf
+ * einen Default-Benutzer, derselbe Grund wie dort: ein Request ohne Header kam
+ * aus einem Client, der `proxy.ts` umgangen hat, oder aus einer Route ausserhalb
+ * des Matchers.
+ *
+ * Warum das hier steht und nicht in der Route: dieselbe Begruendung wie beim
+ * Admin-Guard. "Hat dieser Request eine Identitaet?" ist eine Eigenschaft des
+ * Requests, nicht der Route; eine lokale Kopie pro Route ist eine Kopie einer
+ * Frage, die nicht route-lokal ist, und die naechste Route erbt dann wieder
+ * eine Begruendung statt einer Pruefung.
+ */
+export function requireIdentity(request: Request): Response | null {
+  if (getRequestIdentity(request.headers) !== null) return null;
+  return Response.json(
+    { error: "Authentication is required." },
+    { status: 401, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/**
  * Das Konto-Wurzelverzeichnis einer Identitaet.
  *
  * Fuer einen Admin ist das `/`, fuer alle anderen genau `/home/$username`.

@@ -159,21 +159,36 @@ export function isValidBasicAuthorization(
  * `DEFAULT_WEB_ADMIN_USERNAMES` in `bin/web-auth-store.js`. Ein kompromittiertes
  * Admin-Passwort ist damit eine Kompromittierung des Hosts, weil der Prozess
  * ohne uid-Wechsel als ein Benutzer laeuft.
+ *
+ * **Woher das Feld kommt.** `proxy.ts` fuellt es aus `isAdminUsername`, und das
+ * ist seit dem Rollenwechsel eine Dateifrage: `OMP_WEB_ADMINS` zuerst, dann das
+ * Feld `isAdmin` in `omp-web-accounts.json`, dann — nur fuer Konten, die es vor
+ * dem Feld gab — die alte Namensliste. Der Cache darin ist auf die mtime der
+ * Kontendatei gekeyt, nicht auf einen Aufruf: ein Rollenwechsel aus der
+ * Oberflaeche ist damit im **naechsten** Request sichtbar, ohne Neustart und
+ * ohne Invalidierungs-Haken.
  */
 export interface WebIdentity {
   username: string;
   isAdmin: boolean;
 }
 
-/** Account-Namen, die Admin sind. `OMP_WEB_ADMINS` (kommagetrennt) ueberschreibt die Vorgabe. */
+/**
+ * Die Namen, die die **Umgebung** zum Admin macht — nicht die Admin-Konten.
+ *
+ * `OMP_WEB_ADMINS` (kommagetrennt) ueberschreibt die Vorgabeliste. Wer diese
+ * Konstante liest, erfaehrt damit noch nicht, wer Admin ist: gesetzt ist die
+ * Variable, dann entscheidet nur sie. Die vollstaendige Antwort gibt
+ * `isAdminUsername`.
+ */
 export const ADMIN_USERNAMES = resolveAdminUsernames();
 
 /**
  * Ist dieser Name ein Admin?
  *
- * Bewusst ein Re-Export der Store-Funktion, nicht eine eigene Kopie: die Liste
- * gehoert der Installation, und ein zweiter Ort, an dem sie gepflegt wird, ist
- * ein Ort, an dem sie veraltet.
+ * Bewusst ein Re-Export der Store-Funktion, nicht eine eigene Kopie: die Regel
+ * gehoert dem Store, und ein zweiter Ort, an dem sie gepflegt wird, ist ein
+ * Ort, an dem sie veraltet.
  */
 export { isAdminUsername };
 
@@ -209,7 +224,11 @@ export function verifyCredential(
     // wird nirgends gelesen.
     const policy: WebAuthPolicy = { mode: "stored", digest: account.password, file: options.file ?? "" };
     if (!verifyWebPassword(password, { ...options, policy })) return null;
-    return { username: account.username, isAdmin: isAdminUsername(account.username, env) };
+    // `options` wandert mit: die Admin-Frage liest dieselbe Kontendatei, aus der
+    // `findWebAccount` oben gerade das Konto geholt hat. Ohne das wuerde ein
+    // Aufrufer mit eigenem `accountsFile` die Rolle aus der Datei *neben* der
+    // Datei bekommen, in der das Passwort geprueft wurde.
+    return { username: account.username, isAdmin: isAdminUsername(account.username, env, options) };
   }
 
   const legacy = getExpectedUsername(env);
@@ -218,7 +237,7 @@ export function verifyCredential(
   const policy = resolveWebAuthPolicy(options);
   if (policy.mode !== "environment" && policy.mode !== "stored") return null;
   if (!verifyWebPassword(password, { ...options, policy })) return null;
-  return { username: legacy, isAdmin: isAdminUsername(legacy, env) };
+  return { username: legacy, isAdmin: isAdminUsername(legacy, env, options) };
 }
 
 /**

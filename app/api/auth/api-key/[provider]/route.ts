@@ -1,13 +1,42 @@
 import { NextResponse } from "next/server";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { getOmpRuntime, invalidateOmpRuntime } from "@/lib/omp-runtime";
+import { requireAdmin, requireIdentity } from "@/lib/request-identity";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ provider: string }> };
 
+/**
+ * Der Modellschluessel ist **prozessweit**, nicht pro Konto.
+ *
+ * `authStorage.set()` schreibt in das `agent.db` des Prozesskontos — dieselbe
+ * Datei, aus der `omp` auf der Kommandozeile liest. Es gibt fuer diese Route
+ * keine Mandanten-Alternative: `lib/tenant-config.ts` hat `resolveTenantAgentDir`
+ * zwar schon, aber die Route benutzt den Prozess-Runtime aus `getOmpRuntime()`,
+ * also das globale Verzeichnis. Solange das so ist, gehoert der Schluessel dem
+ * Betreiber und nicht dem anfragenden Konto, und ein Schreibzugriff darauf ist
+ * eine hostweite Aenderung: **Admin**.
+ *
+ * Das ist die ehrliche Antwort fuer die heutige Ablage. Die Alternative waere,
+ * hier `requireIdentity` zu setzen und damit den Befund bestehen zu lassen —
+ * ein Mandant, der seinen "eigenen" Schluessel eintraegt, verdraendert das
+ * Guthaben des Betreibers. Beides gleichzeitig waere nicht moeglich: solange
+ * eine Zeile fuer alle gilt, ist "mein Schluessel" eine Behauptung des Clients
+ * und keine Eigenschaft des Datensatzes.
+ *
+ * Was die Umstellung auf echten Mandantenbesitz kostet, steht in
+ * `lib/omp-runtime.ts`: es gibt dort `getSettingsForIdentity` fuer die
+ * `config.yml` je Konto, aber noch kein Gegenstueck fuer `AuthStorage` und
+ * `ModelRegistry`. Bis dahin ist Admin die richtige Rolle und nicht die
+ * bequemere.
+ */
+
 // GET /api/auth/api-key/[provider] — returns auth status (never returns the actual key)
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
+  const denied = requireIdentity(req);
+  if (denied) return denied;
+
   const { provider } = await params;
   const { modelRegistry, authStorage } = await getOmpRuntime();
   const origin = authStorage.getCredentialOrigin(provider);
@@ -23,6 +52,9 @@ export async function GET(_req: Request, { params }: Params) {
 
 // POST /api/auth/api-key/[provider]  body: { apiKey: string }
 export async function POST(req: Request, { params }: Params) {
+  const denied = requireAdmin(req);
+  if (denied) return denied;
+
   const { provider } = await params;
   try {
     const { apiKey } = await req.json() as { apiKey?: string };
@@ -44,7 +76,14 @@ export async function POST(req: Request, { params }: Params) {
 }
 
 // DELETE /api/auth/api-key/[provider] — removes stored API keys
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
+  // Loeschen ist derselbe Zugriff wie Setzen, nur in die andere Richtung: es
+  // nimmt dem Prozesskonto den Schluessel, mit dem es seine Modelle bezahlt.
+  // Wer setzen darf, muss loeschen duerfen — sonst koennte ein Admin den
+  // Betrieb wiederherstellen, ein Mandant ihn aber weiter zerstoeren.
+  const denied = requireAdmin(req);
+  if (denied) return denied;
+
   const { provider } = await params;
   try {
     const { authStorage } = await getOmpRuntime();

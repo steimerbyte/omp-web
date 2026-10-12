@@ -136,9 +136,22 @@ export function proxy(request: NextRequest) {
   // answers `allow` to everyone, and a signed-in browser there still has to be
   // told who it is; otherwise the first account created through the admin panel
   // would sign in to a session nobody downstream can attribute.
+  //
+  // The cookie carries **only a username**. The admin role is re-derived from
+  // the account file on every single request, and that is the whole point: a
+  // role changed in the settings panel is in force from the next request on,
+  // with no restart and nothing to invalidate. It also means a demotion cannot
+  // kill the request that performs it — the identity was already proven when
+  // this line ran, and it is only `x-omp-admin` for *later* requests that goes
+  // missing.
   let identity = basicIdentity;
   if (identity === null) {
     const sessionUser = readSessionCookie(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+    // `isAdminUsername` reads `omp-web-accounts.json` (mtime-cached), with
+    // `OMP_WEB_ADMINS` taking precedence and the legacy name list as the
+    // fallback for accounts that predate the role field. `withIdentity` below
+    // turns the answer into `x-omp-admin: 1`, which `lib/request-identity.ts`
+    // reads back as `WebIdentity.isAdmin` and `requireAdmin` enforces.
     if (sessionUser !== null) identity = { username: sessionUser, isAdmin: isAdminUsername(sessionUser) };
   }
 

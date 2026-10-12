@@ -101,9 +101,11 @@ export type WebAuthState =
 /**
  * Ein Konto aus `omp-web-accounts.json`, in der Form, in der es benutzt wird.
  *
- * `isAdmin` steht hier, wird aber **nie** gelesen: die Funktionen berechnen es
- * bei jedem Aufruf neu aus `isAdminUsername`. Es steht in der Liste, damit ein
- * Aufrufer nicht selbst rechnen muss.
+ * `isAdmin` ist die **abgeleitete** Rolle, nicht der Rohwert aus der Datei: der
+ * Store entscheidet nach `OMP_WEB_ADMINS` (Vorrang), dann nach dem Feld
+ * `isAdmin`, und faellt bei einem Konto ohne Feld auf die alte Namensliste
+ * zurueck. Deshalb kann ein Konto hier als Admin erscheinen, ohne dass in der
+ * Datei etwas davon steht.
  */
 export interface WebAccount {
   username: string;
@@ -133,6 +135,13 @@ export interface WebAccountEntry {
   username: string;
   password: WebAuthDigest;
   enabled: boolean;
+  /**
+   * Die Rolle, falls sie **explizit** in der Datei steht. `undefined` heisst
+   * "vor dem Rollenfeld angelegt" und faellt auf `DEFAULT_WEB_ADMIN_USERNAMES`
+   * zurueck — siehe `accountIsAdmin`. Wird nur von `setWebAccountRole`
+   * geschrieben.
+   */
+  isAdmin?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -147,6 +156,16 @@ export declare const WEB_ACCOUNTS_FILENAME: string;
 export declare const WEB_AUTH_FILENAME: string;
 export declare const WEB_AUTH_USERNAME: string;
 
+/**
+ * Die effektive Rolle eines Roh-Eintrags: `OMP_WEB_ADMINS` entscheidet allein,
+ * sonst das Feld `isAdmin`, sonst die alte Namensliste. Exportiert, damit Tests
+ * dieselbe Regel benutzen und nicht eine zweite Kopie davon pflegen.
+ */
+export declare function accountIsAdmin(entry: WebAccountEntry, env?: NodeJS.ProcessEnv): boolean;
+
+/** Den mtime-gekeyten Rollen-Cache leeren. `writeWebAccounts` tut das selbst. */
+export declare function clearAdminRoleCache(): void;
+
 export declare function createWebAccount(
   username: unknown,
   password: unknown,
@@ -156,7 +175,18 @@ export declare function findWebAccount(
   username: unknown,
   options?: WebAuthStoreOptions,
 ): WebAccountEntry | null;
-export declare function isAdminUsername(username: unknown, env?: NodeJS.ProcessEnv): boolean;
+/**
+ * Ist dieser Name ein Admin?
+ *
+ * Liest die Kontendatei — ueber einen mtime-gekeyten Cache, damit der
+ * Aufwand pro Request bei einem `stat` bleibt — und faellt fuer Namen, die dort
+ * nicht vorkommen, auf `resolveAdminUsernames` zurueck.
+ */
+export declare function isAdminUsername(
+  username: unknown,
+  env?: NodeJS.ProcessEnv,
+  options?: WebAuthStoreOptions,
+): boolean;
 export declare function listWebAccounts(options?: WebAuthStoreOptions): WebAccountList;
 export declare function readWebAccounts(options?: WebAuthStoreOptions): {
   status: "missing" | "ok" | "unreadable";
@@ -175,6 +205,17 @@ export declare function setWebAccountEnabled(
 export declare function setWebAccountPassword(
   username: unknown,
   password: unknown,
+  options?: WebAuthStoreOptions,
+): WebAccount;
+/**
+ * Die Rolle eines Kontos setzen. Wirft, wenn das den letzten anmeldebaren Admin
+ * herabstufen wuerde, und wenn das einen von `OMP_WEB_ADMINS` benannten Namen
+ * betrifft. Prueft nicht die Identitaet des Aufrufers — das ist Aufgabe der
+ * Route.
+ */
+export declare function setWebAccountRole(
+  username: unknown,
+  isAdmin: boolean,
   options?: WebAuthStoreOptions,
 ): WebAccount;
 export declare function validateAccountName(username: unknown): string | null;

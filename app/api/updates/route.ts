@@ -1,10 +1,23 @@
 import { NextResponse } from "next/server";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { requireAdmin } from "@/lib/request-identity";
 import { getOmpWebUpdateStatus, installOmpWebUpdate } from "@/lib/omp-updates";
 import { redactNpxOutput } from "@/lib/npx";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Nur die POST-Methode aendert etwas, das dem ganzen Host gehoert: sie ruft
+ * `installOmpWebUpdate` auf, ein `npx`, das den **laufenden** Server ersetzt.
+ * Jedes angemeldete Konto ein Update ausloesen zu lassen heisst, dass ein
+ * Mandant den Betreiber zum Installieren einer Version bewegen kann, die er
+ * geprueft und freigegeben hat — also Admin.
+ *
+ * GET bleibt offen. `getOmpWebUpdateStatus()` liest die lokale Paketversion und
+ * den Git-Zustand, schreibt nichts und legt kein Geheimnis offen; es ist der
+ * Status fuer die Update-Anzeige, die jedes Konto sehen darf. Die Route
+ * beantwortet damit genau die Frage, die nicht hostweit ist.
+ */
 export async function GET(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
@@ -25,6 +38,8 @@ export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
+  const denied = requireAdmin(req);
+  if (denied) return denied;
   if (!hasJsonContentType(req)) {
     return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
   }

@@ -1,9 +1,27 @@
 import type { OAuthAuthInfo, OAuthPrompt } from "@oh-my-pi/pi-ai/oauth";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { getOmpRuntime, invalidateOmpRuntime } from "@/lib/omp-runtime";
+import { requireAdmin } from "@/lib/request-identity";
 import { resolveOAuthLoginId } from "@/lib/provider-listing-runtime";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Der OAuth-Login ist hostweit, nicht mandantenweit.
+ *
+ * `authStorage.login()` persistiert das Token in dasselbe `agent.db`, in das auch
+ * `app/api/auth/api-key/[provider]` schreibt — dem `agent.db` des
+ * Prozesskontos. Ein angemeldeter Mandant, der hier einen OAuth-Flow startet,
+ * legt damit eine Zeile an, die der Betreiber bezahlt. Beide Methoden sind
+ * deshalb Admin; die POST-Methode laesst `AuthStorage.login()` ueber den
+ * Callback-Registry-Eintrag laufen und schreibt damit genauso.
+ *
+ * Die Sperre sitzt vor `getOmpRuntime()`, nicht danach: der SSE-Stream darf
+ * keinen Prompt und keine Auth-URL fuer einen Konto erzeugen, das den Stream
+ * gar nicht sehen darf. Der Callback-Registry unter `globalThis` ist ansonsten
+ * prozessweit und wuerde den Flow sonst starten lassen, nur um ihn am Ende zu
+ * verwerfen.
+ */
 
 // In-memory registry: loginToken -> resolve/reject for the manualCodeInput promise
 declare global {
@@ -20,6 +38,9 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ provider: string }> }
 ) {
+  const denied = requireAdmin(req);
+  if (denied) return denied;
+
   const { provider } = await params;
   const { token, code } = (await req.json()) as { token?: string; code?: string };
 
@@ -47,6 +68,9 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ provider: string }> }
 ) {
+  const denied = requireAdmin(req);
+  if (denied) return denied;
+
   const { provider } = await params;
 
   const encoder = new TextEncoder();

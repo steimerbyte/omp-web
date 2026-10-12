@@ -347,9 +347,151 @@ function resolveAdminUsernames(env = process.env) {
   return DEFAULT_WEB_ADMIN_USERNAMES;
 }
 
-function isAdminUsername(username, env = process.env) {
+/** `true`, wenn der Operator die Admins beim Prozessstart festgenagelt hat. */
+function hasEnvironmentAdminList(env = process.env) {
+  const raw = env.OMP_WEB_ADMINS;
+  return typeof raw === "string" && raw.trim().length > 0;
+}
+
+/**
+ * Die Rolle **eines Kontos**, aus seinem Roh-Eintrag und aus der Umgebung.
+ *
+ * Drei Faelle — und die Reihenfolge *ist* die Regel:
+ *
+ *  1. `OMP_WEB_ADMINS` ist gesetzt: der Name entscheidet, sonst nichts. Wer
+ *     Admins beim Prozessstart festnagelt, will genau das — die Rollenverteilung
+ *     darf nicht an einem Webfrontend haengen, das man sonst nur durch diese
+ *     Festlegung verteidigen kann. Der Weg dahin fuehrt an der Kontendatei
+ *     vorbei.
+ *  2. `isAdmin` ist ein Boolean: die Datei entscheidet.
+ *  3. `isAdmin` fehlt: das ist ein Konto aus der Zeit vor dem Rollenfeld, und
+ *     es faellt auf die alte Namensliste zurueck.
+ *
+ * **Punkt 3 ist die Antwort auf die Frage nach bestehenden Konten.** `steimerbyte`
+ * ist seit jeher Admin, weil der Name in `DEFAULT_WEB_ADMIN_USERNAMES` steht.
+ * Ohne Rueckfall verlier genau dieses Konto beim ersten Lesen nach dem Schema-
+ *wechsel stillschweigend seinen Status — und weil es auf einer frischen
+ * Installation der einzige Admin ist, waere der Host danach nicht mehr zu
+ * bedienen. Ein fehlendes Feld heisst deshalb **nicht** "nein", sondern
+ * "unbekannt, also das Alte". Umgekehrt heisst ein **explizites** `false` sehr
+ * wohl "nein": nur so kann die Oberflaeche einen geerbten Admin herabstufen.
+ *
+ * Was diese Regel nicht mehr kann: sich hochstufen, indem man die Datei von Hand
+ * um ein Feld erweitert. Das war vorher auch moeglich — nur mit dem Unterschied,
+ * dass es vorher nichts bewirkte. Die alte Regel schuetzte nicht gegen einen
+ * Schreiber der Datei, sie schuetzte gegen einen *Leser*; sie hinderte das
+ * Umschalten in der Oberflaeche. Jetzt ist die Datei das, was sie immer war:
+ * Vertrauensmaterial neben dem scrypt-Digest. Wer sie schreiben kann, kann das
+ * Passwort eines Kontos austauschen und damit den Admin uebernehmen, der es
+ * besitzt. Die Grenze liegt bei den Dateirechten und bei der einen Funktion,
+ * die das Feld schreibt: `setWebAccountRole`.
+ */
+function accountIsAdmin(entry, env = process.env) {
+  if (!entry || typeof entry.username !== "string") return false;
+  if (hasEnvironmentAdminList(env)) return resolveAdminUsernames(env).includes(entry.username);
+  if (typeof entry.isAdmin === "boolean") return entry.isAdmin;
+  return DEFAULT_WEB_ADMIN_USERNAMES.includes(entry.username);
+}
+
+/**
+ * Die Rollen aller Konten, aus **einem** Lesen der Kontendatei.
+ *
+ * `proxy.ts` stellt die Admin-Frage pro Request, und unter `bwrap` kostet ein
+ * Datei-Lesen mehr als ein `stat`. Das Muster ist das von `getExpectedUsername`
+ * in `lib/web-auth.ts`: **der `stat` laeuft immer**, gelesen und geparst wird
+ * nur, wenn sich die mtime bewegt hat. Ein Rollenwechsel aus der Settings-UI ist
+ * damit genauso sichtbar wie eine Aenderung des Benutzernamens — es gibt
+ * keinen Invalidierungs-Haken, den man beim Schreiben der Datei vergessen
+ * koennte. `writeWebAccounts` leert den Cache trotzdem sofort; die mtime allein
+ * waere bei zwei Schreibvorgaengen innerhalb derselben Taktgenauigkeit zu
+ * duenn.
+ *
+ * Der Cache haengt zusaetzlich an `grantKey`, also am Inhalt der
+ * Admin-Umgebung. `env` ist der einzige Eingang, der sich in einem lang laufenden
+ * Prozess ohne Dateischreiben bewegen kann — Operator setzt die Variable, ein
+ * Test dreht daran — und ein Cache darueber waere eine Fussangel.
+ *
+ * Gecacht wird nur ein lesbarer Zustand. Fehlende und kaputte Datei werden bei
+ * jedem Aufruf neu bewertet, aus demselben Grund wie in `getExpectedUsername`:
+ * die Datei kann jederzeit entstehen, und der naechste Request soll sie sehen.
+ */
+const ADMIN_ROLE_CACHE_KEY = "__ompWebAdminRolesCache";
+
+function clearAdminRoleCache() {
+  delete globalThis[ADMIN_ROLE_CACHE_KEY];
+}
+
+/** Nur aufgerufen fuer einen Konto-Namen; `resolveAdminUsernames` ist der Fallback. */
+function readAdminRoles(env = process.env, options = {}) {
+  const pinned = hasEnvironmentAdminList(env);
+
+  // Fall 1 ganz ohne Dateizugriff: der Name entscheidet, es gibt nichts zu lesen.
+  if (pinned && options.accountsFile === undefined) {
+    const roles = new Map();
+    for (const name of resolveAdminUsernames(env)) roles.set(name, true);
+    return roles;
+  }
+
+  const file = resolveWebAccountsFileFor(options);
+  let mtimeMs;
+  try {
+    mtimeMs = statSync(file).mtimeMs;
+  } catch {
+    return new Map();
+  }
+
+  const grantKey = pinned ? resolveAdminUsernames(env).join("\u0001") : "";
+  const cached = globalThis[ADMIN_ROLE_CACHE_KEY];
+  if (cached && cached.file === file && cached.mtimeMs === mtimeMs && cached.grantKey === grantKey) {
+    return cached.roles;
+  }
+
+  const state = readWebAccounts({ ...options, accountsFile: file });
+  const roles = new Map();
+  if (state.status === "ok") {
+    for (const entry of state.accounts) {
+      if (entry && typeof entry.username === "string") roles.set(entry.username, accountIsAdmin(entry, env));
+    }
+    globalThis[ADMIN_ROLE_CACHE_KEY] = { file, mtimeMs, grantKey, roles };
+  }
+  return roles;
+}
+
+/**
+ * Ist dieser Name ein Admin?
+ *
+ * Die eine Frage, die `proxy.ts` pro Request stellt. Sie beantwortet sich aus
+ * der Kontendatei und faellt — fuer Namen, die dort gar nicht vorkommen — auf
+ * die alte Namensliste zurueck. Dieser Fall ist kein Rest: der Einzelbenutzer-
+ * Store (`omp` aus `omp-web-auth.json`) kennt keine Kontendatei, und ohne den
+ * Rueckfall waere die bestehende Installation nach dem Wechsel der
+ * Autorisierungsquelle handlungsunfaehig.
+ */
+function isAdminUsername(username, env = process.env, options = {}) {
   if (typeof username !== "string" || username.length === 0) return false;
-  return resolveAdminUsernames(env).includes(username);
+  const fromFile = readAdminRoles(env, options).get(username);
+  if (typeof fromFile === "boolean") return fromFile;
+  return accountIsAdmin({ username }, env);
+}
+
+/**
+ * Wie viele Admins bleiben, wenn `skipIndex` herausfaellt?
+ *
+ * "Bleibt" heisst: anmeldebar **und** nach derselben Regel Admin, die auch
+ * `isAdminUsername` benutzt — deshalb laeuft der Test ueber
+ * `normalizeAccountEntry`, dessen `isAdmin` genau das ist. Ein deaktiviertes
+ * Konto zaehlt nicht mit, sonst koennte der letzte Admin sich selbst
+ * deaktivieren, solange es noch einen zweiten gibt, der sich nicht anmelden kann.
+ */
+function countUsableAdmins(accounts, env, skipIndex = -1) {
+  let count = 0;
+  for (let index = 0; index < accounts.length; index += 1) {
+    if (index === skipIndex) continue;
+    if (accounts[index] && accounts[index].enabled === false) continue;
+    const entry = normalizeAccountEntry(accounts[index], env);
+    if (entry !== null && entry.isAdmin) count += 1;
+  }
+  return count;
 }
 
 function scryptOptions(params) {
@@ -673,6 +815,12 @@ function readWebAccounts(options = {}) {
 function writeWebAccounts(accounts, options = {}) {
   const file = resolveWebAccountsFileFor(options);
   writeWebAuthConfig({ version: WEB_ACCOUNTS_VERSION, users: accounts, updatedAt: timestamp() }, file);
+  // Der mtime-Vergleich in `readAdminRoles` faengt das Schreiben meist schon
+  // ein. Er ist aber nicht die einzige Moeglichkeit: `_tmp`-Datei und Ziel
+  // koennen in derselben Zeitauflosung landen, und dann wuerde der *naechste*
+  // Request eine Rolle aus dem alten Stand bekommen. Ein Loeschen hier kostet
+  // nichts und macht den Cache exakt statt guter Absicht.
+  clearAdminRoleCache();
   return file;
 }
 
@@ -685,7 +833,10 @@ function normalizeAccountEntry(entry, env = process.env) {
     username: entry.username,
     password: entry.password,
     enabled: entry.enabled !== false,
-    isAdmin: isAdminUsername(entry.username, env),
+    // Aus dem Eintrag selbst und nicht ueber `isAdminUsername`: dort waere es
+    // eine zweite Dateilesung fuer dieselbe Frage, und genau diese Frage hat
+    // `accountIsAdmin` beantwortet, als der Cache gefuellt wurde.
+    isAdmin: accountIsAdmin(entry, env),
     home: resolveAccountHome(entry.username, env),
     createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
     updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : null,
@@ -695,12 +846,13 @@ function normalizeAccountEntry(entry, env = process.env) {
 /**
  * Alle Konten, fuer die Admin-Oberflaeche und Login.
  *
- * `isAdmin` wird **immer** neu berechnet und nie aus der Datei uebernommen:
- * die Datei koennte von einem aelteren Stand stammen oder manipuliert sein, und
- * die Admin-Frage gehoert der Installation, nicht dem Datensatz. Deshalb steht
- * sie hier auch nicht beim Schreiben, sondern wird beim Lesen abgeleitet — ein
- * geschriebenes `isAdmin: true` fuer einen Nicht-Admin wird also stillschweigend
- * zu `false`.
+ * `isAdmin` ist die **abgeleitete** Rolle, nicht der Rohwert: `accountIsAdmin`
+ * entscheidet nach der Regel aus Environment, Feld und Namensrueckfall. Ein
+ * Eintrag, der unter `OMP_WEB_ADMINS` laeuft, erscheint hier als Admin, auch
+ * wenn in der Datei `false` steht — und ein `true` in der Datei zaehlt unter
+ * gesetzter Environment nicht. Genau das ist der Grund, warum die Liste nicht
+ * einfach `entry.isAdmin` durchreicht: die Oberflaeche soll dieselbe Antwort
+ * zeigen, die `proxy.ts` im selben Moment in den Header schreibt.
  */
 function listWebAccounts(options = {}) {
   const state = readWebAccounts(options);
@@ -771,6 +923,12 @@ function createWebAccount(username, password, options = {}) {
     username: name,
     password: createDigest(password, options.params),
     enabled: true,
+    // Bewusst **kein** `isAdmin`. Ein neu angelegtes Konto faellt damit auf den
+    // Namensrueckfall zurueck und erbt damit genau die Rechte, die dieser Name
+    // vorher schon hatte — eine Anlage kann niemanden unerwartet zum Admin
+    // machen, aber sie kann auch keinen von Hand gesetzten Status ueberschreiben.
+    // Die Oberflaeche schreibt das Feld danach explizit, wenn es etwas zu
+    // schreiben hat.
     createdAt: now,
     updatedAt: now,
   };
@@ -786,7 +944,17 @@ function createWebAccount(username, password, options = {}) {
   return normalizeAccountEntry(entry, env);
 }
 
-/** Konto deaktivieren oder reaktivieren. Das Verzeichnis bleibt unberuehrt. */
+/**
+ * Konto deaktivieren oder reaktivieren. Das Verzeichnis bleibt unberuehrt.
+ *
+ * Der letzte anmeldebare Admin kann nicht abgeschaltet werden. Diese Regel
+ * steht hier und nicht in der Route: die Route ist der einzige *heutige* Weg,
+ * aber sie ist nicht der einzige Aufrufer, und eine Sperre, die an einem
+ * Aufrufer haengt, wird beim naechsten Aufrufer wegoptimiert. Geprueft wird
+ * gegen `countUsableAdmins`, also gegen dieselbe Regel, die auch
+ * `isAdminUsername` benutzt — sonst wuerde ein deaktiviertes Konto als
+ * Admin mitzaehlen und genau die Sperre aushebeln, die sie verhindern soll.
+ */
 function setWebAccountEnabled(username, enabled, options = {}) {
   const env = options.env ?? process.env;
   const file = resolveWebAccountsFileFor(options);
@@ -801,8 +969,86 @@ function setWebAccountEnabled(username, enabled, options = {}) {
   const index = state.accounts.findIndex((entry) => entry && entry.username === name);
   if (index === -1) throw new Error(`No such account: ${name}`);
 
+  const current = state.accounts[index];
+  if (enabled === false && current.enabled !== false && accountIsAdmin(current, env)
+    && countUsableAdmins(state.accounts, env, index) === 0) {
+    throw new Error(
+      `${name} is the last administrator that can still sign in. Promote or enable another account first.`,
+    );
+  }
+
   const next = [...state.accounts];
   next[index] = { ...next[index], enabled: Boolean(enabled), updatedAt: timestamp() };
+  writeWebAccounts(next, options);
+  clearVerificationCache();
+  return normalizeAccountEntry(next[index], env);
+}
+
+/**
+ * Die Rolle eines Kontos setzen — die einzige Funktion im Repo, die das Feld
+ * `isAdmin` schreibt.
+ *
+ * Zwei Sperren, beide absichtlich **hier** und nicht in der Route:
+ *
+ *  1. **Kein Herabstufen des letzten Admins.** Sonst gibt es einen Zustand, in
+ *     dem sich niemand mehr anmelden und niemand mehr die Rollen zuruecksetzen
+ *     kann; auf diesem Host heisst das: zurueck auf die Konsole des
+ *     Betreibers. Der Test zaehlt gegen `countUsableAdmins`, also gegen genau
+ *     die Regel, die auch der Proxy benutzt.
+ *  2. **Kein Herabstufen eines von `OMP_WEB_ADMINS` benannten Kontos.** Das
+ *     waere kein Fehler mit Folgen, sondern eine stille: `isAdmin: false` zu
+ *     schreiben, `erledigt` zurueckzugeben und in Wirklichkeit Admin zu bleiben,
+ *     weil die Environment-Variable entscheidet. Abgelehnt wird stattdessen mit
+ *     dem Weg, der wirklich hilft.
+ *
+ * **Die Sperren gehoeren hier und nicht in die Route**, weil die Route der
+ * einzige *heutige* Aufrufer ist — nicht der einzige. Eine Sperre, die an einem
+ * Aufrufer haengt, faellt beim naechsten Aufrufer weg, und der naechste Aufrufer
+ * ist ein Skript, das keine Oberflaeche hat.
+ *
+ * **Was diese Funktion nicht kann:** einen Nicht-Admin zum Admin machen. Sie
+ * fragt nicht, wer ruft. Das ist Absicht und keine Luecke: die Frage "darf
+ * dieser Aufrufer das" ist eine Eigenschaft des Aufrufers und gehoert in die
+ * Route, die den Header `x-omp-admin` geprueft hat
+ * (`app/api/web-access/users/route.ts`). Diese Funktion beantwortet "wenn ja,
+ * was schreibt man dann" — und schreibt damit die Regel, die fuer jeden Aufrufer
+ * gilt.
+ */
+function setWebAccountRole(username, isAdmin, options = {}) {
+  const env = options.env ?? process.env;
+  const file = resolveWebAccountsFileFor(options);
+  const name = typeof username === "string" ? username.trim() : username;
+  const invalid = validateAccountName(name);
+  if (invalid) throw new Error(invalid);
+  if (typeof isAdmin !== "boolean") throw new Error("`isAdmin` must be true or false.");
+
+  const state = readWebAccounts(options);
+  if (state.status === "unreadable") {
+    throw new Error(`The omp-web account file at ${file} could not be read. Repair or remove it.`);
+  }
+  const index = state.accounts.findIndex((entry) => entry && entry.username === name);
+  if (index === -1) throw new Error(`No such account: ${name}`);
+
+  const current = state.accounts[index];
+
+  if (isAdmin === false) {
+    if (hasEnvironmentAdminList(env) && resolveAdminUsernames(env).includes(name)) {
+      throw new Error(
+        `${name} is an administrator through OMP_WEB_ADMINS, and the account file cannot demote them.`
+        + " Remove the name from OMP_WEB_ADMINS to change the role.",
+      );
+    }
+    // Ein bereits deaktiviertes Konto verliert durch die Sperre nichts: es ist
+    // schon kein Admin mehr, und "es gibt danach null Admins" war dann vorher
+    // schon wahr.
+    if (current.enabled !== false && accountIsAdmin(current, env)
+      && countUsableAdmins(state.accounts, env, index) === 0) {
+      throw new Error(`${name} is the last administrator. Promote another account before demoting them.`);
+    }
+  }
+
+  const next = [...state.accounts];
+  next[index] = { ...current, isAdmin, updatedAt: timestamp() };
   writeWebAccounts(next, options);
   clearVerificationCache();
   return normalizeAccountEntry(next[index], env);
@@ -1072,7 +1318,9 @@ module.exports = {
   WEB_ACCOUNTS_FILENAME,
   WEB_AUTH_FILENAME,
   WEB_AUTH_USERNAME,
+  accountIsAdmin,
   checkHomeRootWritable,
+  clearAdminRoleCache,
   clearVerificationCache,
   clearWebPassword,
   consumeRecoveryCode,
@@ -1095,6 +1343,7 @@ module.exports = {
   resolveWebAuthPolicy,
   setWebAccountEnabled,
   setWebAccountPassword,
+  setWebAccountRole,
   setWebPassword,
   setWebPasswordEnabled,
   setWebUsername,
