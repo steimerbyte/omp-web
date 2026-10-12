@@ -414,6 +414,42 @@ TypeScript half type-checks against — keep the two in sync.
   compositing layer for the life of the page. Colour literals break imported
   themes, because `applyOmpPalette` rewrites the variables at runtime.
 
+### Comments that state a number need a test that checks that number
+- **A comment naming a figure, a duration or a measurement requires a test that
+  asserts the same figure.** Otherwise the next reader is worse off than the
+  author: the comment reads as evidence, and it is only a recollection. Three in
+  this repo asserted the opposite of what was measured, and each one caused a
+  later change to be built on it.
+  - `app/login/login.module.css` explained that the idle loop moved a different
+    axis than `Reveal`, so the two would not collide. Measured in Chromium: the
+    inline `transform: translateY(-7.8px)` was overwritten by keyframes on
+    `transform`, and the translate component was `0` in every sample of the
+    entrance.
+  - `app/api/web-access/route.ts` claimed an authorization that was not
+    performed. A comment asserting a *vulnerable* state is read as a safety
+    guarantee by the next person.
+  - `normalizeAccountEntry` claimed trustworthiness that did not exist.
+- **Prefer writing the measurement into the test rather than only into the
+  comment.** A comment cannot fail; a test can, and it is the only one of the
+  two that notices when the behaviour moves away from the claim.
+- Record where the number came from and when it was taken. "Measured in
+  Chromium, all 40 ms across the 240 ms entrance" tells the next reader whether
+  the claim is worth keeping; a bare number does not.
+
+### Test fixtures come from the writer, not from memory
+- **A fixture that reproduces a file must be produced by the function that writes
+  it**, or the test asserts a shape no writer ever emits and passes forever.
+  `lib/session-reader.test.mjs` wrote `type: "session"` into line 1 while every
+  real writer puts a `title` record there, so `readSessionHeader()` — which
+  reads exactly one line and accepts only `type === "session"` — returned
+  `null` for every session that actually exists, with a green suite throughout.
+  Measured 2026-10-12 across 400 real session files: first record is `title` in
+  400 of 400.
+- The same applies to any on-disk format: hand-writing the bytes tests your
+  memory of the format, not the parser.
+- If calling the real writer is impractical, fix the fixture and **comment the
+  deviation in the test**, saying which writer it stands in for and why.
+
 ### Exported session HTML
 - `/api/sessions/[id]/export` delegates to omp's export helper, then patches recursive tree helpers in the generated HTML to iterative versions so very deep linear sessions do not overflow the browser call stack.
 
@@ -430,6 +466,7 @@ resolves `undici` to its own shim where `setGlobalDispatcher` does not affect
 Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 
 ```jsonl
+{"type":"title","v":1,"title":"...","source":"auto","updatedAt":"..."}
 {"type":"session","version":3,"id":"<uuid>","timestamp":"...","cwd":"/path","parentSession":"/abs/path/to/parent.jsonl"}
 {"type":"model_change","id":"<8hex>","parentId":null,"model":"anthropic/claude-sonnet-5","role":"default","timestamp":"..."}
 {"type":"message","id":"<8hex>","parentId":"<8hex>","message":{"role":"user","content":"..."}}
@@ -438,6 +475,14 @@ Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 {"type":"compaction","id":"<8hex>","parentId":"<8hex>","summary":"...","firstKeptEntryId":"<8hex>","tokensBefore":N}
 {"type":"session_info","id":"...","parentId":"...","name":"user-defined name"}
 ```
+
+**The first line is a `title` record, not the `session` record.** Measured
+2026-10-12 across 400 real files under `~/.omp/agent/sessions/`: `title` in 400
+of 400. A reader that parses only line 1 and checks for `type === "session"`
+therefore finds nothing in any file that exists. Use
+`readSessionRecord()` in `lib/session-reader.ts`, which scans the leading lines
+for the `session` record; `readSessionHeader()` is the one-line variant and
+returns `null` for every real session.
 
 `model_change` carries a `provider/modelId` string plus the **role** it came
 from; `SessionContext.models` is a role → selector record, and `models.default`
