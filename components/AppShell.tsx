@@ -235,13 +235,26 @@ export function AppShell() {
   const [panelDragActive, setPanelDragActive] = useState(false);
   const groupElementRef = useRef<HTMLDivElement | null>(null);
   // Percentages, because that is what the library distributes (see
-  // `getDefaultPanelLayout`). The server has no viewport, so this first guess
-  // is computed for a nominal width and corrected against the measured row
-  // before the first client paint. It is a `useState`, not a `useMemo`: the
-  // library reads it exactly once, when it first lays the row out.
-  const [startingPanelLayout] = useState(() =>
-    getDefaultPanelLayout(typeof window === "undefined" ? 0 : window.innerWidth, false),
-  );
+  // `getDefaultPanelLayout`). This first guess is computed for the NOMINAL
+  // width on the server and on the client alike, and corrected against the
+  // measured row before the first client paint (see the layout effect below).
+  // It is a `useState`, not a `useMemo`: the library reads it exactly once,
+  // when it first lays the row out.
+  //
+  // The width must NOT be `window.innerWidth` here, on either side. That
+  // branch made the two renders disagree, because the percentages are
+  // derived from the width: at a 1365px viewport the sidebar share is 19.05%
+  // and the chat's is 80.95%, while the server — which has no `window` — fell
+  // back to the nominal 1440px and rendered 18.06% / 81.94%. The library
+  // distributes what it is handed, so React reported a hydration mismatch on
+  // both panel divs and the sidebar/chat split visibly jumped once hydration
+  // finished. `app-shell-split`'s `id` and `data-testid` are fixed strings and
+  // matched all along; only the flex shares differed.
+  //
+  // A single value on both sides costs nothing: the layout effect below runs
+  // before the first paint and replaces this guess with the real measured one,
+  // so no user ever sees the nominal frame.
+  const [startingPanelLayout] = useState(() => getDefaultPanelLayout(0, false));
   const [startingLayoutSettled, setStartingLayoutSettled] = useState(false);
 
   const handleSidebarPanelResize = useCallback((size: PanelSize) => {
