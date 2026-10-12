@@ -52,10 +52,18 @@ export type SweepKeys = {
   transition: { backgroundPosition?: { duration: number; repeat: number; ease: "easeOut" } };
 };
 
-/** The one-shot band's background. See `useSweepProps` for why it may live in `style`. */
+/**
+ * The one-shot band's background. See `useSweepProps` for why it may live in
+ * `style`.
+ *
+ * `backgroundRepeat` is the load-bearing member and it is typed as the literal
+ * rather than `string`, so dropping the fix is a compile error instead of a
+ * silent return to the initial-value defect described on `useSweepProps`.
+ */
 export type WashStyle = {
   backgroundImage: string;
   backgroundSize: string;
+  backgroundRepeat: "no-repeat";
 };
 
 // Only accent tokens. A colour literal would survive a theme import as the
@@ -142,22 +150,83 @@ export function useShimmerProps(): ShimmerProps {
  */
 export function useSweepProps(): SweepKeys & { style: WashStyle } {
   const mode = useAnimationPreference();
-  const style = { backgroundImage: washImage(70), backgroundSize: "220% 100%" };
 
   // Same reason as in `useShimmerProps`: a new `animate` object per render
   // replays the one-shot wash on every render, so on a re-rendering panel it
   // never completes and the band sits parked part-way across the surface.
   //
-  // The sweep is allowed to keep its gradient in `style` because it is finite:
-  // `repeat: 0` means motion runs it once and stops, and its `off` branch drops
-  // the gradient outright. A panel that stays mounted after its entrance is
-  // exactly what it is for, and the wash has already played out by then.
+  // The sweep keeps its gradient in `style`, unlike the shimmer, because it is
+  // finite: `repeat: 0` runs it once, and the run *ends on a position that
+  // paints nothing* — see `backgroundRepeat` below for the measurement. There
+  // is no separate gradient to take away afterwards, so the inline style has no
+  // residue; a panel that stays mounted after its entrance is exactly what this
+  // is for, and the wash has already played out by then. The `off` branch drops
+  // the gradient outright.
+  //
+  // `backgroundRepeat` is the fix, and it is the same line the `.omp-shimmer`
+  // rule needed in globals.css. Without it the value defaults to `repeat` and
+  // the neighbouring tile closes in behind the departing band and paints what
+  // it vacates. The sweep's tile is 220% of the element and its gradient is
+  // transparent only over its outer 10% at each end, so one tile paints
+  // [0.22, 1.98] in element widths and the gap before the next tile begins is
+  // 2 x 0.10 x 220pp = 44pp, while the element's own window is 100pp. A 100pp
+  // window cannot fit inside a 44pp gap, so under `repeat` *no* position on the
+  // whole travel leaves the element clear.
+  //
+  // Measured on the swept geometry (tile 220%, travel 220% -> -220%), pixel
+  // centres across the element, compositing the neighbouring tiles:
+  //
+  //   position   repeat                       no-repeat
+  //   +220%      100% painted, peak 0.69997   0% painted, peak 0.0000
+  //   -220%       56% painted, peak 0.30028   0% painted, peak 0.0000
+  //
+  // The end position is the one that persists: motion stops writing
+  // `background-position` once a `repeat: 0` transition finishes, so the element
+  // keeps the gradient *and* the last position, which is what parked a lilac
+  // band across the login card (`app/login/page.tsx`) and every AppShell
+  // surface that calls this hook. Under `no-repeat` that resting position is
+  // empty, so the finished sweep has no visible effect at all — which is the
+  // measured answer to whether the inline gradient still has to be removed.
+  //
+  // `0% 0%` — the value the element carries before motion writes anything, and
+  // therefore the resting position of any path that never runs the animation —
+  // paints 78% of the element at peak 0.6894 even under `no-repeat`. That is
+  // why the run's endpoints have to be outside the painted window and not
+  // merely "somewhere off to the side"; see the travel range below.
+  const style: WashStyle = {
+    backgroundImage: washImage(70),
+    backgroundSize: "220% 100%",
+    backgroundRepeat: "no-repeat",
+  };
+
+  // The travel. It has to start and end on positions that paint nothing, and
+  // `background-position: P%` moves the tile by P% x (container - image), so a
+  // pixel at x sits at tile coordinate (x - P) / 2.2 in element widths. The
+  // painted window under `no-repeat` is exactly P in [-66, 165]: at P = +165 the
+  // window shows tile coordinates [1.2, 1.65], entirely past this tile's
+  // [0.22, 1.98], and at P = -66 it shows [-1.83, -1.37], entirely before it.
+  //
+  // 220% -> -220% therefore spent 209 of its 440 percentage points — 47% of the
+  // run — travelling across nothing, once the repeat stopped papering over it.
+  // Measured against `easeOut` over the full 0.72s that left the band visible
+  // for 280ms of the 720ms, which is not enough to outlast a 240ms panel
+  // entrance: the wash was gone almost as early as the panel finished settling,
+  // and the remainder was motion on an already-empty element rather than a
+  // pause. 190% -> -90% keeps both endpoints empty with ~25pp of margin and
+  // raises the visible pass to 505ms of 720ms, still 2.1x the entrance.
+  //
+  // It is also the range `@keyframes omp-shimmer-wash` already travels, so the
+  // one-shot and the endless wash now run the same arc.
+  //
+  // The keyframes are built inside the memo, not above it: motion treats a new
+  // `animate` object as a new animation and replays the sweep, so a range
+  // rebuilt per render would keep a re-rendering panel from ever finishing.
   return useMemo(
     () =>
       mode === "off"
-        ? { animate: {}, transition: {}, style: { backgroundImage: "none", backgroundSize: style.backgroundSize } }
+        ? { animate: {}, transition: {}, style: { ...style, backgroundImage: "none" } }
         : {
-            animate: { backgroundPosition: ["220% 0%", "-220% 0%"] },
+            animate: { backgroundPosition: ["190% 0%", "-90% 0%"] },
             transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" as const } },
             style,
           },

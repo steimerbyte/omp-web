@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
   ANIMATION_STORAGE_KEY,
   DEFAULT_ANIMATION_MODE,
@@ -9,6 +11,7 @@ import {
   parseAnimationMode,
   readStoredAnimationMode,
 } from "./animation-mode.ts";
+import { useSweepProps } from "./hooks.ts";
 
 /**
  * These exercise the store rules, not the class names or the markup. Whether a
@@ -528,4 +531,252 @@ test("Nur ein echter Wartezustand bekommt den Endlos-Wash", () => {
   // The wording is on both halves, so neither badge ends up empty.
   assert.match(source, /connecting…/, "connecting-Text fehlt");
   assert.match(source, /status === "exited" \? "exited" : errorMessage \?\? "error"/, "Endtext fehlt");
+});
+
+/*
+ * `useSweepProps` had both halves of the defect class the shimmer had already
+ * been repaired for in 0733402, and neither the shimmer's tests nor the CSS
+ * rule's tests could see it: the sweep is not a CSS class, so nothing about the
+ * `.omp-shimmer` rule constrains it.
+ *
+ *   - The gradient and its size stayed in the inline `style` while motion drove
+ *     `background-position` alone. A `repeat: 0` transition *finishes* — motion
+ *     simply stops writing — so the element keeps the gradient together with the
+ *     last position it was given. That is the "lila Band, das nicht weggeht" on
+ *     all 11 callers, including the login card and the AppShell surfaces.
+ *   - `backgroundRepeat` was neither in the `WashStyle` type nor in the object,
+ *     so it defaulted to `repeat`, and under `repeat` the neighbouring tile
+ *     paints what the departing band vacates.
+ *
+ * The assertions below are about geometry, not about the spelling of the fix.
+ * They render the hook for real through `react-dom/server` and read the
+ * returned `style` and `animate` back out, then composite that gradient over
+ * that travel the way a browser would. Nothing here matches the source, so the
+ * fix can be written any way that produces the same painted pixels; what it
+ * cannot survive is producing them *differently*.
+ */
+
+/**
+ * The sweep's own gradient stops, at the strength `useSweepProps` builds it.
+ *
+ * These mirror `washImage(70)`: transparent at 10%, `color-mix(accent 70%)` at
+ * 46% and 54%, `color-mix(text 23%)` at 50% — `Math.round(70 / 3)` — and
+ * transparent again at 90%. A `color-mix` against `transparent` is a plain
+ * alpha of that percentage, so the stop's alpha is the number itself.
+ */
+const SWEEP_STOPS = [
+  [0.0, 0.0], [0.1, 0.0], [0.46, 0.7], [0.5, 0.23], [0.54, 0.7], [0.9, 0.0], [1.0, 0.0],
+];
+
+/** Alpha of the sweep band at gradient fraction `q`, linearly between the stops. */
+function sweepAlpha(q) {
+  let prev = SWEEP_STOPS[0];
+  for (const stop of SWEEP_STOPS) {
+    if (q <= stop[0]) {
+      const [q0, a0] = prev;
+      const [q1, a1] = stop;
+      return q1 === q0 ? a1 : a0 + ((q - q0) / (q1 - q0)) * (a1 - a0);
+    }
+    prev = stop;
+  }
+  return 0;
+}
+
+/** The sweep's tile width in element widths, read from its `background-size`. */
+function tileWidthsOf(backgroundSize) {
+  const width = /(-?[\d.]+)%/.exec(backgroundSize);
+  assert.ok(width, `background-size unlesbar: ${backgroundSize}`);
+  return Number(width[1]) / 100;
+}
+
+/**
+ * What a position paints on the element: the peak alpha and the share of the
+ * element's width that carries any paint at all.
+ *
+ * `background-position: P%` moves the tile by P% x (container - image), so a
+ * pixel at x sits at tile coordinate (x - offset) / tileWidths, where
+ * `offset = (P / 100) * (1 - tileWidths)` is negative for a wide tile. Under
+ * `repeat` the neighbouring tiles are composited in, which is the whole point:
+ * measuring tile 0 alone would report the positions past its edge as clear and
+ * make the repeat look harmless. See `peakPaintedAlpha` above for the same trap
+ * measured on the shimmer's tile.
+ */
+function paintAt(positionPercent, { tileWidths, repeat, samples = 2001 }) {
+  const offset = (positionPercent / 100) * (1 - tileWidths);
+  const tiles = repeat ? [-3, -2, -1, 0, 1, 2, 3] : [0];
+  let peak = 0;
+  let painted = 0;
+  for (let i = 0; i < samples; i += 1) {
+    const q = ((i + 0.5) / samples - offset) / tileWidths;
+    let alpha = 0;
+    for (const k of tiles) alpha = Math.max(alpha, sweepAlpha(q - k));
+    if (alpha > 0) painted += 1;
+    peak = Math.max(peak, alpha);
+  }
+  return { peak, paintedFraction: painted / samples };
+}
+
+/**
+ * The hook's own output, rendered for real.
+ *
+ * `useSweepProps` is a React hook, so calling it directly throws; rendering a
+ * component that uses it and reading the props back out of the markup exercises
+ * the actual returned `style` and `animate`, including whatever the memo
+ * produces, instead of a hand-copied approximation of it.
+ */
+function renderSweepProps() {
+  let captured = null;
+  function Probe() {
+    captured = useSweepProps();
+    return null;
+  }
+  renderToStaticMarkup(createElement(Probe));
+  assert.ok(captured, "useSweepProps lieferte nichts");
+  return captured;
+}
+
+const sweepStyle = () => renderSweepProps().style;
+const sweepTravel = () => {
+  const { backgroundPosition } = renderSweepProps().animate;
+  assert.ok(Array.isArray(backgroundPosition), "der Sweep hat keine Keyframes");
+  return backgroundPosition.map((value) => Number.parseFloat(value));
+};
+
+test("Der Sweep liefert no-repeat, sonst faellt er auf den reparierten Fehler zurueck", () => {
+  const style = sweepStyle();
+  // Rendered as a real CSS declaration, so the shorthand form or a
+  // `backgroundRepeat: "repeat"` both fail here.
+  assert.equal(style.backgroundRepeat, "no-repeat");
+  // And it survives the trip through React's serialiser, which is where a
+  // misspelled or camelCased-only key would silently vanish.
+  const markup = renderToStaticMarkup(
+    createElement("div", {
+      style: {
+        backgroundImage: style.backgroundImage,
+        backgroundSize: style.backgroundSize,
+        backgroundRepeat: style.backgroundRepeat,
+      },
+    }),
+  );
+  assert.match(markup, /background-repeat:no-repeat/, `im Markup fehlt die Deklaration: ${markup}`);
+});
+
+test("Die Endposition des Sweeps malt unter repeat weiter und unter no-repeat exakt nichts", () => {
+  const style = sweepStyle();
+  const tileWidths = tileWidthsOf(style.backgroundSize);
+  const [from, to] = sweepTravel();
+
+  // The resting position is the one that persists: motion stops writing
+  // `background-position` when a `repeat: 0` transition finishes, so the
+  // gradient and the final position both stay on a mounted panel. Measured on
+  // the sweep's own tile at the end of its travel, `-90%`: 86% of the element
+  // still carries paint at peak 0.7000, i.e. the full-strength band, parked
+  // there for as long as the panel is mounted. That is the reported symptom.
+  const atEndRepeat = paintAt(to, { tileWidths, repeat: true });
+  assert.ok(atEndRepeat.paintedFraction > 0.8, `das Ende malt unter repeat zu wenig (${atEndRepeat.paintedFraction})`);
+  assert.ok(atEndRepeat.peak > 0.69, `Peak-Alpha am Ende unter repeat (${atEndRepeat.peak})`);
+
+  // With the repeat removed the same position paints nothing at all — not a
+  // dim version, nothing: zero pixels, zero alpha. Both numbers, because "peak
+  // 0 but 40% painted" is a different bug and the report has to exclude it.
+  const atEndNoRepeat = paintAt(to, { tileWidths, repeat: false });
+  assert.equal(atEndNoRepeat.peak, 0, `das Ende malt unter no-repeat noch (${atEndNoRepeat.peak})`);
+  assert.equal(atEndNoRepeat.paintedFraction, 0, `das Ende malt unter no-repeat noch ${atEndNoRepeat.paintedFraction} der Flaeche`);
+
+  // The start of the run has the same obligation, since the element carries it
+  // for the whole entrance before motion writes anything of its own.
+  const atStart = paintAt(from, { tileWidths, repeat: false });
+  assert.equal(atStart.peak, 0, `der Start des Sweeps malt noch (${atStart.peak})`);
+  assert.equal(atStart.paintedFraction, 0, `der Start malt noch ${atStart.paintedFraction} der Flaeche`);
+
+  // Both ends are painted under `repeat` — which is why the fix cannot be "just
+  // stop early instead", and why the travel range is a second half of the fix
+  // rather than an alternative to it.
+  for (const position of [from, to]) {
+    assert.ok(
+      paintAt(position, { tileWidths, repeat: true }).peak > 0.69,
+      `Position ${position}% bleibt unter repeat unauffaellig (${paintAt(position, { tileWidths, repeat: true }).peak})`,
+    );
+  }
+});
+
+test("Der Sweep braucht kein no-repeat, um auszulaufen, wenn die Endposition nichts malt", () => {
+  // Isolates the repeat from the travel, so a future retune of the keyframe
+  // range cannot quietly reintroduce the requirement or quietly lose the fix.
+  //
+  // The check is per position, not per range: it sweeps both ends of the run and
+  // asserts the endpoints are empty under `no-repeat` *and* were not empty
+  // under `repeat` at the same positions. If someone retunes the range into the
+  // painted window, the first half of that conjunction fails and the test says
+  // which half.
+  const style = sweepStyle();
+  const tileWidths = tileWidthsOf(style.backgroundSize);
+  const [from, to] = sweepTravel();
+
+  assert.equal(style.backgroundRepeat, "no-repeat", "ohne no-repeat laeuft der Sweep nicht aus");
+  assert.ok(from > 0 && to < 0, `die Reise laeuft nicht von rechts nach links (${from}% -> ${to}%)`);
+  for (const position of [from, to]) {
+    assert.equal(paintAt(position, { tileWidths, repeat: false }).peak, 0, `Position ${position}% malt unter no-repeat`);
+    assert.equal(paintAt(position, { tileWidths, repeat: false }).paintedFraction, 0, `Position ${position}% malt unter no-repeat`);
+  }
+});
+
+test("Der Sweep malt unterwegs, sonst laeuft er mit leerem Element durch", () => {
+  // A sweep that never draws satisfies every assertion above. It has to be a
+  // pass across the surface, and it has to be the same band the endless wash
+  // uses, so the peak matches the shimmer's own stops.
+  const style = sweepStyle();
+  const tileWidths = tileWidthsOf(style.backgroundSize);
+  const [from, to] = sweepTravel();
+
+  let peak = 0;
+  let brightest = 0;
+  let visibleSamples = 0;
+  const steps = 400;
+  for (let i = 0; i <= steps; i += 1) {
+    // Linear travel, not the eased one: the easing shapes the rhythm, not
+    // whether anything is painted, and this keeps the assertion independent of
+    // the duration constant.
+    const position = from + ((to - from) * i) / steps;
+    const { peak: p } = paintAt(position, { tileWidths, repeat: false, samples: 401 });
+    peak = Math.max(peak, p);
+    if (p > 0.4) visibleSamples += 1;
+    brightest = Math.max(brightest, p);
+  }
+
+  assert.ok(brightest > 0.65, `der Sweep zeichnet unterwegs zu wenig (${brightest})`);
+  // Not a flash: the band has to be over the element for a real stretch, not
+  // only at the midpoint.
+  assert.ok(visibleSamples / (steps + 1) > 0.15, `das Band ist nur auf ${visibleSamples}/${steps + 1} Positionen sichtbar`);
+
+  // The same strength as the endless wash, so the one-shot does not read as a
+  // different, dimmer effect than the shimmer it is a one-shot version of.
+  assert.match(style.backgroundImage, /var\(--accent\) 70%/, "die Staerke des Sweeps hat sich geaendert");
+  assert.match(style.backgroundImage, /var\(--text\) 23%/, "der Text-Kern des Sweeps hat sich geaendert");
+  // And it is transparent at both ends, which is what lets the panel show
+  // through instead of being clipped by its own wash.
+  assert.match(style.backgroundImage, /^linear-gradient\(90deg, transparent 10%/, "der Sweep ist an beiden Enden nicht transparent");
+  assert.match(style.backgroundImage, /transparent 90%\)$/, "der Sweep ist am Ende nicht transparent");
+});
+
+test("Der Sweep ist endlich und braucht keine Pause wie der Endlos-Wash", () => {
+  // The endless wash rests between runs because it loops: the wrap from the
+  // parked position back to the start is only invisible because both ends are
+  // empty. The sweep runs once, so a rest inside it would be time in which
+  // nothing happens, and the measured visible pass would shrink for nothing.
+  //
+  // What it must carry instead is `repeat: 0` — an endless sweep would park a
+  // band on every panel that stays mounted, which is the original defect again.
+  const { transition, animate } = renderSweepProps();
+  const backgroundPosition = transition.backgroundPosition;
+  assert.ok(backgroundPosition, "der Sweep traegt keine eigene Transition");
+  assert.equal(backgroundPosition.repeat, 0, "der Sweep wiederholt sich");
+  // And it stays a value-specific transition, so it does not hijack the 240ms
+  // entrance it is merged into. See `SweepKeys`.
+  assert.ok(backgroundPosition.duration > 0, "der Sweep hat keine eigene Dauer");
+  assert.ok(
+    backgroundPosition.duration >= 0.5,
+    `die Sweep-Dauer (${backgroundPosition.duration}s) ist kuerzer als die Panel-Einblendung`,
+  );
+  assert.equal(animate.backgroundPosition.length, 2, "der Sweep hat keine Lauf-Ende-Paare");
 });
