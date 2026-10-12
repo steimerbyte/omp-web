@@ -206,24 +206,53 @@ export function TerminalViewer({ terminalId, onExit }: Props) {
         <span style={{ color: isDark ? "#71717a" : "#a3a3a3" }}>type a command and press Enter</span>
       </div>
       <div ref={containerRef} style={{ flex: 1, minHeight: 0, padding: 8, position: "relative" }} />
+      {/* The status badge is shown for every state that is not a live
+       * terminal, but only `connecting` is actually a wait. `exited` and
+       * `error` are final: the process is gone or the stream failed, and
+       * neither will change again. Washing them was the same visible defect as
+       * a stuck shimmer — a lilac band looping on a panel that has nothing
+       * left to wait for — reached through a different door, so it survives a
+       * fix that only makes the shimmer well-behaved. `Shimmer` applies no wash
+       * at all when animations are off, which is exactly what a finished badge
+       * wants, so the non-waiting states use a plain `div`. */}
       {(status === "connecting" || status === "error" || status === "exited") && (
-        <Shimmer
-          radius={999}
-          style={{
-            position: "absolute",
-            bottom: 12,
-            right: 12,
-            fontSize: 11,
-            padding: "2px 8px",
-            backgroundColor: status === "error" ? "rgba(239, 68, 68, 0.2)" : "rgba(120, 120, 120, 0.2)",
-            color: status === "error" ? "var(--danger)" : "var(--text-muted)",
-            fontFamily: "var(--font-mono)",
-            pointerEvents: "none",
-            zIndex: 5,
-          }}
-        >
-          {status === "connecting" ? "connecting…" : status === "exited" ? "exited" : errorMessage ?? "error"}
-        </Shimmer>
+        (status === "connecting" ? (
+          <Shimmer
+            radius={999}
+            style={{
+              position: "absolute",
+              bottom: 12,
+              right: 12,
+              fontSize: 11,
+              padding: "2px 8px",
+              backgroundColor: "rgba(120, 120, 120, 0.2)",
+              color: "var(--text-muted)",
+              fontFamily: "var(--font-mono)",
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          >
+            connecting…
+          </Shimmer>
+        ) : (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              right: 12,
+              fontSize: 11,
+              padding: "2px 8px",
+              borderRadius: 999,
+              backgroundColor: status === "error" ? "rgba(239, 68, 68, 0.2)" : "rgba(120, 120, 120, 0.2)",
+              color: status === "error" ? "var(--danger)" : "var(--text-muted)",
+              fontFamily: "var(--font-mono)",
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          >
+            {status === "exited" ? "exited" : errorMessage ?? "error"}
+          </div>
+        ))
       )}
     </Enter>
   );
