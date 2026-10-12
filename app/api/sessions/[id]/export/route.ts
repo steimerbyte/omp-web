@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import { resolveSessionPath } from "@/lib/session-reader";
+import { requireSessionAccess } from "../../session-guard";
 
 const execFileAsync = promisify(execFile);
 
@@ -110,6 +111,12 @@ export async function GET(
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
+  // Vor `resolveSessionPath`, nicht danach: der Export schreibt eine fertige
+  // HTML-Datei des Sessions Inhalts in das tmpdir. Das ist die Route, bei der
+  // eine verweigerte Berechtigung am billigsten zu beweisen ist — die Datei
+  // darf gar nicht erst entstehen.
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
 
   const inline = new URL(req.url).searchParams.get("inline") === "1";
 

@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { resolveSessionPath, buildSessionContext, getHistoricalContextUsage } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { requireSessionAccess } from "../../session-guard";
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
+
   const url = new URL(req.url);
   const leafId = url.searchParams.get("leafId") ?? undefined;
   const deferThinking = url.searchParams.has("deferThinking");

@@ -17,6 +17,7 @@ import { getRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
+import { requireSessionAccess } from "../session-guard";
 
 export async function GET(
   req: Request,
@@ -27,6 +28,8 @@ export async function GET(
   }
 
   const { id } = await params;
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
   try {
     const rpc = getRpcSession(id);
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
@@ -99,6 +102,8 @@ export async function PATCH(
   }
 
   const { id } = await params;
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
   try {
     const { name, archived } = await req.json() as { name?: string; archived?: boolean };
     const hasName = typeof name === "string";
@@ -138,6 +143,8 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
   try {
     const filePath = await resolveSessionPath(id);
     if (!filePath) {

@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveSessionPath } from "@/lib/session-reader";
+import { requireSessionAccess } from "../../session-guard";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
+
   try {
     const rpc = getRpcSession(id);
     if (rpc?.isAlive()) {

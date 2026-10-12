@@ -92,12 +92,20 @@ test("live detail and state routes work without a persisted JSONL file", async (
   });
 
   const routeContext = { params: Promise.resolve({ id }) };
+  // Der Test prueft den Live-Pfad ("keine JSONL auf der Platte"), nicht die
+  // Berechtigung — aber die Route verlangt jetzt eine Identitaet, und die
+  // bekommt sie hier. `pi` ist Admin, weil der Attrappen-Registry kein Besitzer
+  // zugeordnet ist: `isRpcSessionVisibleTo` liest den Besitzer aus der
+  // Owner-Map, die nur `startRpcSession` fuellt. Behauptung dieses Tests bleibt
+  // dieselbe: eine laufende Session ohne Datei ist ueber Detail und State
+  // erreichbar.
+  const adminHeaders = { host: "localhost", "x-omp-user": "pi", "x-omp-admin": "1" };
   const detailResponse = await getSessionDetail(
-    new Request(`http://localhost/api/sessions/${id}`, { headers: { host: "localhost" } }),
+    new Request(`http://localhost/api/sessions/${id}`, { headers: adminHeaders }),
     routeContext,
   );
   const stateResponse = await getSessionState(
-    new Request(`http://localhost/api/sessions/${id}/state`, { headers: { host: "localhost" } }),
+    new Request(`http://localhost/api/sessions/${id}/state`, { headers: adminHeaders }),
     routeContext,
   );
   const detail = await detailResponse.json();

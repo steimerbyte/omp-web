@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import { generateSessionTitle } from "@/lib/session-title";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 import { invalidateSessionListCache, resolveSessionPath } from "@/lib/session-reader";
+import { requireSessionAccess } from "../../session-guard";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  // Diese Route ist ein Schreibpfad *und* teuer: sie startet notfalls eine
+  // RPC-Session und ruft das Modell. Beides gehoert der fremden Session, also
+  // gehoert die Sperre vor `startRpcSession`, nicht in den `catch`.
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
 
   try {
     const filePath = await resolveSessionPath(id);
