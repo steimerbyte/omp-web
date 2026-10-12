@@ -23,8 +23,21 @@ import { getExpectedUsername } from "./web-auth";
 
 export const SESSION_COOKIE_NAME = "omp_session";
 
-/** Sessions last a working day. Re-login is cheap; a long-lived cookie is not. */
-export const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+/**
+ * One working day. The point of the cookie is to stop retyping the password
+ * every few hours on a personal, single-operator lock, so eight hours was short
+ * enough to outlive its usefulness — a browser left open from morning to
+ * evening still hit the login page at lunchtime. 24 hours is the longest TTL
+ * that still expires on its own: a week or a month would mean a forgotten
+ * laptop stayed authenticated long after the person stopped thinking about it,
+ * and an unbounded session does not expire at all.
+ *
+ * This is a ceiling on the *cookie's* lifetime, not a promise that a login
+ * survives the day. `KEY_SALT` below is regenerated on every cold start, so a
+ * deploy or a restart still invalidates live sessions. A durable secret would
+ * have to come from somewhere — see that constant's own comment.
+ */
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Payload schema version, so an old cookie is rejected rather than misread. */
 const SESSION_VERSION = "1";

@@ -234,12 +234,14 @@ halves of the credential *and* to the running process, so a session ends when:
 
 - the password changes, or the username changes;
 - the server restarts, because the boot salt is new;
-- the TTL of 8 hours expires, or the cookie is dropped.
+- the TTL of 24 hours expires, or the cookie is dropped.
 
-A restart is therefore a logout. During a redeploy every open tab has to sign in
-again — that is the intended trade for a cookie that cannot outlive the process
-that minted it. There is no session list and no manual revocation: the shortest
-lifetime is a restart.
+A restart is therefore a logout, and it is the limit the 24 hours do not reach.
+During a redeploy every open tab has to sign in again — that is the intended
+trade for a cookie that cannot outlive the process that minted it. There is no
+session list and no manual revocation: the shortest lifetime is a restart. In
+practice that means a login survives a workday only for as long as the process
+does.
 
 Two details worth knowing when reading a bug report: the secret is derived per
 mode, so switching between the environment variable and the stored file

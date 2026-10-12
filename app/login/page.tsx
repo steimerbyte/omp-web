@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { OmpWordmark } from "@/components/OmpWordmark";
 import { AnimationProvider } from "@/components/motion/AnimationProvider";
 import { Reveal } from "@/components/motion/Reveal";
@@ -32,6 +32,52 @@ export default function LoginPage() {
   // re-uses a node whose class did not change, so re-adding the same class
   // would be a no-op and the shake would only ever play once.
   const [rejected, setRejected] = useState(0);
+
+  /**
+   * The one focus path into the password field, shared by the mount effect and
+   * by the rejection path so both land in the same place.
+   *
+   * `select()` is not decoration. Chrome and Edge restore an autofilled
+   * password with the caret at the end of the value, so a visitor who arrives
+   * on a form the browser already knows would type into the middle of the
+   * stored secret instead of replacing it. Selecting the whole value makes the
+   * first keystroke overwrite, which is what "type your password" should mean.
+   *
+   * Stable across renders because it closes over the ref only — that is what
+   * lets the effect below carry it as its only dependency and still run once.
+   */
+  const focusPassword = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, []);
+
+  /**
+   * Focus after the mount, not through `autoFocus`.
+   *
+   * `autoFocus` fires during React's commit, and at that moment `Reveal` has
+   * already written `initial` — `opacity: 0`, a Y offset and a 6 px blur — onto
+   * the card that contains this input. An element the browser cannot see is an
+   * element it will not focus: the call is accepted, the caret simply ends up
+   * on `<body>`, and the visitor has to click the field before typing. The
+   * effect runs after the commit, and by then Motion has handed the card to its
+   * 240 ms entrance, so the field is a real, focusable target.
+   *
+   * The same effect re-runs whenever `rejected` changes, which is what puts
+   * the caret back after a failed attempt. It used to stay on the submit
+   * button — the button is keyed by `rejected`, so it remounts on every
+   * rejection and the browser drops focus to the body — and the next try cost
+   * an extra click on the field before the first character could go in.
+   *
+   * Deliberately depends on nothing that changes while typing: `busy`,
+   * `error`, `password`, `username` and `revealed` all churn during a normal
+   * attempt, and re-stealing focus on any of them would fight the visitor for
+   * the caret.
+   */
+  useEffect(() => {
+    focusPassword();
+  }, [focusPassword, rejected]);
 
   const signIn = useCallback(async () => {
     if (username.length === 0 || password.length === 0) return;
@@ -102,7 +148,6 @@ export default function LoginPage() {
                 className={styles.input}
                 type={revealed ? "text" : "password"}
                 autoComplete="current-password"
-                autoFocus
                 value={password}
                 disabled={busy}
                 onChange={(event) => setPassword(event.target.value)}
@@ -114,7 +159,11 @@ export default function LoginPage() {
                 aria-pressed={revealed}
                 onClick={() => {
                   setRevealed((current) => !current);
-                  inputRef.current?.focus();
+                  // Toggling visibility is a read of the value, so the same
+                  // helper as everywhere else: the caret goes back to the
+                  // password instead of staying on the toggle, and the text is
+                  // ready to be replaced by the next keystroke.
+                  focusPassword();
                 }}
               >
                 {revealed ? "Hide" : "Show"}
