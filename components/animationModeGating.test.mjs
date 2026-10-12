@@ -170,14 +170,32 @@ function pointerEvent(type) {
   return event;
 }
 
+/**
+ * `bun test` laesst alle Dateien in einem Prozess laufen. Ein nicht
+ * abgemeldeter Root bleibt am 16-ms-Frame-Loop haengen und ruft nach dem Ende
+ * dieses Tests weiter `setState` auf einem Baum, dessen `terminals`-Zustand
+ * die naechste Datei schon abgebaut hat — das schlug als
+ * `terminals.filter is not a function` in `lib/write-access.identity.test.mjs`
+ * durch, also scheinbar ein Fehler dieser Datei. Die Wurzeln werden deshalb
+ * nach dem Lauf abgemeldet.
+ */
+const mountedRoots = [];
+
 async function mount(element) {
   const container = document.createElement("div");
   dom.document.body.appendChild(container);
   const root = createRoot(container);
+  mountedRoots.push(root);
   await act(async () => { root.render(React.createElement(I18nProvider, null, element)); });
   await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
   return container;
 }
+
+test.after(async () => {
+  for (const root of mountedRoots.splice(0)) {
+    await act(async () => { root.unmount(); });
+  }
+});
 
 /**
  * Records every value motion writes to `element`'s inline style.
