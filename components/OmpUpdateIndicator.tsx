@@ -8,6 +8,43 @@ import { MarkdownBody } from "./MarkdownBody";
 
 type LoadState = "idle" | "loading" | "ready";
 
+/**
+ * Why the status fetch did not produce a status.
+ *
+ * The authorized routes answer with 403 when the caller lacks the permission
+ * and 404 when the resource does not exist. Those are different situations and
+ * they used to be flattened into one `if (!response.ok) return;`, which left
+ * `loadState` parked on `"loading"` for the rest of the session — a third,
+ * unnamed outcome that looked like a slow request that never arrived.
+ *
+ * - `unauthorized` (403): the caller may not ask. There is nothing to show and
+ *   nobody to show it to, so this is terminal and renders nothing.
+ * - `missing` (404): this build has no update endpoint at all. Equally
+ *   terminal, but a deployment fact rather than a permission fact — the
+ *   distinction is kept so the two can be told apart in a report instead of
+ *   both reading as "the update check did not work".
+ */
+export type UpdatesFetchOutcome =
+  | "ok"
+  | "unauthorized"
+  | "missing"
+  | "unavailable";
+
+/**
+ * Classify the status code of a response from `/api/updates`.
+ *
+ * Pure: it reads the status code and nothing else, so a proxy that answers 403
+ * with an HTML error page cannot make this throw, and no body is read on an
+ * error path. Exported so the 403/404 distinction is testable on its own,
+ * without mounting the component.
+ */
+export function classifyUpdatesResponse(status: number): UpdatesFetchOutcome {
+  if (status === 403) return "unauthorized";
+  if (status === 404) return "missing";
+  if (status < 200 || status >= 300) return "unavailable";
+  return "ok";
+}
+
 function displayVersion(version: string): string {
   return version === "unknown" ? version : `v${version}`;
 }
@@ -16,6 +53,11 @@ export function OmpUpdateIndicator() {
   const { locale, t } = useI18n();
   const [status, setStatus] = useState<OmpWebUpdateResponse | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
+  // How the last fetch ended when it ended without a status. `null` means the
+  // request has not been classified yet. Nothing renders from this state
+  // directly — it exists so 403 and 404 stay distinguishable instead of both
+  // collapsing into a permanently "loading" component.
+  const [outcome, setOutcome] = useState<UpdatesFetchOutcome | null>(null);
   const [open, setOpen] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
@@ -55,7 +97,20 @@ export function OmpUpdateIndicator() {
     setLoadState("loading");
     try {
       const response = await fetch("/api/updates", { cache: "no-store", signal });
-      if (!response.ok) return;
+      const outcome = classifyUpdatesResponse(response.status);
+      // 403 and 404 both settle, and both settle to a state that renders
+      // nothing — but they are recorded separately, because "not allowed to
+      // ask" and "this build has no update endpoint" are different facts and
+      // used to be indistinguishable from a request still in flight. `ready`
+      // would be wrong here: it means "a status was fetched, and it says there
+      // is no update", which is a claim about a body we never received.
+      if (outcome !== "ok") {
+        if (!signal?.aborted) {
+          setOutcome(outcome);
+          setLoadState("ready");
+        }
+        return;
+      }
       const next = await response.json() as OmpWebUpdateResponse;
       setStatus(next);
       setLoadState("ready");
@@ -91,7 +146,12 @@ export function OmpUpdateIndicator() {
     };
   }, [open]);
 
-  if (loadState !== "ready" || !status?.updateAvailable) return null;
+  // Nothing renders without a status that says an update exists — including
+  // after a 403 or a 404. The two are told apart by `outcome`, not by the
+  // markup: neither has a body to render, so the honest result for both is
+  // the same empty output, reached for different and separately recorded
+  // reasons.
+  if (loadState !== "ready" || outcome !== null || !status?.updateAvailable) return null;
 
   const release = status.latestRelease;
   const releaseDate = release.publishedAt
