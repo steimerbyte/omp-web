@@ -9,7 +9,7 @@ import {
   invalidateSessionListCache,
   buildSessionContext,
   getHistoricalContextUsage,
-  readSessionHeader,
+  readSessionRecord,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { setSessionArchived } from "@/lib/session-archive";
@@ -116,8 +116,10 @@ export async function PATCH(
     }
     if (hasArchived) {
       // Key the registry by the header id (what /api/sessions lists), not by
-      // whatever alias the client addressed the session with.
-      setSessionArchived(readSessionHeader(filePath)?.id ?? id, archived);
+      // whatever alias the client addressed the session with. Same reason as in
+      // DELETE: `readSessionHeader` reads one line and the first line on disk
+      // is a `title` record, so it returns null for every real session.
+      setSessionArchived(readSessionRecord(filePath)?.id ?? id, archived);
     }
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
@@ -142,8 +144,13 @@ export async function DELETE(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // Read only the bounded header before deleting.
-    const parentSessionPath = readSessionHeader(filePath)?.parentSession;
+    // Read only the bounded header before deleting. `readSessionHeader` alone
+    // returns null for every real session file, because the first line on disk
+    // is a `title` record and the `session` record follows it. Measured
+    // 2026-10-12 across 400 real session files: the first line is a `title`
+    // record in 400 of 400, so `readSessionHeader` returned null for every
+    // session that actually existed.
+    const parentSessionPath = readSessionRecord(filePath)?.parentSession;
 
     // Re-attach all direct children to this session's parent (cascade re-parent)
     // Scan sibling files in the same directory

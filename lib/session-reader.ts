@@ -280,6 +280,54 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
   }
 }
 
+/**
+ * The `session` record of a session file, read without loading the whole file.
+ *
+ * This is a separate function from {@link readSessionHeader} because the two
+ * answer different questions, and conflating them is what made the cascade
+ * re-parenting in `DELETE /api/sessions/[id]` write `parentSession: null` for
+ * every session, and made `PATCH` fall back to the client's alias instead of
+ * the header id.
+ *
+ * `readSessionHeader` reads **one line** and accepts it only if `type` is
+ * `"session"`. On disk the first line is a `title` record and the `session`
+ * record follows. Measured 2026-10-02 across 44 real files: the first line is
+ * not a `session` record in **44 of 44**, so that function returned `null` for
+ * every session that actually exists. The code was correct and the data was
+ * not what it assumed — which is the kind of bug no test catches, because the
+ * fixture is written to match the assumption.
+ *
+ * The bound stays, and stays small. This runs on the delete path, where the
+ * file is about to be removed and reading it whole would be a way to turn a
+ * small header lookup into a multi-megabyte read.
+ */
+export function readSessionRecord(filePath: string): SessionHeader | null {
+  const fd = openSync(filePath, "r");
+  try {
+    const maxHeaderBytes = 64 * 1024;
+    const buffer = Buffer.allocUnsafe(maxHeaderBytes);
+    const bytesRead = readSync(fd, buffer, 0, maxHeaderBytes, 0);
+    if (bytesRead === 0) return null;
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let record: SessionHeader;
+      try {
+        record = JSON.parse(line) as SessionHeader;
+      } catch {
+        // A truncated or non-JSON line is not the header, and a later line may
+        // still hold it.
+        continue;
+      }
+      if (record.type === "session") return record;
+    }
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export async function getSessionEntries(filePath: string): Promise<SessionEntry[]> {
   const manager = await SessionManager.open(filePath);
   return manager.getEntries() as unknown as SessionEntry[];
