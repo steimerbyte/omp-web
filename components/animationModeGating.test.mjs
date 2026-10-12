@@ -21,6 +21,25 @@ import { createJiti } from "jiti";
  * `full`. The `full` run is the counter-check. Without it, "nothing moved" would
  * also be the answer for a component whose animation never ran at all, and the
  * test would pass on a broken render tree.
+ *
+ * **Motion is observed, not sampled.** The measurement used to read
+ * `getAttribute("style")` every 25 ms and count the distinct strings it saw.
+ * That is a race, and it lost: the ModelsConfig save button failed in roughly
+ * a third of all runs with "skaliert auch im Modus full nicht". Instrumenting
+ * the writes showed why — the press animation is `DURATION_FAST`, 120 ms, and
+ * it is *written* within about 1 ms of the press, landing on two values
+ * (`transform: scale(0.999…)` then `transform: scale(0.96)`). Whether the 25 ms
+ * poll caught the intermediate value or only the settled one was decided by
+ * where the sampler happened to land: measured `distinct` was 2 when the poll
+ * split the two writes and 1 when it did not, and the assertion `full > 1` then
+ * failed although motion had demonstrably animated. Nothing about the app
+ * varied between those runs.
+ *
+ * So `recordWrites` intercepts the assignments themselves and `waitForMotion`
+ * returns on the first one, with a timeout as the ceiling rather than as the
+ * wait. The `off` case still sits out the full second — a negative is only
+ * established by watching — which is what keeps it a real check rather than a
+ * race that happens to pass.
  */
 
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
@@ -125,8 +144,11 @@ async function ensureFrameLoop() {
     for (const step of STEPS_ORDER) motionDom.frameSteps[step].process(state);
     state.isProcessing = false;
   };
-  const start = performance.now();
-  setInterval(() => tick(performance.now() + (performance.now() - start)), 16).unref?.();
+  // `performance.now()`, plain. Adding the elapsed time again — as this once
+  // did — hands motion a clock running at twice wall speed, so `delta` becomes
+  // the gap between two inflated stamps (32 ms per 16 ms tick) and every
+  // duration in the app is silently halved.
+  setInterval(() => tick(performance.now()), 16).unref?.();
 }
 
 globalThis.fetch = async (url) => {
@@ -157,28 +179,48 @@ async function mount(element) {
   return container;
 }
 
-/** The `transform`/`opacity` motion wrote, or the empty string if it wrote none. */
-function motionState(element) {
-  const style = element.getAttribute("style") ?? "";
-  return {
-    transform: /transform:[^;]*/.exec(style)?.[0] ?? "",
-    opacity: /opacity:[^;]*/.exec(style)?.[0] ?? "",
-  };
+/**
+ * Records every value motion writes to `element`'s inline style.
+ *
+ * Neither of the two obvious observers works here. `MutationObserver`
+ * coalesces a burst of writes into a single record, so it cannot count them —
+ * measured: four consecutive writes, one record — and motion assigns
+ * camelCase properties straight onto the style object instead of going through
+ * `setProperty`, so patching that method records nothing. The proxy sees every
+ * assignment, including the ones that land between two sampling ticks.
+ */
+function recordWrites(element) {
+  const writes = [];
+  const proxy = new Proxy(element.style, {
+    set(target, prop, value) {
+      writes.push(`${String(prop)}:${String(value)}`);
+      target[prop] = value;
+      return true;
+    },
+    get(target, prop) {
+      const value = target[prop];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  Object.defineProperty(element, "style", { value: proxy, writable: true, configurable: true });
+  return writes;
+}
+
+/** The recorded writes that actually moved the element, i.e. the ones under test. */
+function movedWrites(writes) {
+  return writes.filter((write) => write.startsWith("transform:") || write.startsWith("opacity:"));
 }
 
 /**
- * Samples `transform` and `opacity` for `ms` and reports how many distinct
- * pairs were seen: 1 means the element stood still, more means it moved.
+ * Waits until motion has written a `transform`/`opacity` value, then returns.
+ * `timeout` is the upper bound, not a fixed wait: the call returns the moment
+ * the state is reached, and only runs out the clock when nothing is coming.
  */
-async function countStates(element, ms) {
-  const seen = new Set();
-  const deadline = Date.now() + ms;
-  do {
-    const { transform, opacity } = motionState(element);
-    seen.add(`${transform}|${opacity}`);
-    await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
-  } while (Date.now() < deadline);
-  return seen;
+async function waitForMotion(writes, timeout) {
+  const deadline = Date.now() + timeout;
+  while (movedWrites(writes).length === 0 && Date.now() < deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 16)); });
+  }
 }
 
 /**
@@ -197,14 +239,18 @@ async function measure(mode, render, select, { press = false } = {}) {
     if (!target) await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
   }
   assert.ok(target, `kein Messziel im Modus ${mode}`);
+  const writes = recordWrites(target);
   if (press) {
     await act(async () => { target.dispatchEvent(pointerEvent("pointerdown")); });
   }
-  const states = await countStates(target, 1000);
+  // With `full` this returns the instant motion writes; with `off` nothing ever
+  // arrives, so it sits out the whole window. That asymmetry is the point: the
+  // negative case is only established by watching, the positive one by arrival.
+  await waitForMotion(writes, 1000);
   if (press) {
     await act(async () => { target.dispatchEvent(pointerEvent("pointerup")); });
   }
-  return states.size;
+  return movedWrites(writes).length;
 }
 
 const OFF_STANDS_STILL = "steht im Modus off still, bewegt sich aber mit full";
@@ -220,8 +266,8 @@ test(`SubagentPanel: der Endlos-Spinner ${OFF_STANDS_STILL}`, async () => {
 
   const off = await measure("off", render, selectSpinner);
   const full = await measure("full", render, selectSpinner);
-  assert.equal(off, 1, "der Spinner dreht sich im Modus off weiter");
-  assert.ok(full > 1, "der Spinner dreht sich auch im Modus full nicht");
+  assert.equal(off, 0, "der Spinner dreht sich im Modus off weiter");
+  assert.ok(full > 0, "der Spinner dreht sich auch im Modus full nicht");
 });
 
 test(`TerminalDropdown: der Status-Punkt ${OFF_STANDS_STILL}`, async () => {
@@ -236,8 +282,8 @@ test(`TerminalDropdown: der Status-Punkt ${OFF_STANDS_STILL}`, async () => {
 
   const off = await measure("off", render, selectDot);
   const full = await measure("full", render, selectDot);
-  assert.equal(off, 1, "der Status-Punkt pulsiert im Modus off weiter");
-  assert.ok(full > 1, "der Status-Punkt pulsiert auch im Modus full nicht");
+  assert.equal(off, 0, "der Status-Punkt pulsiert im Modus off weiter");
+  assert.ok(full > 0, "der Status-Punkt pulsiert auch im Modus full nicht");
 });
 
 test(`TerminalDropdown: die Zeile ${OFF_STANDS_STILL}`, async () => {
@@ -252,8 +298,8 @@ test(`TerminalDropdown: die Zeile ${OFF_STANDS_STILL}`, async () => {
 
   const off = await measure("off", render, selectRow, { press: true });
   const full = await measure("full", render, selectRow, { press: true });
-  assert.equal(off, 1, "die Zeile skaliert im Modus off beim Druck weiter");
-  assert.ok(full > 1, "die Zeile skaliert auch im Modus full nicht");
+  assert.equal(off, 0, "die Zeile skaliert im Modus off beim Druck weiter");
+  assert.ok(full > 0, "die Zeile skaliert auch im Modus full nicht");
 });
 
 test(`MessageView: der Command-Cursor ${OFF_STANDS_STILL}`, async () => {
@@ -270,8 +316,8 @@ test(`MessageView: der Command-Cursor ${OFF_STANDS_STILL}`, async () => {
 
   const off = await measure("off", render, selectCursor);
   const full = await measure("full", render, selectCursor);
-  assert.equal(off, 1, "der Cursor pulsiert im Modus off weiter");
-  assert.ok(full > 1, "der Cursor pulsiert auch im Modus full nicht");
+  assert.equal(off, 0, "der Cursor pulsiert im Modus off weiter");
+  assert.ok(full > 0, "der Cursor pulsiert auch im Modus full nicht");
 });
 
 test(`ModelsConfig: der Speichern-Knopf ${OFF_STANDS_STILL}`, async () => {
@@ -289,6 +335,6 @@ test(`ModelsConfig: der Speichern-Knopf ${OFF_STANDS_STILL}`, async () => {
 
   const off = await measure("off", render, selectSave, { press: true });
   const full = await measure("full", render, selectSave, { press: true });
-  assert.equal(off, 1, "der Knopf skaliert im Modus off beim Druck weiter");
-  assert.ok(full > 1, "der Knopf skaliert auch im Modus full nicht");
+  assert.equal(off, 0, "der Knopf skaliert im Modus off beim Druck weiter");
+  assert.ok(full > 0, "der Knopf skaliert auch im Modus full nicht");
 });
