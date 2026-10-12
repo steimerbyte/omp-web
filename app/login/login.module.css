@@ -21,13 +21,39 @@
  *
  * Der Einblend-Loop ist weg: `Reveal` laeuft einmal beim Mount und ist danach
  * fertig — auf einer Login-Seite ist das ein toter Zustand, denn hier wartet
- * man. Diese Schleife haelt die Karte sichtbar, ohne die Einblendung zu
- * ueberholen: sie aendert nur `transform`, waehrend `Reveal` `opacity` und
- * `filter` faehrt. Die beiden greifen nicht in dieselbe Eigenschaft ein,
- * deshalb bleibt der Einblend-Verlauf unberuehrt.
+ * man. Diese Schleife haelt die Karte sichtbar.
  *
- * `transform` ist hier eine Einzelliegenschaft, kein Wertepaar, weil es keine
- * `translate`-Komponente gibt, die zur Kachel-Oberkante addiert wird.
+ * Sie faehrt `scale`, nicht `transform`, und der Unterschied ist der ganze
+ * Grund fuer den Aufwand hier.
+ *
+ * `Reveal` kompiliert seinen `y: -8` in einen Inline-`transform: translateY(…)`,
+ * den es bei jedem Frame des 240-ms-Einblendens neu schreibt. Eine
+ * CSS-Animation schlaegt im Kaskadenkontext den Inline-Style, den
+ * Stack-Blatt-Eintrag der Animation also. Eine Schleife auf `transform`
+ * ueberschreibt damit in JEDEM Frame des Einblendens den Aufstieg um 8px und
+ * ersetzt ihn durch ihre eigene Skalierung.
+ *
+ * Gemessen in Chromium, alle 40 ms ueber den Einblend hinweg, mit
+ * `transform: translateY(…)` als Inline-Style:
+ *
+ *   t=0    inline translateY(-7.500px)  computed matrix(1.00001, 0, 0, 1.00001, 0, 0)
+ *   t=200  inline translateY(-0.840px)  computed matrix(1.00045, 0, 0, 1.00045, 0, 0)
+ *
+ * Die fuenfte Komponente ist bei `transform` immer `0`: der Aufstieg fehlt im
+ * computed Wert, egal wie gross der Inline-Style gerade ist.
+ *
+ * `scale` ist eine eigene Eigenschaft, keine Komponente von `transform`, und
+ * wird VOR ihm angewandt. Dieselbe Karte, dieselben Zeilen, `scale` statt
+ * `transform`:
+ *
+ *   t=0    inline translateY(-7.500px)  computed matrix(1, 0, 0, 1, 0, -7.5)
+ *   t=200  inline translateY(-0.840px)  computed matrix(1, 0, 0, 1, 0, -0.84)
+ *
+ * Der Aufstieg laeuft wieder sichtbar von −8px auf 0, und der Atem-Loop
+ * laeuft weiter daneben. Der Kommentar, der hier vorher stand, behauptete, die
+ * beiden griffen nicht in dieselbe Eigenschaft ein, weil `Reveal` `opacity`
+ * und `filter` faehre. `Reveal` faehrt `transform` — `y` ist einer seiner
+ * Werte — und genau diese Behauptung hat die kollidierende Achse eingefuegt.
  *
  * Eine Schleife ist nur dann erlaubt, wenn `prefers-reduced-motion` sie
  * abschaltet. Beim Login ist die Alternative nicht "hübsch statisch", sondern
@@ -37,8 +63,8 @@
   animation: login-idle-breathe 3.4s ease-in-out infinite;
 }
 @keyframes login-idle-breathe {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.012); }
+  0%, 100% { scale: 1; }
+  50% { scale: 1.012; }
 }
 
 @media (prefers-reduced-motion: reduce) {
