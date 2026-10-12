@@ -1513,6 +1513,17 @@ html[data-omp-animations="off"] *::after {
 
    The one deliberate exception is --radius, which shadcn uses for its
    rounded-* scale and which no omp token covers.
+
+   COLLISION WARNING — `--sidebar-*` vs `--sidebar-width`.
+   The tokens below are shadcn's colour semantics. `components/ui/sidebar.tsx`
+   is a SEPARATE thing: it writes `--sidebar-width` / `--sidebar-width-icon`
+   as lengths, while `useResizablePanel` (hooks/useResizablePanel.ts) writes
+   `--sidebar-width` in px from `.sidebar-container` (globals.css, the
+   `@media (min-width: 641px)` block). If shadcn's SidebarProvider ever mounts
+   in this tree, the two overwrite each other and the app sidebar collapses to
+   16rem. shadcn's Sidebar is currently unimported — keep it that way, or
+   rename one of the two before it mounts. shadcn's `--sidebar-*` COLOUR tokens
+   are safe: they never appear in the resizer path.
    --------------------------------------------------------------------------- */
 
 :root {

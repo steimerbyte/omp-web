@@ -30,6 +30,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { usePopupPlacement } from "@/hooks/usePopupPlacement";
 import { computePopupPlacement, preferredPopupHeight, POPUP_GAP_PX, type PopupSide } from "@/lib/popup-placement";
 import { Pressable } from "./motion/Pressable";
+import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/hooks/useI18n";
 import { useQuickPhrases } from "@/hooks/useQuickPhrases";
 import { quickPhraseCaption } from "@/lib/quick-phrases";
@@ -1718,7 +1719,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 }}
               >
                  <span>{slashCommandsLoading ? t("chat.loadingCommands") : t("chat.slashCommands", { label: slashCommandCountLabel })}</span>
-                 <span style={{ fontFamily: "var(--font-mono)" }}>{t("chat.tabEnter")}</span>
+                 <Kbd className="h-4 px-1 text-[10px]">{t("chat.tabEnter")}</Kbd>
               </div>
               <div style={{ maxHeight: Math.max(0, slashPlacement.maxHeight - 34), overflowY: "auto", padding: 10 }}>
                 {!slashCommandsLoading && filteredSlashCommands.length === 0 ? (
@@ -1874,9 +1875,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                        ? t("chat.loadingFiles")
                        : t("chat.files", { label: matchCountLabel, hint: truncatedHint })}
                   </span>
-                   <span style={{ fontFamily: "var(--font-mono)" }}>{t("chat.tabEnter")}</span>
+                   <Kbd className="h-4 px-1 text-[10px]">{t("chat.tabEnter")}</Kbd>
                 </div>
-                <div style={{ maxHeight: Math.max(0, atPlacement.maxHeight - 34), overflowY: "auto", padding: 4 }}>
+                <div style={{ maxHeight: Math.max(atPlacement.maxHeight - 34, 0), overflowY: "auto", padding: 4 }}>
                   {!indexLoading && atMatches.length === 0 ? (
                     <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--text-dim)" }}>
                        {needsServerSearch && !serverResultInUse ? t("chat.searching") : t("chat.noMatchingFiles")}

@@ -10,6 +10,7 @@ import { QuickPhrasesConfig } from "./QuickPhrasesConfig";
 import { AnimationsConfig } from "./AnimationsConfig";
 import { Skeleton } from "./motion/Skeleton";
 import { SearchableSelect } from "./SearchableSelect";
+import { Badge } from "@/components/ui/badge";
 import { refreshOmpTheme, useTheme } from "@/hooks/useTheme";
 import { refreshDisplaySettings } from "@/hooks/useDisplaySettings";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -516,7 +517,11 @@ function McpSettings({ cwd, sessionId, onReloaded }: { cwd?: string | null; sess
                         <button type="button" className={styles.serverSelect} title={item.source?.path} onClick={() => setSelected(index)}>
                           <span className={styles.statusDot} data-off={!item.enabled} />
                           <span className={styles.serverName}>{item.name}</span>
-                          {item.editable === false && <span className={styles.sourceBadge}>{item.source?.provider ?? "external"}</span>}
+                          {item.editable === false && (
+                            <Badge variant="outline" className="h-auto max-w-[76px] truncate rounded px-1 py-0.5 text-[8px] leading-[1.4] text-text-dim">
+                              {item.source?.provider ?? "external"}
+                            </Badge>
+                          )}
                         </button>
                         <button
                           type="button"

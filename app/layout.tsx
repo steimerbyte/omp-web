@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { PwaRegistration } from "@/components/PwaRegistration";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 
@@ -63,7 +64,10 @@ export default function RootLayout({
         />
       </head>
       <body translate="no" className="notranslate">
-        {children}
+        {/* Radix's Tooltip throws without a provider. It lives here rather than
+            in a panel because the trigger is the shared Pressable, which is
+            mounted all over the tree. */}
+        <TooltipProvider>{children}</TooltipProvider>
         <PwaRegistration />
       </body>
     </html>

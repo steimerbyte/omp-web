@@ -8,6 +8,8 @@ import { Skeleton } from "./motion/Skeleton";
 import { DURATION_FAST, EASE_POP } from "./motion/animations";
 import { ModelRolesPanel } from "./ModelRolesPanel";
 import { SearchableSelect } from "./SearchableSelect";
+import { Field as ShadcnField, FieldLabel } from "@/components/ui/field";
+import { Separator } from "@/components/ui/separator";
 import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
@@ -187,12 +189,21 @@ const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messag
 
 // ── Form field helpers ────────────────────────────────────────────────────────
 
+/**
+ * shadcn's `Field` + `FieldLabel`, restyled onto omp tokens.
+ *
+ * `Field` ships `*:w-full` so its children stretch — correct for a plain input,
+ * wrong here: the provider-name field carries a Rename button that has to keep
+ * its intrinsic width, and the OAuth key field carries a flex row. `*:w-auto`
+ * puts that back and lets the controls keep the widths they already declare.
+ * `gap-1` restores the 4px the old hand-rolled version used.
+ */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <label style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500 }}>{label}</label>
+    <ShadcnField orientation="vertical" className="gap-1 *:w-auto">
+      <FieldLabel className="text-[11px] leading-normal text-text-muted">{label}</FieldLabel>
       {children}
-    </div>
+    </ShadcnField>
   );
 }
 
@@ -251,11 +262,13 @@ function SecretTextInput({
         autoComplete={autoComplete}
         spellCheck={spellCheck}
       />
-      <button
+      {/* The Radix tooltip replaces the native `title`; both used to carry the
+            same string, so a hover showed the label twice. */}
+      <Pressable
         type="button"
         onClick={() => setVisible((v) => !v)}
          aria-label={visible ? t("i18n.hideDetails") : t("i18n.showDetails")}
-         title={visible ? t("i18n.hideDetails") : t("i18n.showDetails")}
+         tooltip={visible ? t("i18n.hideDetails") : t("i18n.showDetails")}
         style={{
           position: "absolute",
           right: 5,
@@ -286,7 +299,7 @@ function SecretTextInput({
             <circle cx="12" cy="12" r="3" />
           </svg>
         )}
-      </button>
+      </Pressable>
     </div>
   );
 }
@@ -2006,7 +2019,7 @@ export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }
                 </svg>
                 <span style={{ fontSize: 12, color: "var(--text)", flex: 1 }}>{t("roles.title")}</span>
               </div>
-              <div style={{ margin: "4px 8px", borderTop: "1px solid var(--border)" }} />
+              <Separator className="mx-2 my-1" />
 
               {/* Active OAuth subscriptions */}
               {activeOAuth.map((p) => {
@@ -2044,7 +2057,7 @@ export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }
 
               {/* Divider before custom providers, only when there are active managed providers */}
               {(activeOAuth.length > 0 || activeApiKey.length > 0) && providers.length > 0 && (
-                <div style={{ margin: "4px 8px", borderTop: "1px solid var(--border)" }} />
+                <Separator className="mx-2 my-1" />
               )}
 
               {/* Custom providers */}

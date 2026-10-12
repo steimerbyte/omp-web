@@ -329,7 +329,6 @@
 .serverToggle[data-on="true"] { border-color: color-mix(in srgb, var(--success) 55%, var(--border)); color: var(--success); }
 .serverToggle:disabled { cursor: wait; opacity: .5; }
 .serverName { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sourceBadge { max-width: 76px; overflow: hidden; text-overflow: ellipsis; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); font-size: 8px; white-space: nowrap; }
 .serverListEmpty { padding: 22px 10px; color: var(--text-dim); font: 10px/1.5 var(--font-mono); text-align: center; }
 .statusDot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
 .statusDot[data-off="true"] { background: var(--text-dim); }
