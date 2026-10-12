@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useAnimationPreference } from "./AnimationProvider";
 import { SHIMMER_DURATION, SWEEP_DURATION } from "./animations";
 import type { AnimationMode } from "./animation-mode";
@@ -63,15 +64,24 @@ export function useShimmerProps(): ShimmerProps {
   const mode = useAnimationPreference();
   const style = { backgroundImage: LOOP_IMAGE, backgroundSize: "200% 100%" };
 
-  if (mode === "off") return { motion: {}, style };
-
-  return {
-    motion: {
-      animate: { backgroundPosition: ["200% 0%", "-200% 0%"] },
-      transition: { duration: SHIMMER_DURATION, repeat: Infinity, ease: "linear" },
-    },
-    style,
-  };
+  // Memoised, and not cosmetic. Motion restarts an animation whenever the
+  // `animate` prop is a new object, and a surface that re-renders — a panel
+  // with a streaming file list behind it — re-renders constantly. Building the
+  // keyframes fresh every render therefore replayed the wash forever and it
+  // never got past its first few percent.
+  return useMemo(
+    () =>
+      mode === "off"
+        ? { motion: {}, style }
+        : {
+            motion: {
+              animate: { backgroundPosition: ["200% 0%", "-200% 0%"] },
+              transition: { duration: SHIMMER_DURATION, repeat: Infinity, ease: "linear" as const },
+            },
+            style,
+          },
+    [mode],
+  );
 }
 
 /**
@@ -90,11 +100,18 @@ export function useSweepProps(): SweepKeys & { style: ShimmerProps["style"] } {
   const mode = useAnimationPreference();
   const style = { backgroundImage: washImage(70), backgroundSize: "220% 100%" };
 
-  if (mode === "off") return { animate: {}, transition: {}, style: { backgroundImage: "none", backgroundSize: style.backgroundSize } };
-
-  return {
-    animate: { backgroundPosition: ["220% 0%", "-220% 0%"] },
-    transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" } },
-    style,
-  };
+  // Same reason as in `useShimmerProps`: a new `animate` object per render
+  // replays the one-shot wash on every render, so on a re-rendering panel it
+  // never completes and the band sits parked part-way across the surface.
+  return useMemo(
+    () =>
+      mode === "off"
+        ? { animate: {}, transition: {}, style: { backgroundImage: "none", backgroundSize: style.backgroundSize } }
+        : {
+            animate: { backgroundPosition: ["220% 0%", "-220% 0%"] },
+            transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" as const } },
+            style,
+          },
+    [mode],
+  );
 }

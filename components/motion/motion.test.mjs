@@ -139,6 +139,27 @@ test("Jede aufpoppende Flaeche spielt den Wash, nicht nur die Ladeflaechen", () 
   assert.equal((enter.match(/useSweepProps\(\)/g) ?? []).length, 2);
 });
 
+test("Wash-Hooks sind memoised, sonst startet der Wash bei jedem Render neu", () => {
+  // Motion restarts an animation whenever `animate` is a new object. Building
+  // the keyframes inside the hook body instead of in a `useMemo` made a
+  // re-rendering panel replay the one-shot wash on every single render, so it
+  // never got past its first few percent and the band sat parked across the
+  // Explorer window for as long as it stayed open.
+  const source = readFileSync(new URL("./hooks.ts", import.meta.url), "utf8");
+  for (const hook of ["useSweepProps", "useShimmerProps"]) {
+    const body = source.slice(source.indexOf(`export function ${hook}`));
+    // Stop at the next top-level export so a later hook cannot pass the test
+    // that an earlier one should have failed.
+    const end = body.indexOf("\nexport function", 10);
+    const fn = end === -1 ? body : body.slice(0, end);
+    assert.match(fn, /useMemo\(/, `${hook} ohne useMemo`);
+    assert.match(fn, /\[mode\]/, `${hook} ohne Abhaengigkeit`);
+  }
+  // And neither may build the keyframes outside the memo.
+  const sweep = source.slice(source.indexOf("export function useSweepProps"));
+  assert.doesNotMatch(sweep, /^  return \{\n    animate:/m, "Keyframes ausserhalb des Memo");
+});
+
 test("Kein motion-Element spreadet animate ueber sein eigenes animate", () => {
   // Spreading `animate` replaces the object instead of merging into it. The
   // panel's own `opacity: 1` was dropped that way, the element kept its
