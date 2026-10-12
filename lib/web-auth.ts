@@ -17,6 +17,20 @@ declare global {
   // The cached username plus the file mtime that produced it. A settings-panel
   // write invalidates the cache by changing the mtime — no extra invalidation
   // hook needed, and per-request `getExpectedUsername` calls stay cheap.
+  //
+  // The key is the mtime alone, not the pair of (path, mtime). That is only
+  // sound while the path is constant, and it is: `resolveWebAuthFile` reads
+  // exactly one env, and in the server that env is always `process.env`.
+  // `WebAuthStoreOptions.env` exists so a *test* can point the store at a
+  // throwaway file, and no production call site uses it — see the entry points
+  // enumerated in `lib/web-auth-username-cache.wiring.test.mjs`, which fails the
+  // moment one of them grows an `env` or `file` option. Two files with equal
+  // mtime are therefore unreachable here, not merely unlikely.
+  //
+  // If that test ever has to be relaxed because a caller legitimately needs a
+  // second credential file, the fix is to put `file` in this key the same way
+  // `readAdminRoles` in `bin/web-auth-store.js` already does. Do not paper over
+  // it by clearing the cache instead: the two files would still race on mtime.
   var __ompWebAuthUsernameCache: { fileMtimeMs: number; username: string } | undefined;
 }
 
