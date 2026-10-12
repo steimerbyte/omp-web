@@ -130,10 +130,30 @@ test("Jede aufpoppende Flaeche spielt den Wash, nicht nur die Ladeflaechen", () 
   for (const file of ["Reveal.tsx", "Enter.tsx"]) {
     const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf8");
     assert.match(source, /useSweepProps\(\)/, file);
-    assert.match(source, /\.\.\.sweep\.motion/, file);
+    assert.match(source, /\.\.\.sweep\.animate/, file);
+    assert.match(source, /\.\.\.sweep\.transition/, file);
     assert.match(source, /\.\.\.sweep\.style/, file);
   }
   // Enter carries it for the popovers and ModalPanel for the dialogs.
   const enter = readFileSync(new URL("./Enter.tsx", import.meta.url), "utf8");
   assert.equal((enter.match(/useSweepProps\(\)/g) ?? []).length, 2);
+});
+
+test("Kein motion-Element spreadet animate ueber sein eigenes animate", () => {
+  // Spreading `animate` replaces the object instead of merging into it. The
+  // panel's own `opacity: 1` was dropped that way, the element kept its
+  // `initial` opacity of 0, and every popover, dialog and login form rendered
+  // as a blank page. Only `style` and `className` may be spread.
+  for (const file of ["Reveal.tsx", "Enter.tsx", "Shimmer.tsx", "Skeleton.tsx", "Pressable.tsx"]) {
+    const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /^\s*\{\.\.\.\w+\.motion\}\s*$/m, file);
+    assert.doesNotMatch(source, /^\s*\{\.\.\.\w+\.animate\}\s*$/m, file);
+  }
+  // The hook must not hand out a ready-made `animate` key at all.
+  const hooks = readFileSync(new URL("./hooks.ts", import.meta.url), "utf8");
+  const sweep = hooks.slice(hooks.indexOf("export function useSweepProps"));
+  assert.doesNotMatch(sweep, /motion:\s*\{/, "useSweepProps");
+  // And the wash needs its own length, so it carries a value-specific
+  // transition rather than hijacking the entrance timing.
+  assert.match(sweep, /transition:\s*\{\s*backgroundPosition:/, "wertsspezifische Transition");
 });

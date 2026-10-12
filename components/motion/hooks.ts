@@ -27,6 +27,21 @@ export type ShimmerProps = {
   };
 };
 
+/**
+ * The sweep half only, for elements that animate something else as well.
+ *
+ * This must NOT be spread as `{...sweep}` after an `animate` prop: a spread of
+ * `animate` replaces the whole object rather than merging into it, so the
+ * panel's own `opacity: 1` would be dropped and the element would sit at its
+ * `initial` opacity of 0 forever. Instead the caller merges the two keyframes
+ * and gives `backgroundPosition` its own value-specific transition, which is
+ * what keeps the entrance at 240 ms while the wash runs for its full length.
+ */
+export type SweepKeys = {
+  animate: { backgroundPosition?: string[] };
+  transition: { backgroundPosition?: { duration: number; repeat: number; ease: "easeOut" } };
+};
+
 // Only accent tokens. A colour literal would survive a theme import as the
 // wrong hue, because `applyOmpPalette` rewrites these variables at runtime.
 //
@@ -67,18 +82,19 @@ export function useShimmerProps(): ShimmerProps {
  * finished loading. The gradient is transparent at the edges, so it needs no
  * wrapper and no `overflow: hidden` — which matters, because the popovers that
  * use this position themselves and must not be clipped by their own entrance.
+ *
+ * Returns the keyframes and the background, not a ready-made prop set. See
+ * `SweepKeys` for why merging is the caller's job.
  */
-export function useSweepProps(): ShimmerProps {
+export function useSweepProps(): SweepKeys & { style: ShimmerProps["style"] } {
   const mode = useAnimationPreference();
   const style = { backgroundImage: washImage(70), backgroundSize: "220% 100%" };
 
-  if (mode === "off") return { motion: {}, style: { backgroundImage: "none", backgroundSize: style.backgroundSize } };
+  if (mode === "off") return { animate: {}, transition: {}, style: { backgroundImage: "none", backgroundSize: style.backgroundSize } };
 
   return {
-    motion: {
-      animate: { backgroundPosition: ["220% 0%", "-220% 0%"] },
-      transition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" },
-    },
+    animate: { backgroundPosition: ["220% 0%", "-220% 0%"] },
+    transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" } },
     style,
   };
 }

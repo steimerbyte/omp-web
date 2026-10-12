@@ -46,9 +46,8 @@ export const Enter = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "re
       className={className}
       {...rest}
       initial={initialFor(direction)}
-      animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
-      transition={{ duration: DURATION_BASE, ease: EASE_POP }}
-      {...sweep.motion}
+      animate={{ opacity: 1, x: 0, y: 0, scale: 1, ...sweep.animate }}
+      transition={{ duration: DURATION_BASE, ease: EASE_POP, ...sweep.transition }}
       style={{ ...style, ...sweep.style }}
     >
       {children}
@@ -82,9 +81,8 @@ export const ModalPanel = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">
       className={className}
       {...rest}
       initial={{ opacity: 0, scale: 0.96, y: 6 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: EASE_POP }}
-      {...sweep.motion}
+      animate={{ opacity: 1, scale: 1, y: 0, ...sweep.animate }}
+      transition={{ duration: 0.2, ease: EASE_POP, ...sweep.transition }}
       style={{ ...style, ...sweep.style }}
     >
       {children}

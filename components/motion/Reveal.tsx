@@ -31,9 +31,8 @@ export const Reveal = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "r
       className={className}
       {...rest}
       initial={{ opacity: 0, y, filter: "blur(6px)" }}
-      animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-      transition={{ duration: 0.24, ease: EASE_POP }}
-      {...sweep.motion}
+      animate={{ opacity: 1, y: 0, filter: "blur(0px)", ...sweep.animate }}
+      transition={{ duration: 0.24, ease: EASE_POP, ...sweep.transition }}
       style={{ ...style, ...sweep.style }}
     >
       {children}
