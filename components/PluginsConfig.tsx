@@ -860,8 +860,10 @@ export function PluginsConfig({
           >
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
               {loading ? (
-                <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>
-                  Loading...
+                <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 10 }} role="status" aria-label={t("i18n.loading")}>
+                  {[0, 1, 2, 3].map((row) => (
+                    <Skeleton key={row} height={14} width={row === 3 ? "60%" : "100%"} />
+                  ))}
                 </div>
               ) : error ? (
                 <div style={{ padding: "10px 8px", fontSize: 11, color: "#ef4444" }}>

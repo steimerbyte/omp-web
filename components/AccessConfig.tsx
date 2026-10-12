@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { WebAccessStatus } from "@/lib/api-types";
 import styles from "./SettingsConfig.module.css";
+import { Skeleton } from "./motion/Skeleton";
 
 /**
  * The password lock, from the settings dialog.
@@ -138,7 +139,14 @@ export function AccessConfig() {
   }, [send]);
 
   if (!status) {
-    return <div className={styles.empty}>{loadError ?? "Loading password access…"}</div>;
+    if (loadError) return <div className={styles.empty}>{loadError}</div>;
+    return (
+      <div className={styles.settingsBody} role="status" aria-label="Loading password access…" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Skeleton height={18} width="45%" />
+        <Skeleton height={13} />
+        <Skeleton height={13} width="70%" />
+      </div>
+    );
   }
 
   const readOnly = status.managedByEnvironment;

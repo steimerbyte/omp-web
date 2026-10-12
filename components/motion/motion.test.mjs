@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   ANIMATION_STORAGE_KEY,
   DEFAULT_ANIMATION_MODE,
@@ -94,4 +95,45 @@ test("Ein blockierter localStorage-Zugriff liefert den Default statt zu werfen",
 
 test("Ohne Fenster (Server-Render) liefert der Lesevorgang den Default", () => {
   assert.equal(readStoredAnimationMode(), "full");
+});
+
+/*
+ * The two failures below were only visible in a browser. The first one was a
+ * `background` shorthand inside `Skeleton` overwriting the `backgroundImage`
+ * the shimmer installs, which deleted the gradient outright — the loading
+ * state rendered as a flat block and looked like no animation at all. The
+ * second is that `MotionConfig` never reaches gesture animations.
+ */
+
+test("Skeleton setzt die Flaeche über backgroundColor, nicht über den background-Shorthand", () => {
+  const source = readFileSync(new URL("./Skeleton.tsx", import.meta.url), "utf8");
+  // The shorthand resets background-image, which is exactly the wash.
+  assert.doesNotMatch(source, /background:\s*"var\(--/);
+  assert.match(source, /backgroundColor:\s*"var\(--bg-hover\)"/);
+});
+
+test("Pressable und Spin prüfen den Modus selbst, weil reducedMotion Gesten nicht erfasst", () => {
+  // motion evaluates shouldReduceMotion only when resolving an `animate`
+  // target and for layout animations; a gesture runs straight through
+  // animateSingleValue and never sees it. Measured: with the setting on "Off"
+  // a whileTap still scaled the button.
+  for (const file of ["Pressable.tsx", "Enter.tsx"]) {
+    const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf8");
+    assert.match(source, /useAnimationPreference\(\)/, file);
+    assert.match(source, /mode === "off"/, file);
+  }
+});
+
+test("Jede aufpoppende Flaeche spielt den Wash, nicht nur die Ladeflaechen", () => {
+  // A panel that only rises and un-blurs says "it appeared"; the sweep says
+  // "it arrived". Both halves are required.
+  for (const file of ["Reveal.tsx", "Enter.tsx"]) {
+    const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf8");
+    assert.match(source, /useSweepProps\(\)/, file);
+    assert.match(source, /\.\.\.sweep\.motion/, file);
+    assert.match(source, /\.\.\.sweep\.style/, file);
+  }
+  // Enter carries it for the popovers and ModalPanel for the dialogs.
+  const enter = readFileSync(new URL("./Enter.tsx", import.meta.url), "utf8");
+  assert.equal((enter.match(/useSweepProps\(\)/g) ?? []).length, 2);
 });

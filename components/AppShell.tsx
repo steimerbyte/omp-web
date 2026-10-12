@@ -13,6 +13,7 @@ import { TerminalViewer } from "./TerminalViewer";
 import { SystemStatsBadge } from "./SystemStatsBadge";
 import { SettingsConfig } from "./SettingsConfig";
 import { Reveal } from "./motion/Reveal";
+import { Shimmer } from "./motion/Shimmer";
 import { Pressable } from "./motion/Pressable";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { OmpUpdateIndicator } from "./OmpUpdateIndicator";
@@ -1393,7 +1394,7 @@ export function AppShell() {
               zIndex: 500,
             }}>
               {activeTopPanel === "language" && (
-                <div
+                <Reveal
                   role="menu"
                   aria-label={translate("common.language")}
                   style={{
@@ -1433,10 +1434,10 @@ export function AppShell() {
                       <span>{plugin.label}</span>
                     </button>
                   ))}
-                </div>
+                </Reveal>
               )}
               {activeTopPanel === "system" && (
-                <div style={{
+                <Reveal style={{
                   background: "var(--bg-panel)",
                   borderBottom: "1px solid var(--border)",
                 }}>
@@ -1462,7 +1463,7 @@ export function AppShell() {
                        {translate("system.load")}
                     </div>
                   )}
-                </div>
+                </Reveal>
               )}
               {activeTopPanel === "session" && (
                 <Reveal style={{
@@ -1670,7 +1671,9 @@ export function AppShell() {
               role="status"
               style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
             >
-               <div style={{ fontSize: 14, color: "var(--text)" }}>{translate("workspace.opening")}</div>
+               <Shimmer radius={6} style={{ padding: "6px 12px", fontSize: 14, color: "var(--text)" }}>
+                 {translate("workspace.opening")}
+               </Shimmer>
               <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
                 {initialNavigation.requestedCwd}
               </div>

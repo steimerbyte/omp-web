@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { WebAccount } from "@/bin/web-auth-store.js";
 import type { WhoAmIResponse } from "@/app/api/whoami/route";
 import styles from "./SettingsConfig.module.css";
+import { Skeleton } from "./motion/Skeleton";
 
 /**
  * Kontenverwaltung, nur fuer Admins.
@@ -153,7 +154,13 @@ export function UsersConfig() {
         <section className={styles.group}>
           <h3 className={styles.groupTitle}>Accounts</h3>
           {loadError && <div className={styles.error}>{loadError}</div>}
-          {accounts === null && <div className={styles.readOnlyNotice}>Loading accounts…</div>}
+          {accounts === null && (
+            <div role="status" aria-label="Loading accounts…" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Skeleton height={16} width="40%" />
+              <Skeleton height={14} />
+              <Skeleton height={14} width="80%" />
+            </div>
+          )}
           {accounts?.length === 0 && (
             <div className={styles.readOnlyNotice}>No accounts yet. The first one is created below.</div>
           )}

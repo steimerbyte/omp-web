@@ -23,6 +23,13 @@ export const EASE_POP = [0.2, 0.8, 0.3, 1] as const;
 /** One full sweep of the shimmer wash, in seconds. */
 export const SHIMMER_DURATION = 1.6;
 
+/**
+ * The one-shot wash played when a panel pops up. Longer than the entrance
+ * itself (0.24 s) so the band is still travelling while the panel settles,
+ * which is what reads as "it arrived" rather than "it appeared".
+ */
+export const SWEEP_DURATION = 0.72;
+
 /** A full turn. Spinners and gear icons share this so they stay in step. */
 export const SPIN_TRANSITION = { repeat: Infinity, duration: 0.8, ease: "linear" } as const;
 

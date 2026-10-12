@@ -1,7 +1,7 @@
 "use client";
 
 import { useAnimationPreference } from "./AnimationProvider";
-import { SHIMMER_DURATION } from "./animations";
+import { SHIMMER_DURATION, SWEEP_DURATION } from "./animations";
 import type { AnimationMode } from "./animation-mode";
 
 /**
@@ -18,7 +18,7 @@ export type ShimmerProps = {
   /** Spread onto the `motion` element. Empty when animations are off. */
   motion: {
     animate?: { backgroundPosition: string[] };
-    transition?: { duration: number; repeat: number; ease: "linear" };
+    transition?: { duration: number; repeat: number; ease: "linear" | "easeOut" };
   };
   /** Spread onto the element's `style`. */
   style: {
@@ -29,16 +29,24 @@ export type ShimmerProps = {
 
 // Only accent tokens. A colour literal would survive a theme import as the
 // wrong hue, because `applyOmpPalette` rewrites these variables at runtime.
-const WASH_IMAGE =
-  "linear-gradient(90deg, transparent 15%, color-mix(in srgb, var(--accent) 26%, transparent) 50%, transparent 85%)";
+//
+// The band is transparent at both ends so it can sit on top of whatever the
+// element already paints, and the core is bright enough to read against
+// --bg-panel in both themes. At the old 26% it was effectively invisible on
+// dark panels, which is what made the loading states look like plain blocks.
+const washImage = (strength: number) =>
+  `linear-gradient(90deg, transparent 10%, color-mix(in srgb, var(--accent) ${strength}%, transparent) 46%, color-mix(in srgb, var(--text) ${Math.round(strength / 3)}%, transparent) 50%, color-mix(in srgb, var(--accent) ${strength}%, transparent) 54%, transparent 90%)`;
+
+const LOOP_IMAGE = washImage(46);
 
 export function useAnimationMode(): AnimationMode {
   return useAnimationPreference();
 }
 
+/** The endless wash for a surface that is waiting on something. */
 export function useShimmerProps(): ShimmerProps {
   const mode = useAnimationPreference();
-  const style = { backgroundImage: WASH_IMAGE, backgroundSize: "200% 100%" };
+  const style = { backgroundImage: LOOP_IMAGE, backgroundSize: "200% 100%" };
 
   if (mode === "off") return { motion: {}, style };
 
@@ -46,6 +54,30 @@ export function useShimmerProps(): ShimmerProps {
     motion: {
       animate: { backgroundPosition: ["200% 0%", "-200% 0%"] },
       transition: { duration: SHIMMER_DURATION, repeat: Infinity, ease: "linear" },
+    },
+    style,
+  };
+}
+
+/**
+ * The same band, played once when a panel pops up.
+ *
+ * A one-shot wash is what tells the eye "something just arrived"; the endless
+ * one would be wrong here because it would never stop on a panel that is
+ * finished loading. The gradient is transparent at the edges, so it needs no
+ * wrapper and no `overflow: hidden` — which matters, because the popovers that
+ * use this position themselves and must not be clipped by their own entrance.
+ */
+export function useSweepProps(): ShimmerProps {
+  const mode = useAnimationPreference();
+  const style = { backgroundImage: washImage(70), backgroundSize: "220% 100%" };
+
+  if (mode === "off") return { motion: {}, style: { backgroundImage: "none", backgroundSize: style.backgroundSize } };
+
+  return {
+    motion: {
+      animate: { backgroundPosition: ["220% 0%", "-220% 0%"] },
+      transition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" },
     },
     style,
   };

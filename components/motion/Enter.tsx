@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { forwardRef } from "react";
 import { DURATION_BASE, EASE_POP, SPIN_TRANSITION } from "./animations";
 import { useAnimationPreference } from "./AnimationProvider";
+import { useSweepProps } from "./hooks";
 import type { HTMLMotionProps } from "motion/react";
 
 /**
@@ -37,15 +38,18 @@ const initialFor = (direction: EnterDirection) => ({
 export const Enter = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "ref"> & {
   direction?: EnterDirection;
 }>(function Enter({ children, direction = "down", className, style, ...rest }, ref) {
+  const sweep = useSweepProps();
+
   return (
     <motion.div
       ref={ref}
       className={className}
-      style={style}
       {...rest}
       initial={initialFor(direction)}
       animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
       transition={{ duration: DURATION_BASE, ease: EASE_POP }}
+      {...sweep.motion}
+      style={{ ...style, ...sweep.style }}
     >
       {children}
     </motion.div>
@@ -70,15 +74,18 @@ export const ModalBackdrop = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"di
 });
 
 export const ModalPanel = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "ref">>(function ModalPanel({ children, className, style, ...rest }, ref) {
+  const sweep = useSweepProps();
+
   return (
     <motion.div
       ref={ref}
       className={className}
-      style={style}
       {...rest}
       initial={{ opacity: 0, scale: 0.96, y: 6 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.2, ease: EASE_POP }}
+      {...sweep.motion}
+      style={{ ...style, ...sweep.style }}
     >
       {children}
     </motion.div>

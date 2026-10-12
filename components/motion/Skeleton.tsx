@@ -22,7 +22,9 @@ export function Skeleton({ width, height, radius = 4 }: {
       <div
         aria-hidden
         style={{
-          background: "var(--bg-hover)",
+          // backgroundColor, never the `background` shorthand: the shorthand
+          // resets background-image, which is the shimmer's gradient.
+          backgroundColor: "var(--bg-hover)",
           width,
           height,
           borderRadius: radius,
@@ -32,6 +34,6 @@ export function Skeleton({ width, height, radius = 4 }: {
   }
 
   return (
-    <Shimmer radius={radius} style={{ background: "var(--bg-hover)", width, height }} />
+    <Shimmer radius={radius} style={{ backgroundColor: "var(--bg-hover)", width, height }} />
   );
 }
