@@ -15,6 +15,7 @@ import { normalizeCustomPanelLines, parseAnsiLine, stripAnsi } from "@/lib/ansi"
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import { motion } from "motion/react";
 import { PULSE_TRANSITION } from "./motion/animations";
+import { useAnimationMode } from "./motion/hooks";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import type {
   AgentMessage,
@@ -1282,6 +1283,7 @@ function ConsoleOutputPreview({
 }) {
   const { isDark } = useTheme();
   const { t } = useI18n();
+  const mode = useAnimationMode();
   const normalizedLines = normalizeCustomPanelLines(output.split(/\r?\n/));
   const outputLines = normalizedLines.length === 1 && normalizedLines[0] === "" ? [] : normalizedLines;
   const statusLabel = pending ? t("chat.runningCommand") : isError ? "failed" : "";
@@ -1351,7 +1353,7 @@ function ConsoleOutputPreview({
           {pending && (
             <motion.span
               style={{ display: "inline-block", color: "var(--accent)" }}
-              animate={{ opacity: [1, 0.35, 1] }}
+              animate={mode === "off" ? undefined : { opacity: [1, 0.35, 1] }}
               transition={PULSE_TRANSITION}
               aria-label={t("chat.runningCommand")}
             >▋</motion.span>

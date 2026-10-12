@@ -8,6 +8,7 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { MessageView } from "./MessageView";
 import { motion } from "motion/react";
 import { SPIN_TRANSITION } from "./motion/animations";
+import { useAnimationMode } from "./motion/hooks";
 
 type SubagentTranscriptEntry = {
   id: string;
@@ -42,12 +43,22 @@ function statusColor(subagent: SubagentSnapshot): string {
 
 function SubagentStatusGlyph({ subagent }: { subagent: SubagentSnapshot }) {
   const color = statusColor(subagent);
+  const mode = useAnimationMode();
   if (isSubagentActive(subagent)) {
     return (
       <motion.svg
         width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"
         style={{ color, transformOrigin: "center" }}
-        animate={{ rotate: 360 }}
+        // A raw `motion.svg` bypasses the mode check that `Spin` (Enter.tsx)
+        // does. `MotionConfig reducedMotion` cannot catch this either: in
+        // node_modules/motion-dom/dist/cjs/index.js `shouldReduceMotion` is
+        // evaluated at exactly two places — line ~3753, when an `animate`
+        // target is resolved, and there only for `positionalKeys`
+        // (x/y/scale/rotate), and line ~8997 for layout animations. The
+        // repeat itself is not a layout animation and is not part of that
+        // check, so `repeat: Infinity` keeps turning with the setting on
+        // "Off". The mode is read here instead, same as `Spin`.
+        animate={mode === "off" ? undefined : { rotate: 360 }}
         transition={SPIN_TRANSITION}
       >
         <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.8" strokeDasharray="22 13" />

@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 import { Pressable } from "./motion/Pressable";
 import { Skeleton } from "./motion/Skeleton";
 import { DURATION_FAST, EASE_POP } from "./motion/animations";
+import { useAnimationMode } from "./motion/hooks";
 import { ModelRolesPanel } from "./ModelRolesPanel";
 import { SearchableSelect } from "./SearchableSelect";
 import { Field as ShadcnField, FieldLabel } from "@/components/ui/field";
@@ -1772,6 +1773,7 @@ function AddProviderPicker({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }: { cwd?: string | null; onClose: () => void; embedded?: boolean; onModelsChanged?: () => void }) {
+  const animationMode = useAnimationMode();
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
@@ -2163,7 +2165,14 @@ export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }
           <motion.button
             onClick={handleSave}
             disabled={saving || savedOk}
-            whileTap={{ scale: 0.96 }}
+            // Same reason as `Pressable.tsx:53`: a gesture animation runs
+            // through `AnimationState.startAnimation` → `animateSingleValue`,
+            // which never consults `shouldReduceMotion`. In
+            // node_modules/motion-dom/dist/cjs/index.js that flag is
+            // evaluated only at line ~3753 (resolving an `animate` target, and
+            // only for `positionalKeys`) and line ~8997 (layout animations),
+            // so `MotionConfig reducedMotion` leaves this tap scaling.
+            whileTap={animationMode === "off" ? undefined : { scale: 0.96 }}
             transition={{ duration: DURATION_FAST }}
             style={{
             position: "relative",

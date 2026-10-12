@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { Enter } from "./motion/Enter";
 import { Pressable } from "./motion/Pressable";
 import { DURATION_FAST, PULSE_TRANSITION } from "./motion/animations";
+import { useAnimationMode } from "./motion/hooks";
 
 interface TerminalSummary {
   id: string;
@@ -24,6 +25,16 @@ interface Props {
 }
 
 export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
+  // Both raw `motion.*` elements below (the row's whileTap and the status
+  // dot's pulse) skip the mode check `Pressable` does, and `MotionConfig`
+  // does not cover either: in node_modules/motion-dom/dist/cjs/index.js
+  // `shouldReduceMotion` is evaluated at exactly two places — line ~3753,
+  // when an `animate` target is resolved, and there only for
+  // `positionalKeys` (x/y/scale/rotate), plus line ~8997 for layout
+  // animations. A gesture runs through `AnimationState.startAnimation` →
+  // `animateSingleValue` and never sees it, and `repeat: Infinity` is not a
+  // layout animation, so the pulse keeps breathing on "Off".
+  const mode = useAnimationMode();
   const [open, setOpen] = useState(false);
   const [terminals, setTerminals] = useState<TerminalSummary[]>([]);
   const [busy, setBusy] = useState(false);
@@ -203,7 +214,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
               <motion.div
                 key={t.id}
                 role="menuitem"
-                whileTap={t.status === "running"
+                whileTap={mode === "off" ? undefined : t.status === "running"
                   ? { scale: 0.96, backgroundColor: "var(--accent-hover, var(--accent))" }
                   : undefined}
                 transition={{ duration: DURATION_FAST }}
@@ -228,7 +239,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
               >
                 <motion.span
                   aria-label={t.status}
-                  animate={t.status === "running" ? { opacity: [1, 0.35, 1] } : undefined}
+                  animate={mode !== "off" && t.status === "running" ? { opacity: [1, 0.35, 1] } : undefined}
                   transition={PULSE_TRANSITION}
                   style={{
                     width: 8,
