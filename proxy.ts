@@ -21,87 +21,30 @@ const RECOVERY_API = "/api/web-access/recovery";
 const LOGIN_PAGE = "/login";
 const LOGIN_API = "/api/web-access/login";
 
-const AUTHENTICATE_HEADERS = {
-  "Cache-Control": "no-store",
-  "WWW-Authenticate": 'Basic realm="omp-web", charset="UTF-8"',
-};
+const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-function unauthorizedPage(): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>omp-web · authentication required</title>
-<style>
-  :root { color-scheme: dark light; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #14161a; color: #e6e8ea;
-         font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 24px; }
-  main { max-width: 34rem; width: 100%; }
-  h1 { font-size: 1.25rem; margin: 0 0 1rem; letter-spacing: -.01em; }
-  p { margin: 0 0 0.85rem; color: #a8adb4; }
-  code { color: #e6e8ea; }
-  a { color: #7aa2f7; }
-
-  /* The Sign-in button is intentionally still while it sits there — it only
-     animates on click, then redirects to /login. The animation is two short
-     keyframe phases so a click feels like a confirmation, not a flourish.
-     Colour follows the theme: useTheme.applyOmpPalette rewrites every token
-     from /api/theme at runtime, so the accent is whatever palette the operator
-     picked, not the values baked into globals.css. The page is inline HTML
-     served by the proxy, so it declares the same accent the login page uses
-     and picks up the same runtime override through the token. */
-  .signin {
-    display: block;
-    width: 100%;
-    height: 56px;
-    margin: 1.25rem 0 0.5rem;
-    padding: 0 1.25rem;
-    border: 1px solid var(--border, #2a313a);
-    border-radius: 12px;
-    background: #1a1f26;
-    color: #e6e8ea;
-    font: 700 14px/56px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
-  }
-  .signin:hover { background: #232a33; border-color: #3a4250; }
-  .signin:focus-visible { outline: 2px solid var(--accent, #7aa2f7); outline-offset: 2px; }
-  .signin:active { transform: translateY(1px); }
-  .signin.clicked { animation: signin-press 480ms ease-out forwards; }
-  @keyframes signin-press {
-    0%   { background: #1a1f26; border-color: #2a313a; transform: scale(1); }
-    35%  { background: color-mix(in srgb, var(--accent, #7aa2f7) 22%, #1a1f26); border-color: var(--accent, #7aa2f7); transform: scale(.98); }
-    100% { background: var(--accent, #7aa2f7); border-color: var(--accent-hover, #7aa2f7); transform: scale(1); color: #ffffff; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .signin.clicked { animation-duration: 1ms; }
-  }
-</style>
-</head>
-<body>
-<main>
-  <h1>Authentication required</h1>
-  <p>omp-web is locked. Sign in with your username and password.</p>
-  <p>Forgot it? <a href="${RECOVERY_PAGE}">Recover access</a> — you will need to read a one-time code off the console
-     of the machine running omp-web.</p>
-  <button type="button" class="signin" id="omp-signin">Sign in</button>
-</main>
-<script>
-  // The button animates first, then navigates. A 480ms delay lines up with
-  // the keyframe end so the press feels intentional rather than a flicker.
-  var btn = document.getElementById("omp-signin");
-  btn.addEventListener("click", function () {
-    btn.classList.add("clicked");
-    btn.disabled = true;
-    window.setTimeout(function () { window.location.replace(${JSON.stringify(LOGIN_PAGE)}); }, 460);
-  });
-</script>
-</body>
-</html>
-`;
+/**
+ * The challenge a client is met with when it is refused.
+ *
+ * `WWW-Authenticate` is what raises the native Basic dialog, so it may never
+ * go to a browser. Rather than trust the rule "browsers only prompt on a
+ * top-level navigation" — true today in Chrome and Firefox, and not something
+ * this code can enforce — the header is withheld from anything that carries
+ * Fetch Metadata, which every browser sends and no CLI sends. A header that
+ * cannot reach a browser cannot open a dialog, whatever a future engine does
+ * with a 401 on an XHR.
+ *
+ * Scripted clients keep it, and they need it: RFC 9110 §15.5.2 asks for the
+ * header on every 401, it names the scheme this door accepts, and
+ * challenge-response clients send nothing until they have seen it. `curl -u`
+ * works either way — it offers Basic without waiting to be asked — but
+ * `curl --anyauth`, and the Go, Java and Rust stacks, all wait. Losing the
+ * header would not change their status code, only stop them from ever
+ * authenticating.
+ */
+function rejectionHeaders(request: NextRequest): Record<string, string> {
+  const isBrowser = request.headers.has("sec-fetch-mode") || request.headers.has("sec-fetch-site");
+  return isBrowser ? { ...NO_STORE } : { ...NO_STORE, "WWW-Authenticate": 'Basic realm="omp-web", charset="UTF-8"' };
 }
 
 /**
@@ -206,25 +149,35 @@ export function proxy(request: NextRequest) {
   }
 
   if (decision === "unauthorized") {
-    if (isApiRequest) {
-      return NextResponse.json(
-        { error: "Authentication required", recoveryPath: RECOVERY_PAGE, loginPath: LOGIN_PAGE },
-        { status: 401, headers: AUTHENTICATE_HEADERS },
-      );
+    // There are exactly two answers to being refused, and which one goes out
+    // depends on who is asking.
+    //
+    // A browser gets the 302 to `/login` and nothing else. The alternative
+    // shape — a 401 carrying `WWW-Authenticate` — is what raises the native
+    // Basic dialog, and an inline HTML page behind it is a worse way in than a
+    // real form: the visitor cannot see that the door moved. So no response a
+    // browser can be shown carries that header, and the NGINX-style page is
+    // gone rather than left as a fallback nobody reaches.
+    //
+    // A script keeps the 401, and the challenge on it where it can use one.
+    // That is the machine-readable contract: RFC 9110 §15.5.2 asks for the
+    // header on every 401, it names the accepted scheme, and a
+    // challenge-response client sends nothing until it has seen it. Nothing
+    // about the rejection is softer for a script than for a browser — same
+    // `decision`, same status, same body; `rejectionHeaders` is what keeps the
+    // one header apart, so a browser's own XHR to `/api/*` is refused without
+    // being handed anything that could open a dialog.
+    if (isNavigation(request, isApiRequest)) {
+      return NextResponse.redirect(new URL(LOGIN_PAGE, request.url), {
+        status: 302,
+        headers: NO_STORE,
+      });
     }
 
-    // A browser navigation gets the login page instead of a 401 with a
-    // `WWW-Authenticate`, because that header is what raises the native Basic
-    // dialog — and a page whose only action is "reload" is a worse way in than
-    // a form. A `fetch`/XHR is not a navigation, so it keeps the 401 JSON.
-    if (isBrowserNavigation(request)) {
-      return NextResponse.redirect(new URL(LOGIN_PAGE, request.url), { status: 302 });
-    }
-
-    return new NextResponse(unauthorizedPage(), {
-      status: 401,
-      headers: { ...AUTHENTICATE_HEADERS, "Content-Type": "text/html; charset=utf-8" },
-    });
+    return NextResponse.json(
+      { error: "Authentication required", recoveryPath: RECOVERY_PAGE, loginPath: LOGIN_PAGE },
+      { status: 401, headers: rejectionHeaders(request) },
+    );
   }
 
   // Unlocked server, no credentials on the request: the request is allowed, and
@@ -236,18 +189,37 @@ export function proxy(request: NextRequest) {
 }
 
 /**
- * Whether this is a person typing a URL, as opposed to script asking for data.
- * Only a real navigation can be handed the login page; a client call has to
- * stay on the 401 so its caller can react to it.
+ * Whether this caller is loading a document into a browser window, as opposed
+ * to a script asking for data. Only a real navigation is handed the login page
+ * redirect; a client call stays on the 401 so its caller can react to it.
+ *
+ * `x-requested-with` is the one signal that settles it on its own: jQuery and
+ * everything built on it set it on an XHR, and no browser sets it on a
+ * navigation, so its presence rules a navigation out even when the fetch
+ * metadata below is absent.
+ *
+ * Past that, the two request kinds are told apart by `Sec-Fetch-Mode`, and
+ * they differ in how a *missing* header is read — which is the whole point:
+ *
+ *   - A page URL falls back to "navigation". No header means no promise of any
+ *     kind, and `curl http://host/` has to be one, because the browser needs
+ *     to land on `/login` and there is no other door left. The fallback errs
+ *     toward the redirect, and it errs in the harmless direction: it may hand
+ *     a script a 302 where it would have preferred a 401, but it can never
+ *     hand a page to a caller that asked for data.
+ *
+ *   - An API URL requires the header. `curl http://host/api/whoami` sends
+ *     none either, and its documented answer is a 401 with a challenge, so the
+ *     same fallback would break it. It is also the stricter rule, which is why
+ *     it is safe: a browser always sends `Sec-Fetch-Mode: navigate` for a
+ *     top-level load — including of an `/api/*` URL typed into the address
+ *     bar, which is a document load and would raise the dialog just like `/`
+ *     does. No script sends that header by accident.
  */
-function isBrowserNavigation(request: NextRequest): boolean {
+function isNavigation(request: NextRequest, isApiRequest: boolean): boolean {
   if (request.headers.get("x-requested-with")) return false;
-  if (request.headers.has("sec-fetch-mode")) {
-    return request.headers.get("sec-fetch-mode") === "navigate";
-  }
-  // No fetch metadata: a plain navigation from an address bar, a link, or a
-  // form post. Browsers always send `Sec-Fetch-Mode`; this is curl.
-  return true;
+  if (!request.headers.has("sec-fetch-mode")) return !isApiRequest;
+  return request.headers.get("sec-fetch-mode") === "navigate";
 }
 
 export const config = { matcher: ["/", "/login", "/recover", "/api/:path*"] };

@@ -5,6 +5,42 @@ upstream line — see the Provenance section in the README.
 
 ## v0.11.0
 
+### Sign-in
+
+**The native Basic-Auth dialog is gone.** A browser without a valid session
+cookie now gets a `302` to `/login` and the styled form, and nothing else.
+Two things caused the dialog and both are removed from `proxy.ts`:
+
+- The inline NGINX-style page that `unauthorizedPage()` returned as the
+  non-navigation fallback is deleted. Nothing referenced it outside the branch
+  that answered with it.
+- `WWW-Authenticate` can no longer reach a browser. It is withheld from any
+  request carrying Fetch Metadata — `Sec-Fetch-Mode` or `Sec-Fetch-Site`, which
+  every browser sends on any request and no CLI sends — so a header that
+  cannot arrive in a browser cannot open a dialog, whatever a future engine
+  does with a `401` on an XHR.
+
+**What did not change, for scripting clients.** An unauthenticated `/api/*`
+request is still refused with `401` and the same body:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/whoami   # 401
+curl -s http://127.0.0.1:8080/api/whoami | jq -r .error                 # Authentication required
+curl -u omp:'…' http://127.0.0.1:8080/api/whoami                          # 200
+```
+
+The challenge header itself is still sent to callers without Fetch Metadata, so
+`curl --anyauth` and the Go/Java/Rust stacks keep working unchanged. Two
+behaviours are worth knowing when a script reads a *page* URL rather than an
+API one:
+
+- `curl -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/` now answers
+  `302`, not `401` — bare curl sends no fetch metadata and is read as a
+  navigation. Use `-L` to follow it, or point the check at an `/api/*` route.
+- `unavailable` still answers `503` and still answers `503` on `/api/*`, and a
+  rejected request still refuses the same paths as before. Only the *form* of
+  the refusal moved.
+
 ### Animations
 
 **`motion` is now the single animation source.** The `.omp-*` classes and their
@@ -59,6 +95,31 @@ that lived in an inline `<style>` block inside `AppShell` are gone with them.
   - The plugins list, the access and account panels, and the two top-bar
     panels (system prompt and language) showed plain text or rendered as bare
     elements with no entrance at all. They shimmer now.
+  - **The endless wash now ends.** It circles once, runs out, and only then
+    begins again — on the login page and on every panel, since they share the
+    one rule. The cause was not the looping but `background-repeat`, which the
+    rule never set and which therefore defaulted to `repeat`. The band is a tile
+    twice the element's width whose gradient is transparent over its outer 10 %
+    at each end, which paints [20, 180] of each tile and leaves a clear gap of
+    40 percentage points before the next tile's paint begins. The element's own
+    window is 100 points wide, and a 100-point window cannot fit inside a
+    40-point gap — so the neighbouring tile always closed in behind the band
+    and refilled what it vacated, and the old travel had no empty moment
+    anywhere in it. Travelling further could not have helped. The darkest point
+    of that run was 0.19 against the band's 0.46, at 150 % of the way through,
+    and that is a dim position rather than a cleared one.
+    `background-repeat: no-repeat` is the condition for the run's endpoints
+    being empty at all, and therefore for a rest existing between two runs: the
+    run is now 190 % → -90 %, measured peak 0.0000 at both ends against 0.4600
+    at the midpoint. The fade is the gradient's own transparent tail, measured
+    decaying 0.38 → 0.27 → 0.16 → 0.05 → 0 across the last quarter of the run, so
+    it needs no second `opacity` claim on the same pixels. The last quarter of
+    the 1.6 s cycle is a rest: at 0.4 s it reads as a deliberate beat between
+    passes, where a shorter one would be integrated back into continuous motion
+    and a longer one would read as finished. Only the band rests — the surface
+    underneath is the skeleton, the badge or the label, so a loading panel is
+    never an empty one. `SHIMMER_DURATION` still rules the timing: the 75 % is a
+    share of the cycle, not a second duration.
 
 **Not verified in this release.** Stated plainly, because a release note that
 claims more than was tested is worse than one that admits the gap:
