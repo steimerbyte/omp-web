@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Plus, X } from "lucide-react";
 import { getFileIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 
 export interface FileTab {
   /**
@@ -45,10 +47,7 @@ export type Tab = FileTab | TerminalTab;
 
 /**
  * Mindestbewegung in Pixeln, ab der aus einem Klick ein Zug wird. Ohne diese
- * Schwelle waehlt schon das kleinste Wackeln beim Klick den Tab aus; mit ihr
- * muss der Zeiger vier Pixel wirklich gewandert sein, damit ausgewertet wird.
- * Der Wert liegt ueber dem, was ein ruhiger Klick an Rauschen erzeugt, und
- * unter der Flink-Grenze, ab der der Browser selbst schon eine Auswahl zieht.
+ * Schwelle waehlt schon das kleinste Wackeln beim Klick den Tab aus.
  */
 const DRAG_THRESHOLD_PX = 4;
 
@@ -63,7 +62,7 @@ interface Props {
    * `beforeId` ist die Id des Tabs, vor dem der gezogene Tab landet; ein
    * leerer String bedeutet "ganz ans Ende".
    *
-   * Ohne diese Prop bleibt die Leibe unveraendert: keine Pointer-Handler,
+   * Ohne diese Prop bleibt die Leiste unveraendert: keine Pointer-Handler,
    * kein `touch-action`, kein Verschieben. Das Fenster im Explorer schaltet
    * es ein, die Leiste im rechten Panel nicht — dort ist die Reihenfolge die
    * Reihenfolge, in der der Nutzer die Dateien geoeffnet hat.
@@ -91,9 +90,26 @@ interface DragVisual {
   width: number;
 }
 
+/* Die Kachel traegt Rahmen, Hintergrund und Schrift; radix' eigene Optik
+ * (Pille, `bg-muted`, Hover-Wechsel, `dark:`-Zweifarben) wird zurueckgedreht.
+ * `min-w-0` auf dem Trigger ist Pflicht, sonst waehlt der Trigger seine
+ * Mindestbreite aus dem Text und `truncate` greift nie. */
+const TAB_CLASS =
+  "flex shrink-0 items-stretch border-r border-border bg-card text-xs font-normal text-muted-foreground " +
+  "data-active:bg-background data-active:text-foreground data-active:font-medium " +
+  "max-w-45 min-w-20 cursor-pointer scroll-m-1";
+
+/* `text-current` und `bg-transparent` machen den Trigger farbneutral: Farbe und
+ * Hintergrund kommen von der Kachel (`TAB_CLASS`), damit Aktivzustand und
+ * Ziehanimation an einem Element haengen. `dark:text-muted-foreground` und
+ * `dark:hover:text-foreground` sind die einzigen radix-Regeln, die ohne
+ * `data-active` wirklich treffen, also werden sie hier ueberschrieben. */
+const TRIGGER_CLASS =
+  "h-full min-w-0 flex-1 justify-start gap-1.5 rounded-none border-0 bg-transparent px-3 py-0 text-xs " +
+  "font-normal text-current after:hidden hover:text-current dark:text-current dark:hover:text-current";
+
 export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }: Props) {
   const { t } = useI18n();
-  const [hoveredClose, setHoveredClose] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragVisual | null>(null);
   const dragRef = useRef<DragState | null>(null);
   // Nach einem abgeschlossenen Zug darf der abschliessende Klick den Tab nicht
@@ -110,16 +126,15 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
    *
    * Die Tabs waechsen nach rechts, und nichts hat sie bisher gerollt: im
    * Hauptpanel faellt das nicht auf, weil die Leiste dort breiter ist als die
-   * Tabs. Im Explorer-Fenster ist sie es nicht — bei 415px Viewport sind 342px
-   * Leiste gegen 360px Tabs, der neu geoeffnete Tab ragt 40px hinaus und sieht
-   * abgeschnitten aus, obwohl die Kachel intakt ist. Die Leiste scrollt bereits
-   * (`overflowX: auto` an der Wurzel, Zeile 184), es fehlte nur der Anlass.
+   * Tabs. Im Explorer-Fenster ist sie es nicht — der neu geoeffnete Tab ragt
+   * hinaus und sieht abgeschnitten aus, obwohl die Kachel intakt ist. Die
+   * Leiste scrollt bereits (`overflow-x-auto` an der Wurzel), es fehlte nur
+   * der Anlass.
    *
    * `nearest` statt `center`: es rollt nur so weit, wie noetig ist. Ein
    * `center` wuerde beim Wechsel zwischen zwei sichtbaren Tabs die halbe
-   * Leiste mitschieben, obwohl nichts verdeckt war.
-   *
-   * Die Kachel traegt `scroll-margin`, damit sie nicht direkt am Rand klebt.
+   * Leiste mitschieben, obwohl nichts verdeckt war. `scroll-m-1` auf der
+   * Kachel haelt ihren Rand vom Leistenrand weg.
    */
   const stripRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -135,7 +150,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
     // (`onAuxClick`); liefe sie mit, wuerde jeder Zug den Tab schliessen.
     if (event.button !== 0) return;
     // Der Schliessen-Knopf ist kein Griff zum Verschieben.
-    if ((event.target as HTMLElement).closest("button")) return;
+    if ((event.target as HTMLElement).closest("[data-tab-close]")) return;
     swallowClickRef.current = false;
     dragRef.current = {
       id: tabId,
@@ -145,8 +160,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
       toIndex: tabs.findIndex((tab) => tab.id === tabId),
     };
     // Pointer-Capture haelt die Bewegung am Tab, auch wenn der Zeiger ueber
-    // den Rand der Leiste wandert. Ohne die API laeuft das Ziehen trotzdem,
-    // nur ohne Ueberlauf-Fortsetzung.
+    // den Rand der Leiste wandert.
     if (typeof event.currentTarget.setPointerCapture === "function") {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
@@ -175,7 +189,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
       if (index === fromIndex) return;
       const other = tabRefs.current.get(tab.id);
       if (!other) return;
-      const otherMiddle = other.getBoundingClientRect().left + other.getBoundingClientRect().width / 2;
+      const box = other.getBoundingClientRect();
+      const otherMiddle = box.left + box.width / 2;
       if (index < fromIndex && center < otherMiddle) toIndex = Math.min(toIndex, index);
       if (index > fromIndex && center > otherMiddle) toIndex = Math.max(toIndex, index);
     });
@@ -206,148 +221,118 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
   };
 
   return (
-    <div
+    <Tabs
       ref={stripRef}
-      style={{
-        display: "flex",
-        alignItems: "flex-end",
-        background: "var(--bg-panel)",
-        overflowX: "auto",
-        flexShrink: 0,
-        height: 36,
-      }}
+      value={activeTabId}
+      // radix meldet jede Auswahl hier: Klick, Enter/Leertaste und die
+      // Pfeiltasten des Roving-Focus. `mousedown` ist der einzige Weg, der
+      // beim Verschieben ausgetrennt werden muss, und das erledigt der
+      // `onMouseDown` am Trigger weiter unten.
+      onValueChange={onSelectTab}
+      className="data-horizontal:flex-row h-9 shrink-0 items-stretch gap-0 overflow-x-auto bg-card"
     >
-      {tabs.map((tab, index) => {
-        const isActive = tab.id === activeTabId;
-        // Nur der gezogene Tab folgt dem Zeiger; die uebrigen ruecken in die
-        // Luecke, die beim Fallen ohnehin entsteht, damit man sie vorher sieht.
-        let shift = 0;
-        if (drag && index !== drag.fromIndex) {
-          if (drag.fromIndex < drag.toIndex && index > drag.fromIndex && index <= drag.toIndex) shift = -drag.width;
-          else if (drag.toIndex < drag.fromIndex && index >= drag.toIndex && index < drag.fromIndex) shift = drag.width;
-        }
-        const dragging = drag?.id === tab.id;
-        return (
-          <div
-            key={tab.id}
-            ref={(element) => {
-              if (element) tabRefs.current.set(tab.id, element);
-              else tabRefs.current.delete(tab.id);
-            }}
-            onClick={() => {
-              if (swallowClickRef.current) {
-                swallowClickRef.current = false;
-                return;
-              }
-              onSelectTab(tab.id);
-            }}
-            onPointerDown={(event) => handlePointerDown(event, tab.id)}
-            onPointerMove={(event) => handlePointerMove(event, tab.id)}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-            onMouseDown={(e) => {
-              if (e.button === 1) e.preventDefault();
-            }}
-            onAuxClick={(e) => {
-              if (e.button !== 1) return;
-              e.preventDefault();
-              e.stopPropagation();
-              onCloseTab(tab.id);
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              height: 36,
-              paddingLeft: 12,
-              paddingRight: 6,
-              borderRight: "1px solid var(--border)",
-              background: isActive ? "var(--bg)" : "var(--bg-panel)",
-              cursor: "pointer",
-              fontSize: 12,
-              color: isActive ? "var(--text)" : "var(--text-muted)",
-              whiteSpace: "nowrap",
-              maxWidth: 180,
-              minWidth: 80,
-              // Haelt den Kachelrand vom Leistenrand weg, wenn der aktive
-              // Tab hineingescrollt wird. Ohne das klebt er exakt am Rand und
-              // wirkt angeschnitten, was genau der Eindruck ist, den wir hier
-              // vermeiden.
-              scrollMarginInline: 4,
-              flexShrink: 0,
-              userSelect: "none",
-              // `touch-action: none` nur auf dem Tab, und nur wenn Verschieben
-              // erlaubt ist. Auf der Leiste waere es falsch: dann kaeme man auf
-              // dem Telefon gar nicht mehr waagerecht durch die Tabs wischen.
-              touchAction: onReorder ? "none" : undefined,
-              transform: dragging ? `translateX(${drag!.offsetX}px)` : shift !== 0 ? `translateX(${shift}px)` : undefined,
-              // Der gezogene Tab darf dem Zeiger nicht hinterherlaufen, die
-              // zurueckweichenden Tabs duerfen es.
-              transition: dragging ? undefined : "background 0.1s, color 0.1s, transform 0.12s ease-out",
-              opacity: dragging ? 0.85 : 1,
-            }}
-          >
-            {/* Ein Tab ohne Datei bekommt bewusst KEIN Datei-Icon. Der Pfad
-                von `getFileIcon` waere der leere String, der ohne Treffer in
-                `EXTENSION_ICONS` auf das generische Dateisymbol zurueckfaellt
-                — und damit behauptete der Tab, eine Datei zu zeigen. Ein
-                leerer Tab braucht ein Merkmal, das seinen Zustand nennt und
-                nicht seinen Inhalt. */}
-            <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
-              {tab.kind === "file" && !tab.filePath ? (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-              ) : (
-                getFileIcon(tab.label, 13)
-              )}
-            </span>
-            <span
-              style={{
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                flex: 1,
-                fontWeight: isActive ? 500 : 400,
+      <TabsList
+        variant="default"
+        className="group-data-horizontal/tabs:h-9 w-max items-stretch justify-start gap-0 rounded-none bg-transparent p-0"
+      >
+        {tabs.map((tab, index) => {
+          const isActive = tab.id === activeTabId;
+          // Nur der gezogene Tab folgt dem Zeiger; die uebrigen ruecken in die
+          // Luecke, die beim Fallen ohnehin entsteht, damit man sie vorher sieht.
+          let shift = 0;
+          if (drag && index !== drag.fromIndex) {
+            if (drag.fromIndex < drag.toIndex && index > drag.fromIndex && index <= drag.toIndex) shift = -drag.width;
+            else if (drag.toIndex < drag.fromIndex && index >= drag.toIndex && index < drag.fromIndex) shift = drag.width;
+          }
+          const dragging = drag?.id === tab.id;
+          return (
+            <div
+              key={tab.id}
+              data-active={isActive ? "" : undefined}
+              className={TAB_CLASS + (onReorder ? " touch-none " : " ") + (dragging ? "opacity-85" : "transition-transform duration-150")}
+              ref={(element) => {
+                if (element) tabRefs.current.set(tab.id, element);
+                else tabRefs.current.delete(tab.id);
               }}
-              // Ohne Datei waere `tab.filePath` leer und der Tooltip stumm —
-              // sichtbar ist dann nur der Titel des Tabs. Die Beschriftung
-              // steht als Rueckfall dahinter, weil sie auch fuer einen leeren
-              // Tab das einzige ist, was ihn benennt.
-              title={tab.kind === "file" ? (tab.filePath || tab.label) : tab.kind === "explorer" ? tab.label : `Terminal · ${tab.label}`}
-            >
-              {tab.label}
-            </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
-              onMouseEnter={() => setHoveredClose(tab.id)}
-              onMouseLeave={() => setHoveredClose(null)}
-              // Der Explorer-Tab ist der Rueckweg und hat keinen. Der Knopf
-              // verschwindet nicht nur optisch — `handleCloseTab` im Fenster
-              // weist ihn ohnehin zurueck, und ein Knopf, der dann nichts
-              // tut, waere schlechter als keiner.
-              style={{
-                display: tab.kind === "explorer" ? "none" : "flex", alignItems: "center", justifyContent: "center",
-                width: 24, height: 24,
-                background: hoveredClose === tab.id ? "var(--bg-hover)" : "transparent",
-                border: "none",
-                borderRadius: 4,
-                color: hoveredClose === tab.id ? "var(--text)" : "var(--text-dim)",
-                cursor: "pointer",
-                padding: 0,
-                flexShrink: 0,
-                transition: "background 0.1s, color 0.1s",
+              onClick={() => {
+                if (!onReorder) return;
+                if (swallowClickRef.current) {
+                  swallowClickRef.current = false;
+                  return;
+                }
+                onSelectTab(tab.id);
               }}
-               title={t("i18n.close")}
-               aria-label={`${t("i18n.close")} ${tab.label}`}
+              onPointerDown={(event) => handlePointerDown(event, tab.id)}
+              onPointerMove={(event) => handlePointerMove(event, tab.id)}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+              onMouseDown={(event) => {
+                if (event.button === 1) event.preventDefault();
+              }}
+              onAuxClick={(event) => {
+                if (event.button !== 1) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onCloseTab(tab.id);
+              }}
+              style={dragging
+                ? { transform: `translateX(${drag!.offsetX}px)`, opacity: 0.85 }
+                : shift !== 0 ? { transform: `translateX(${shift}px)` } : undefined}
             >
-              <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                <line x1="2" y1="2" x2="8" y2="8" />
-                <line x1="8" y1="2" x2="2" y2="8" />
-              </svg>
-            </button>
-          </div>
-        );
-      })}
-    </div>
+              <TabsTrigger
+                value={tab.id}
+                className={TRIGGER_CLASS}
+                onMouseDown={(event) => {
+                  // radix' `composeEventHandlers` laesst seine eigene
+                  // Auswahl genau dann aus, wenn der eigene Handler
+                  // `preventDefault()` gesetzt hat.
+                  if (onReorder) event.preventDefault();
+                }}
+              >
+                {/* Ein Tab ohne Datei bekommt bewusst KEIN Datei-Icon. Der Pfad
+                    von `getFileIcon` waere der leere String, der ohne Treffer in
+                    `EXTENSION_ICONS` auf das generische Dateisymbol zurueckfaellt
+                    — und damit behauptete der Tab, eine Datei zu zeigen. Ein
+                    leerer Tab braucht ein Merkmal, das seinen Zustand nennt und
+                    nicht seinen Inhalt. */}
+                <span className={"flex shrink-0 items-center " + (isActive ? "opacity-100" : "opacity-70")}>
+                  {tab.kind === "file" && !tab.filePath
+                    ? <Plus aria-hidden className="size-[13px]" strokeWidth={2.2} />
+                    : getFileIcon(tab.label, 13)}
+                </span>
+                {/* Ohne Datei waere `tab.filePath` leer und der Tooltip stumm —
+                    sichtbar ist dann nur der Titel des Tabs. Die Beschriftung
+                    steht als Rueckfall dahinter, weil sie auch fuer einen leeren
+                    Tab das einzige ist, was ihn benennt. */}
+                <span
+                  className="min-w-0 flex-1 truncate"
+                  title={tab.kind === "file" ? (tab.filePath || tab.label) : tab.kind === "explorer" ? tab.label : `Terminal · ${tab.label}`}
+                >
+                  {tab.label}
+                </span>
+              </TabsTrigger>
+              <button
+                type="button"
+                data-tab-close=""
+                onClick={(event) => { event.stopPropagation(); onCloseTab(tab.id); }}
+                // Der Explorer-Tab ist der Rueckweg und hat keinen. Der Knopf
+                // verschwindet nicht nur optisch — `handleCloseTab` im Fenster
+                // weist ihn ohnehin zurueck, und ein Knopf, der dann nichts
+                // tut, waere schlechter als keiner.
+                className={
+                  "mr-1.5 my-auto flex size-6 shrink-0 items-center justify-center rounded border-0 bg-transparent p-0 " +
+                  "text-text-dim transition-colors hover:bg-bg-hover hover:text-foreground " +
+                  (tab.kind === "explorer" ? "hidden" : "")
+                }
+                title={t("i18n.close")}
+                aria-label={`${t("i18n.close")} ${tab.label}`}
+              >
+                <X aria-hidden className="size-[11px]" strokeWidth={1.8} />
+              </button>
+            </div>
+          );
+        })}
+      </TabsList>
+    </Tabs>
   );
 }
