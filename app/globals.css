@@ -1515,6 +1515,119 @@ span.linenumber {
   }
 }
 
+/* The shimmer wash.
+ *
+ * The endless wash used to be a motion `animate` on `backgroundPosition` with
+ * the gradient handed over separately in `style`. Those two halves have
+ * different lifetimes: motion owns the motion and stops writing when the
+ * animation stops, while React keeps the inline `background-image` it wrote at
+ * mount. Measured on the AppShell "Opening workspace" surface, flipping the
+ * animation setting to "Off" mid-shimmer left the element with
+ * `background-image: linear-gradient(...)` and `background-position: -9% 0%`
+ * frozen — a lilac band that no longer moved and never went away, on every
+ * surface whose loading condition was still true. With `off` selected before
+ * the mount it froze at `0% 0%` instead, which is the worst case: the band
+ * parked in the middle of the panel. The same split meant the animation could
+ * never be expressed as a CSS animation, so `getComputedStyle(el).animationName`
+ * read `none` even while the wash was running.
+ *
+ * Both halves now live in one rule. The gradient is not installed at all
+ * unless the class is, and the class is not installed unless animations are
+ * on, so there is no state in which a gradient survives without its motion.
+ *
+ * The old wash circled instead of running out, and the cause was not the
+ * looping — it was `background-repeat`, which this rule never set and which
+ * therefore defaulted to `repeat`. The band is one tile of
+ * `background-size: 200% 100%`, i.e. twice the element's width, and the
+ * gradient is transparent only over its own outer 10% at each end. In
+ * percentage points of element width that paints [20, 180] of each tile and
+ * leaves a transparent gap of 2 x 10% x 200pp = 40pp before the next tile's
+ * paint begins. The element's own window is 100pp wide, and a 100pp window
+ * cannot fit inside a 40pp gap: under `repeat` the neighbours close in from
+ * behind and fill whatever the band vacates, which is what stopped the wash
+ * from ever arriving anywhere empty.
+ *
+ * Concretely, `background-position: P%` moves the tile by P% x (container -
+ * image) = -Ppp, so a pixel at x sits at tile coordinate (x + P). At the old
+ * extremes P = 200% and -200% the window shows tile coordinates [200, 300] and
+ * [-200, -100] — both outside the painted [20, 180], and therefore both empty
+ * on their own tile. With the repeat on, the neighbouring tile covers the
+ * element at those same positions, so the run could not begin or end anywhere
+ * empty no matter how far out the keyframes reached.
+ *
+ * The measured figure worth keeping is the minimum *peak* alpha over the old
+ * 200% -> -200% travel, which is 0.1915 against a 0.46 band, reached at
+ * P = -50%: there the window straddles the tile boundary, the band's near half
+ * and the neighbour's far half together still cover it. That is a dim position,
+ * not a cleared one — no single position reached peak 0 under `repeat`, which
+ * is why the whole travel stayed continuous.
+ *
+ * `background-repeat: no-repeat` is the condition for the endpoints below
+ * actually being empty, and therefore for the rest between two runs existing
+ * at all. Without it this same keyframe range would not be a pause: the wrap
+ * tile would slide in behind the departing band and fill the gap while it
+ * fades.
+ *
+ * With the repeat gone, the band clears the element outside 179.5% .. -79.5%
+ * (the element's window must fit entirely in the tile's transparent margin), so
+ * 190% -> -90% is a run that begins and ends on an empty element with 10.5pp of
+ * margin on each side — measured peak 0.0000 at both ends, against 0.4600 at
+ * P = 50%. That range is also symmetric in brightness: compositing it
+ * peak-by-peak gives a max difference of 0.00 between the profile and its own
+ * reverse, so the wash enters and leaves with the same weight.
+ *
+ * The fade is the gradient's own, not a separate opacity ramp. Because the
+ * band's transparent tail is what carries it out of view, the last quarter of
+ * the travel decays on its own — measured peak alpha 0.383 -> 0.271 -> 0.160 ->
+ * 0.048 -> 0.000 across the final 25% — and the leading quarter mirrors it. An
+ * `opacity` keyframe would have been a second, competing claim on the same
+ * visual and would have darkened whatever else the element paints.
+ *
+ * The 75% / 100% stop is the rest between runs. Both keyframes carry the same
+ * position, so the band parks at -90% — an empty element — for the last quarter
+ * of the cycle, and the jump back to 190% at the wrap happens while nothing is
+ * painted, so it is invisible. `SHIMMER_DURATION` is the whole cycle; at 1.6s
+ * that is a 1.2s run and a 0.4s rest. The rest is sized against perception
+ * rather than taste: below roughly 0.25s the eye integrates it back into
+ * continuous motion and the wash reads as circling again, while past about
+ * 0.6s the surface sits still long enough to read as finished. 0.4s is a
+ * deliberate beat between two passes. Note this only ever pauses the *band* —
+ * the surface underneath is the skeleton box, the badge or the label, so a rest
+ * is a surface at rest, never an empty panel.
+ *
+ * One number still rules the timing: the 75% is a share of
+ * `--omp-shimmer-duration`, not a second duration, so `SHIMMER_DURATION`
+ * remains the only place the cycle length is written down. */
+@keyframes omp-shimmer-wash {
+  0%   { background-position: 190% 0%; }
+  75%  { background-position: -90% 0%; }
+  100% { background-position: -90% 0%; }
+}
+
+.omp-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 10%,
+    color-mix(in srgb, var(--accent) 46%, transparent) 46%,
+    color-mix(in srgb, var(--text) 15%, transparent) 50%,
+    color-mix(in srgb, var(--accent) 46%, transparent) 54%,
+    transparent 90%
+  );
+  background-size: 200% 100%;
+  /* Keeps the wrap-around tile from sliding in behind the departing band and
+   * refilling the area it just left. This is what makes 190% and -90% actually
+   * empty, and therefore what makes the rest between two runs a rest rather
+   * than more motion — see the note on `@keyframes omp-shimmer-wash`. It does
+   * not affect the element's own background, which is painted underneath. */
+  background-repeat: no-repeat;
+  /* One turn of the wash, in seconds. `SHIMMER_DURATION` in
+   * components/motion/animations.ts is the same number and the place to change
+   * it; `useShimmerProps` publishes that constant onto this variable rather
+   * than the two drifting apart. This is the whole cycle — the 75% keyframe
+   * split is a share of it, not a second duration. */
+  animation: omp-shimmer-wash var(--omp-shimmer-duration, 1.6s) linear infinite;
+}
+
 /* Animations off.
  *
  * `AnimationProvider` sets `data-omp-animations` on the root element, and
@@ -1529,6 +1642,25 @@ html[data-omp-animations="off"] *::after {
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
+}
+
+/* The shimmer is not merely a transition to shorten, it is a gradient that has
+ * to disappear. The block above would leave it painted and motionless, so the
+ * mode that stands still drops the wash outright. `reduced` needs no rule of
+ * its own: it means "defer to the OS", and the media query below is that
+ * deferral. */
+html[data-omp-animations="off"] .omp-shimmer {
+  animation: none;
+  background-image: none;
+}
+
+/* An OS that asks for reduced motion gets no loop either, and again without
+ * the gradient, because a motionless band is the very defect this replaced. */
+@media (prefers-reduced-motion: reduce) {
+  .omp-shimmer {
+    animation: none;
+    background-image: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------

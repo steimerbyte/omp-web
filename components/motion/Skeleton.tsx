@@ -1,6 +1,5 @@
 "use client";
 
-import { useAnimationPreference } from "./AnimationProvider";
 import { Shimmer } from "./Shimmer";
 
 /**
@@ -9,31 +8,26 @@ import { Shimmer } from "./Shimmer";
  * With animations on it is a `Shimmer` over a slightly raised surface. With
  * them off it is a flat block of the same size — the box is reserved either
  * way, so switching the setting never makes the layout jump.
+ *
+ * There is no mode branch here any more. It used to render a bare `div` when
+ * animations were off, and a `Shimmer` otherwise, which meant two code paths
+ * that had to agree about the size and the fill. `Shimmer` now applies no wash
+ * at all in that mode, so a single path covers both: the same raised surface,
+ * with the shimmer layered on or not.
+ *
+ * `backgroundColor`, never the `background` shorthand: the shorthand resets
+ * background-image, which is the shimmer's gradient.
  */
 export function Skeleton({ width, height, radius = 4 }: {
   width?: number | string;
   height?: number | string;
   radius?: number;
 }) {
-  const mode = useAnimationPreference();
-
-  if (mode === "off") {
-    return (
-      <div
-        aria-hidden
-        style={{
-          // backgroundColor, never the `background` shorthand: the shorthand
-          // resets background-image, which is the shimmer's gradient.
-          backgroundColor: "var(--bg-hover)",
-          width,
-          height,
-          borderRadius: radius,
-        }}
-      />
-    );
-  }
-
   return (
-    <Shimmer radius={radius} style={{ backgroundColor: "var(--bg-hover)", width, height }} />
+    <Shimmer
+      radius={radius}
+      aria-hidden
+      style={{ backgroundColor: "var(--bg-hover)", width, height }}
+    />
   );
 }

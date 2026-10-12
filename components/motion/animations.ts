@@ -20,7 +20,17 @@ export const DURATION_PANEL = 0.28;
 /** The easing the modal scale-in used, kept so the panel keeps its character. */
 export const EASE_POP = [0.2, 0.8, 0.3, 1] as const;
 
-/** One full sweep of the shimmer wash, in seconds. */
+/**
+ * The whole shimmer cycle, in seconds: one run of the band plus its rest.
+ *
+ * It is deliberately the *cycle* and not the run, so that the split stays a
+ * share of one number rather than a second constant that has to be kept in
+ * step. `@keyframes omp-shimmer-wash` spends the first 75% travelling and holds
+ * the last 25% with the band parked off the element — at 1.6s that is a 1.2s
+ * run and a 0.4s rest. The rest is why a wash reads as a pass that finished
+ * instead of motion that circles forever; changing this number changes both
+ * halves together, which is what you want when retuning the rhythm.
+ */
 export const SHIMMER_DURATION = 1.6;
 
 /**
