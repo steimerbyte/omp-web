@@ -144,14 +144,20 @@ function resolveSessionSecret(options: WebAuthStoreOptions): string | null {
  * It is decoded rather than taken from an option because the verifier does not
  * know who the cookie claims to be — the cookie is the only place that can say.
  */
-function readCookieUsername(value: unknown): string | null {
+function readCookieUsername(value: unknown, env: NodeJS.ProcessEnv): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
   const parts = value.split(".");
   if (parts.length !== 6) return null;
   if (!BASE64URL.test(parts[4])) return null;
 
   const username = Buffer.from(parts[4], "base64url").toString("utf8");
-  if (validateAccountName(username) !== null && username !== getExpectedUsername()) return null;
+  // Der `env` des Aufrufers, nicht `process.env`: die Namen, die dieser Vergleich
+  // gegen den Default haelt, sind eine Eigenschaft der Optionen, mit denen das
+  // Cookie ausgestellt wurde. Ohne den Durchreich liest ein Aufrufer mit
+  // synthetischem `env` hier den Namen des Prozesses und weist jeden Cookie
+  // zurueck, der fuer einen anderen Benutzer ausgestellt wurde — die Signatur
+  // wird dann nie geprueft, der Fehler sieht wie ein falsches Passwort aus.
+  if (validateAccountName(username) !== null && username !== getExpectedUsername(env)) return null;
   return username;
 }
 
@@ -196,9 +202,18 @@ function buildSessionValue(secret: string, username: string): string {
  * the person it was minted for.
  */
 export function issueSessionCookie(options: WebAuthStoreOptions = {}): string | null {
-  const secret = resolveSessionSecret(options);
+  // Der Name wird auch dann aufgeloest, wenn ihn der Aufrufer nicht mitgibt —
+  // und zwar fuer den Schluessel, nicht nur fuer die Nutzlast. `resolveSessionSecret`
+  // nimmt einen Kontonamen als Konto- statt als Single-User-Credential, und
+  // `readSessionCookie` laesst den Namen **immer** aus dem Cookie in denselben
+  // Aufruf laufen. Ohne dieses Durchreichen mintet ein Aufrufer ohne `username`
+  // einen Konto-Schluessel nie und liefert einen Cookie, den derselbe Server
+  // im naechsten Request wieder verwirft: der Fehler faellt dann wie ein
+  // abgelaufenes Passwort aus.
+  const username = options.username ?? getExpectedUsername(options.env);
+  const secret = resolveSessionSecret({ ...options, username });
   if (secret === null) return null;
-  return buildSessionValue(secret, options.username ?? getExpectedUsername(options.env));
+  return buildSessionValue(secret, username);
 }
 
 /**
@@ -226,7 +241,7 @@ export function readSessionCookie(
   value: unknown,
   options: WebAuthStoreOptions = {},
 ): string | null {
-  const username = readCookieUsername(value);
+  const username = readCookieUsername(value, options.env ?? process.env);
   if (username === null) return null;
 
   const [version, issuedAt, expiry, nonce, encodedUser, signature] = (value as string).split(".");
