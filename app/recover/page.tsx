@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useState } from "react";
+import { AnimationProvider } from "@/components/motion/AnimationProvider";
 import styles from "./recover.module.css";
 
 /**
@@ -77,7 +78,8 @@ export default function RecoverPage() {
     && password === confirmation;
 
   return (
-    <main className={styles.page}>
+    <AnimationProvider>
+      <main className={styles.page}>
       <div className={styles.card}>
         <div className={styles.eyebrow}>omp-web</div>
         <h1 className={styles.title}>Recover access</h1>
@@ -156,6 +158,7 @@ export default function RecoverPage() {
           </>
         )}
       </div>
-    </main>
+      </main>
+    </AnimationProvider>
   );
 }

@@ -7,6 +7,8 @@ import { PluginsConfig } from "./PluginsConfig";
 import { AccessConfig } from "./AccessConfig";
 import { UsersConfig } from "./UsersConfig";
 import { QuickPhrasesConfig } from "./QuickPhrasesConfig";
+import { AnimationsConfig } from "./AnimationsConfig";
+import { Skeleton } from "./motion/Skeleton";
 import { SearchableSelect } from "./SearchableSelect";
 import { refreshOmpTheme, useTheme } from "@/hooks/useTheme";
 import { refreshDisplaySettings } from "@/hooks/useDisplaySettings";
@@ -23,7 +25,7 @@ import type {
 } from "@/lib/settings-api";
 import styles from "./SettingsConfig.module.css";
 
-type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "access" | "users" | "quickPhrases" | `settings:${string}`;
+type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "access" | "users" | "quickPhrases" | "animations" | `settings:${string}`;
 
 interface SettingsConfigProps {
   cwd?: string | null;
@@ -43,6 +45,7 @@ const CORE_SECTIONS: Array<{ id: SettingsSection; label: string; icon: string; r
   { id: "access", label: "Access", icon: "access" },
   { id: "users", label: "Accounts", icon: "users", requiresAdmin: true },
   { id: "quickPhrases", label: "Quick phrases", icon: "quickPhrases" },
+  { id: "animations", label: "Animations", icon: "animations" },
 ];
 
 const ICON_PATHS: Record<string, React.ReactNode> = {
@@ -54,6 +57,7 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   access: <><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v2"/></>,
   users: <><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 6.5a3 3 0 0 1 0 5.8M17 20a5 5 0 0 0-2-4"/></>,
   quickPhrases: <><rect x="3" y="9" width="18" height="6" rx="3"/><path d="M7 12h.01M12 12h.01M17 12h.01"/></>,
+  animations: <><path d="M3 12h4l3-7 4 14 3-7h4"/></>,
   appearance: <><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></>,
   interaction: <><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M8 9h8m-8 3h5"/></>,
   context: <><path d="M5 3h11l3 3v15H5z"/><path d="M15 3v4h4M8 11h8m-8 4h8"/></>,
@@ -64,6 +68,21 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   tasks: <><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2m-3 7 1 1 2-2m-3 7 1 1 2-2"/></>,
   providers: <><path d="M7 4h10v5H7zM4 15h6v5H4zm10 0h6v5h-6zM12 9v3m-5 0h10M7 12v3m10-3v3"/></>,
 };
+
+/**
+ * The placeholder for a settings area that is still loading. `styles.empty`
+ * stays the pattern for a genuine empty state; this is only for the wait.
+ */
+function SettingsSkeleton({ label }: { label: string }) {
+  return (
+    <div className={styles.settingsBody} role="status" aria-label={label} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <Skeleton height={18} width="45%" />
+      <Skeleton height={13} />
+      <Skeleton height={13} width="88%" />
+      <Skeleton height={13} width="64%" />
+    </div>
+  );
+}
 
 function SettingsIcon({ kind }: { kind: string }) {
   return <svg className={styles.navIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{ICON_PATHS[kind] ?? ICON_PATHS.tools}</svg>;
@@ -303,7 +322,10 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
   };
 
   const renderThemeSection = () => {
-    if (!settings) return <div className={styles.empty}>{loading ? "Loading themes…" : loadError ?? "Themes unavailable"}</div>;
+    if (!settings) {
+      if (loading) return <SettingsSkeleton label="Loading themes…" />;
+      return <div className={styles.empty}>{loadError ?? "Themes unavailable"}</div>;
+    }
     return (
       <div className={styles.scrollContent}>
         <header className={styles.contentHeader}><h2 className={styles.contentTitle}>Themes</h2><p className={styles.contentDescription}>The web interface uses the same dark and light theme mappings as omp. Changes are persisted to <code>~/.omp/agent/config.yml</code> and applied here immediately.</p></header>
@@ -320,7 +342,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
   };
 
   const renderGenericSettings = () => {
-    if (loading) return <div className={styles.empty}>Loading omp settings…</div>;
+    if (loading) return <SettingsSkeleton label="Loading omp settings…" />;
     if (loadError || !settings) return <div className={styles.empty}>{loadError ?? "Settings unavailable"}</div>;
     return (
       <div className={styles.scrollContent}>
@@ -364,7 +386,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
           <div className={styles.closeRail}><button type="button" className={styles.closeButton} onClick={close}><span>Close settings</span><span aria-hidden="true">×</span></button></div>
         </aside>
         <main className={styles.content}>
-          {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : renderGenericSettings()}
+          {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : section === "animations" ? <AnimationsConfig /> : renderGenericSettings()}
         </main>
       </div>
     </div>
@@ -478,7 +500,7 @@ function McpSettings({ cwd, sessionId, onReloaded }: { cwd?: string | null; sess
         <p className={styles.contentDescription}>All MCP servers discovered by OMP are listed by scope and can be enabled or disabled here. Native OMP entries are editable; configurations owned by Claude, Codex, Gemini, plugins, or other providers remain read-only at their source.</p>
       </header>
       <div className={styles.settingsBody}>
-        {!data ? <div className={styles.empty}>{error ?? "Loading MCP configuration…"}</div> : (
+        {!data ? (error ? <div className={styles.empty}>{error}</div> : <SettingsSkeleton label="Loading MCP configuration…" />) : (
           <div className={styles.mcpLayout}>
             <aside className={styles.mcpList}>
               <div className={styles.scopeTabs}>

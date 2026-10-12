@@ -13,6 +13,8 @@ import { useDisplaySettings } from "@/hooks/useDisplaySettings";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { normalizeCustomPanelLines, parseAnsiLine, stripAnsi } from "@/lib/ansi";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
+import { motion } from "motion/react";
+import { PULSE_TRANSITION } from "./motion/animations";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import type {
   AgentMessage,
@@ -1347,7 +1349,12 @@ function ConsoleOutputPreview({
             );
           })}
           {pending && (
-            <span className="shell-output-pending" aria-label={t("chat.runningCommand")}>▋</span>
+            <motion.span
+              style={{ display: "inline-block", color: "var(--accent)" }}
+              animate={{ opacity: [1, 0.35, 1] }}
+              transition={PULSE_TRANSITION}
+              aria-label={t("chat.runningCommand")}
+            >▋</motion.span>
           )}
         </div>
       </div>

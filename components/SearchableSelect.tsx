@@ -11,6 +11,8 @@ import {
 } from "react";
 import styles from "./SearchableSelect.module.css";
 import { usePopupPlacement } from "@/hooks/usePopupPlacement";
+import { Enter } from "./motion/Enter";
+import { Pressable } from "./motion/Pressable";
 
 export interface SearchableSelectOption {
   value: string;
@@ -156,9 +158,10 @@ export function SearchableSelect({
 
   return (
     <div ref={rootRef} className={`${styles.root}${className ? ` ${className}` : ""}`} style={style}>
-      <button
+      <Pressable
+        tint
         type="button"
-        className={`${styles.trigger} omp-press-tint`}
+        className={styles.trigger}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -176,11 +179,12 @@ export function SearchableSelect({
         <svg className={styles.chevron} viewBox="0 0 12 12" aria-hidden="true">
           <path d="m3 4.5 3 3 3-3" />
         </svg>
-      </button>
+      </Pressable>
 
       {open && (
-        <div
-          className={`${styles.popover} ${side === "above" ? "omp-slide-in-down" : "omp-slide-in-up"}`}
+        <Enter
+          direction={side === "above" ? "down" : "up"}
+          className={styles.popover}
           style={side === "above"
             ? { bottom: `calc(100% + ${POPOVER_GAP_PX}px)`, maxHeight }
             : { top: `calc(100% + ${POPOVER_GAP_PX}px)`, maxHeight }}
@@ -217,14 +221,14 @@ export function SearchableSelect({
             style={{ maxHeight: Math.max(0, maxHeight - POPOVER_CHROME_PX) }}
           >
             {filtered.length ? filtered.map((option, index) => (
-              <button
+              <Pressable
                 ref={(node) => { optionRefs.current[index] = node; }}
                 id={`${listboxId}-${index}`}
                 type="button"
                 role="option"
                 aria-selected={option.value === value}
                 key={option.value}
-                className={`${styles.option} omp-press`}
+                className={styles.option}
                 data-active={index === activeIndex}
                 data-selected={option.value === value}
                 disabled={option.disabled}
@@ -240,10 +244,10 @@ export function SearchableSelect({
                     <path d="m2.3 6.2 2.2 2.2 5.2-5.2" />
                   </svg>
                 )}
-              </button>
+              </Pressable>
             )) : <div className={styles.empty}>{noResultsLabel}</div>}
           </div>
-        </div>
+        </Enter>
       )}
     </div>
   );

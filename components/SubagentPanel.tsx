@@ -6,6 +6,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { MessageView } from "./MessageView";
+import { motion } from "motion/react";
+import { SPIN_TRANSITION } from "./motion/animations";
 
 type SubagentTranscriptEntry = {
   id: string;
@@ -42,11 +44,14 @@ function SubagentStatusGlyph({ subagent }: { subagent: SubagentSnapshot }) {
   const color = statusColor(subagent);
   if (isSubagentActive(subagent)) {
     return (
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ color }}>
-        <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.8" strokeDasharray="22 13">
-          <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.9s" repeatCount="indefinite" />
-        </circle>
-      </svg>
+      <motion.svg
+        width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"
+        style={{ color, transformOrigin: "center" }}
+        animate={{ rotate: 360 }}
+        transition={SPIN_TRANSITION}
+      >
+        <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.8" strokeDasharray="22 13" />
+      </motion.svg>
     );
   }
   return <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 12%, transparent)` }} />;

@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Pressable } from "./motion/Pressable";
 import { encodeFilePathForApi, getFileDirectory } from "@/lib/file-paths";
 import { isImagePath } from "@/lib/file-types";
 import { copyText } from "@/lib/clipboard";
 import { FileBrowserDialog } from "./FileBrowserDialog";
 import { useI18n } from "@/hooks/useI18n";
+import { Reveal } from "./motion/Reveal";
+import { Enter } from "./motion/Enter";
 
 /** Rechtsklick-Ziel einer Baumzeile, x/y in Viewport-Koordinaten. */
 export interface FileMenuTarget {
@@ -233,8 +236,9 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
   // `filter`, `backdrop-filter`, `perspective`, `contain` oder `will-change`
   // eroeffnet ein eigenes. Im grossen Explorer-Fenster tut das bereits der
   // Backdrop (`backdrop-filter: blur(8px)`, `FileExplorerWindow.module.css:75`)
-  // und der Panel-Animation-Nachlauf (`omp-modal-panel` endet auf
-  // `transform: scale(1) translateY(0)`, haelt den Wert per `both` dauerhaft).
+  // und — bis `ModalPanel` seinen Lauf beendet ist — auch das Panel selbst
+  // (`scale`/`y` laufen ueber motion und enden auf der Identitaet, dann steht
+  // dort `transform: none`; `backdrop-filter` haelt den Effekt dauerhaft).
   // `left`/`top` waeren dann Koordinaten RELATIV ZU DIESEM FENSTER statt zum
   // Viewport, und `window.innerWidth` waere die falsche Bezugsbreite. Das
   // Menue stuende dann um genau den Fensterrand daneben — 5vh/5vw plus 1px
@@ -500,13 +504,12 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
 
   return createPortal(
     <>
-      <div
+      <Reveal
       ref={panelRef}
       tabIndex={-1}
       role={phase === "root" ? "menu" : "dialog"}
       aria-label={panelLabel}
       aria-modal={phase === "root" ? undefined : true}
-      className="omp-pop-in"
       onKeyDown={handleKeyDown}
       onContextMenu={(event) => event.preventDefault()}
       style={{
@@ -527,11 +530,10 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
       }}
     >
       {phase === "root" && items.map((item) => (
-        <button
+        <Pressable
           key={item.action}
           type="button"
           role="menuitem"
-          className="omp-press"
           onClick={() => selectAction(item.action)}
           style={item.danger ? { ...MENU_ITEM_STYLE, color: "var(--danger)" } : MENU_ITEM_STYLE}
           onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
@@ -539,7 +541,7 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
         >
           {item.icon}
           <span style={{ flex: 1 }}>{item.label}</span>
-        </button>
+        </Pressable>
       ))}
 
       {(phase === "rename" || phase === "new-folder") && (
@@ -563,12 +565,12 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
             style={INPUT_STYLE}
           />
           <div style={FORM_FOOTER_STYLE}>
-            <button ref={cancelRef} type="button" className="omp-press" onClick={() => setPhase("root")} style={secondaryButtonStyle()}>
+            <Pressable ref={cancelRef} type="button" onClick={() => setPhase("root")} style={secondaryButtonStyle()}>
               {t("files.cancel")}
-            </button>
-            <button type="submit" className="omp-press-tint" style={primaryButtonStyle()}>
+            </Pressable>
+            <Pressable tint type="submit" style={primaryButtonStyle()}>
               {phase === "rename" ? t("files.actionRename") : t("files.actionCreate")}
-            </button>
+            </Pressable>
           </div>
         </form>
       )}
@@ -584,16 +586,16 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
             </span>
           )}
           <div style={FORM_FOOTER_STYLE}>
-            <button ref={cancelRef} type="button" className="omp-press" onClick={() => setPhase("root")} style={secondaryButtonStyle()}>
+            <Pressable ref={cancelRef} type="button" onClick={() => setPhase("root")} style={secondaryButtonStyle()}>
               {t("files.cancel")}
-            </button>
-            <button type="button" className="omp-press" onClick={handleDelete} style={dangerButtonStyle()}>
+            </Pressable>
+            <Pressable type="button" onClick={handleDelete} style={dangerButtonStyle()}>
               {t("files.contextDelete")}
-            </button>
+            </Pressable>
           </div>
         </div>
       )}
-      </div>
+      </Reveal>
 
       {transfer && (
         // Der Dialog ist ein Geschwister des Panels, nicht ein Kind: nur so
@@ -621,10 +623,12 @@ export function FileActionToast({ notice, onDismiss }: { notice: FileActionNotic
   const { t } = useI18n();
   const isError = notice.kind === "error";
   return (
-    <div
+    <Enter
       role={isError ? "alert" : "status"}
       aria-live={isError ? "assertive" : "polite"}
-      className="omp-slide-in-up"
+      /* `Enter` nimmt keine `role`-/`aria-live`-Attribute an; der Toast traegt die
+         Fehlermeldung in die Screenreader-Ansage, deshalb sitzt der Lauf direkt
+         auf dem Element, mit den Werten von `Enter direction="up"`. */
       style={{
         position: "fixed",
         right: 16,
@@ -644,9 +648,8 @@ export function FileActionToast({ notice, onDismiss }: { notice: FileActionNotic
       <span style={{ minWidth: 0, flex: 1, fontSize: 11, lineHeight: 1.35, color: isError ? "var(--danger)" : "var(--text)", overflowWrap: "anywhere" }}>
         {notice.text}
       </span>
-      <button
+      <Pressable
         type="button"
-        className="omp-press"
         onClick={onDismiss}
         title={t("files.dismissError")}
         aria-label={t("files.dismissError")}
@@ -656,7 +659,7 @@ export function FileActionToast({ notice, onDismiss }: { notice: FileActionNotic
           <path d="m6 6 12 12" />
           <path d="m18 6-12 12" />
         </svg>
-      </button>
-    </div>
+      </Pressable>
+    </Enter>
   );
 }

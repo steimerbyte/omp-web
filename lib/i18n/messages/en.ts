@@ -212,6 +212,7 @@ export const enLocale: LocalePlugin = {
     "files.addAllUploadedFiles": "Add all uploaded files to chat",
     "files.dismissUploadResults": "Dismiss upload results",
     "files.loading": "Loading files...",
+    "files.emptyNode": "Empty folder",
     "files.noFiles": "No files found",
     "files.explorer": "Explorer",
     "files.changedCount": "{count} files",

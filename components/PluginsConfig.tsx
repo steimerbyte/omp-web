@@ -5,6 +5,7 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
+import { Skeleton } from "./motion/Skeleton";
 
 type PluginScope = PluginPackageInfo["scope"];
 type PluginAction = "install" | "remove" | "update" | "disable" | "enable";
@@ -1028,7 +1029,17 @@ export function PluginsConfig({
                 onScopeChange={setInstallScope}
                 onInstall={installPlugin}
               />
-            ) : loading ? null : selectedPackage ? (
+            ) : loading ? (
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+                aria-label={t("i18n.loading")}
+              >
+                <Skeleton height={18} width="45%" />
+                <Skeleton height={13} />
+                <Skeleton height={13} width="88%" />
+                <Skeleton height={13} width="64%" />
+              </div>
+            ) : selectedPackage ? (
               <PackageDetail
                 key={packageKey(selectedPackage)}
                 pkg={selectedPackage}

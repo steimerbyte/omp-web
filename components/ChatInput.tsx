@@ -28,6 +28,7 @@ import { formatTokenCount } from "@/lib/format-tokens";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { usePopupPlacement } from "@/hooks/usePopupPlacement";
 import { computePopupPlacement, preferredPopupHeight, POPUP_GAP_PX, type PopupSide } from "@/lib/popup-placement";
+import { Pressable } from "./motion/Pressable";
 import { useI18n } from "@/hooks/useI18n";
 import { useQuickPhrases } from "@/hooks/useQuickPhrases";
 import { quickPhraseCaption } from "@/lib/quick-phrases";
@@ -1554,10 +1555,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }}
           >
             {quickPhrases.map((phrase, index) => (
-              <button
+              <Pressable
                 key={`${index}-${phrase.text}`}
                 type="button"
-                className="omp-press"
                 title={phrase.text}
                 onClick={() => insertTextAtCursor(phrase.text)}
                 style={{
@@ -1580,7 +1580,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 }}
               >
                 {quickPhraseCaption(phrase)}
-              </button>
+              </Pressable>
             ))}
           </div>
         )}

@@ -20,6 +20,10 @@ import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks, type DisplayOptions } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { MessageView } from "./MessageView";
+import { AnimatePresence, motion } from "motion/react";
+import { Shimmer } from "./motion/Shimmer";
+import { Skeleton } from "./motion/Skeleton";
+import { useAnimationMode } from "./motion/hooks";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
@@ -193,6 +197,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
 
 export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onSubagentsChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
+  const animationMode = useAnimationMode();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -432,8 +437,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-text-muted">
-         {t("chat.loadingSession")}
+      <div
+        className="flex h-full flex-col items-center justify-center gap-[10px] px-6"
+        role="status"
+        aria-label={t("chat.loadingSession")}
+      >
+        <Skeleton width="100%" height={13} />
+        <Skeleton width="92%" height={13} />
+        <Skeleton width="64%" height={13} />
       </div>
     );
   }
@@ -456,13 +467,22 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       onDrop={handleDrop}
     >
       {isDragOver && !sessionBusy && (
-        <div className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]">
+        <motion.div
+          className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]"
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.15, ease: "easeOut" }}
+        >
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {[0, 0.8, 1.6].map((delay) => (
-              <div
+              <motion.div
                 key={delay}
-                className="absolute h-[720px] w-[720px] rounded-full border-[1.5px] border-solid border-[rgba(37,99,235,0.5)] animate-[drop-ripple_2.4s_ease-out_infinite_backwards]"
-                style={{ transformOrigin: "center", animationDelay: `${delay}s` }}
+                className="absolute h-[720px] w-[720px] rounded-full border-[1.5px] border-solid border-[rgba(37,99,235,0.5)]"
+                style={{ transformOrigin: "center" }}
+                initial={{ scale: 0, opacity: 0.6 }}
+                // An endless ring must not survive the stand-still setting.
+                animate={animationMode === "off" ? { opacity: 0.35 } : { scale: [0, 1], opacity: [0.6, 0] }}
+                transition={{ duration: 2.4, ease: "easeOut", repeat: animationMode === "off" ? 0 : Infinity, delay }}
               />
             ))}
           </div>
@@ -484,7 +504,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               <line x1="87.5" y1="66.5" x2="85.4" y2="68.6"/>
             </g>
           </svg>
-        </div>
+        </motion.div>
       )}
 
       {extensionDialog && (
@@ -710,15 +730,28 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
             )}
 
+            {/* "Agent schreibt": solange Tokens kommen, laeuft der Phasentext
+             *  nicht mehr (Bedingung oben), deshalb sitzt hier der eigene
+             *  Indikator. Ohne ihn ist ein Stream ohne Bash unsichtbar. */}
+            {streamState.isStreaming && !pendingBash && (
+              <div className="flex items-center gap-[5px] py-2" aria-hidden="true">
+                <Shimmer radius={999} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  {[0, 1, 2].map((dot) => (
+                    <span key={dot} style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--accent)" }} />
+                  ))}
+                </Shimmer>
+              </div>
+            )}
+
             {agentRunning && !streamState.streamingMessage && agentPhase && (
               <div className="py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
+                <Shimmer>{phaseLabel(agentPhase, t)}</Shimmer>
               </div>
             )}
 
             {bashRunning && !pendingBash && (
               <div className="py-2 text-[13px] text-text-muted">
-                 <span className="animate-[pulse_1.5s_infinite]">{t("chat.runningCommand")}</span>
+                 <Shimmer>{t("chat.runningCommand")}</Shimmer>
               </div>
             )}
 
@@ -861,6 +894,19 @@ function ExtensionWidgets({ widgets }: { widgets: Array<{ key: string; lines: st
   );
 }
 
+/**
+ * Das Regal, auf dem Meldungen kurz erscheinen und dann wieder verschwinden.
+ *
+ * Frueher stand hier eine Item-Klasse mit einer Inline-`animation`, die
+ * die Hoehe mit animierte — die Meldung verschwand also sichtbar, aber der
+ * Platz unter ihr blieb fuer die Dauer des Ausblendens belegt. `AnimatePresence`
+ * uebernimmt Ein- und Ausblenden ueber `initial`/`animate`/`exit`; die Hoehe
+ * ist statisch, das Regal ist immer 60 px hoch.
+ *
+ * `notice.exiting` bleibt die Richtung: `useAgentSession` markiert die
+ * aelteste Meldung als `exiting` und entfernt sie nach
+ * `NOTICE_EXIT_ANIMATION_MS` aus dem Array, worauf `exit` uebernimmt.
+ */
 function NoticeShelf({ notices, floating = false, align = "left" }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right" }) {
   if (notices.length === 0) return null;
   return (
@@ -872,60 +918,62 @@ function NoticeShelf({ notices, floating = false, align = "left" }: { notices: N
         marginBottom: floating ? 0 : 10,
       }}
     >
-      {notices.map((notice, index) => {
-        const color = notice.type === "error"
-          ? "#ef4444"
-          : notice.type === "warning"
-            ? "#d97706"
-            : notice.type === "success"
-              ? "#10b981"
-              : "var(--accent)";
-        return (
-          <div
-            key={notice.id}
-            className="notice-shelf-item"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              minHeight: 60,
-              height: 60,
-              maxHeight: 60,
-              marginBottom: index === notices.length - 1 ? 0 : 6,
-              overflow: "hidden",
-              borderRadius: 14,
-              border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
-              background: "var(--bg)",
-              color: "var(--text-muted)",
-              width: "fit-content",
-              maxWidth: "min(100%, 620px)",
-              boxShadow: floating
-                ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
-                : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
-              fontSize: 18,
-              lineHeight: 1.45,
-              transformOrigin: "top center",
-              animation: notice.exiting
-                ? "notice-shelf-out 0.18s ease-in forwards"
-                : "notice-shelf-in 0.18s ease-out both",
-              padding: "0 12px",
-            }}
-          >
-            <span
+      <AnimatePresence initial={false}>
+        {notices.map((notice, index) => {
+          const color = notice.type === "error"
+            ? "#ef4444"
+            : notice.type === "warning"
+              ? "#d97706"
+              : notice.type === "success"
+                ? "#10b981"
+                : "var(--accent)";
+          return (
+            <motion.div
+              key={notice.id}
+              layout={false}
+              initial={{ opacity: 0, y: -8 }}
+              animate={notice.exiting ? { opacity: 0, y: -8 } : { opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18, ease: notice.exiting ? "easeIn" : "easeOut" }}
               style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: color,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                height: 60,
                 flexShrink: 0,
+                marginBottom: index === notices.length - 1 ? 0 : 6,
+                overflow: "hidden",
+                borderRadius: 14,
+                border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
+                background: "var(--bg)",
+                color: "var(--text-muted)",
+                width: "fit-content",
+                maxWidth: "min(100%, 620px)",
+                boxShadow: floating
+                  ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
+                  : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
+                fontSize: 18,
+                lineHeight: 1.45,
+                transformOrigin: "top center",
+                padding: "0 12px",
               }}
-            />
-            <span style={{ padding: "14px 0", minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {notice.message}
-            </span>
-          </div>
-        );
-      })}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: color,
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ padding: "14px 0", minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {notice.message}
+              </span>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
+import { Enter } from "./motion/Enter";
+import { Pressable } from "./motion/Pressable";
+import { DURATION_FAST, PULSE_TRANSITION } from "./motion/animations";
 
 interface TerminalSummary {
   id: string;
@@ -85,9 +89,9 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
 
   return (
     <div ref={rootRef} style={{ position: "relative", display: "flex", height: "100%" }}>
-      <button
+      <Pressable
+        tint
         type="button"
-        className="omp-press-tint"
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         title={disabled ? "Select a project to open a terminal" : "Terminal"}
@@ -139,12 +143,9 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
             {runningCount}
           </span>
         )}
-      </button>
+      </Pressable>
       {open && (
-        <div
-          role="menu"
-          className="omp-slide-in-down"
-          style={{
+        <Enter direction="down" role="menu" style={{
             position: "absolute",
             top: "100%",
             left: 0,
@@ -159,10 +160,9 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
             overflow: "hidden",
           }}
         >
-          <button
+          <Pressable
             type="button"
             role="menuitem"
-            className="omp-press"
             onClick={() => void handleNew()}
             disabled={busy || disabled}
             style={{
@@ -187,7 +187,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                 {cwd}
               </span>
             )}
-          </button>
+          </Pressable>
           {error && (
             <div style={{ padding: "8px 12px", color: "#f87171", fontSize: 11, background: "rgba(239,68,68,0.08)" }}>
               {error}
@@ -200,10 +200,13 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
               </div>
             )}
             {terminals.map((t) => (
-              <div
+              <motion.div
                 key={t.id}
                 role="menuitem"
-                className="omp-press-tint"
+                whileTap={t.status === "running"
+                  ? { scale: 0.96, backgroundColor: "var(--accent-hover, var(--accent))" }
+                  : undefined}
+                transition={{ duration: DURATION_FAST }}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -223,14 +226,16 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                 }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >
-                <span
+                <motion.span
                   aria-label={t.status}
+                  animate={t.status === "running" ? { opacity: [1, 0.35, 1] } : undefined}
+                  transition={PULSE_TRANSITION}
                   style={{
                     width: 8,
                     height: 8,
                     borderRadius: "50%",
-                    background: t.status === "running" ? "#4ade80" : "var(--text-dim)",
-                    boxShadow: t.status === "running" ? "0 0 4px #4ade80" : "none",
+                    background: t.status === "running" ? "var(--success)" : "var(--text-dim)",
+                    boxShadow: t.status === "running" ? "0 0 4px var(--success)" : "none",
                     flexShrink: 0,
                   }}
                 />
@@ -242,9 +247,8 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                     {t.shell} · pid {t.pid}
                   </div>
                 </div>
-                <button
+                <Pressable
                   type="button"
-                  className="omp-press"
                   onClick={(event) => {
                     event.stopPropagation();
                     void handleKill(t.id);
@@ -268,11 +272,11 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                   }}
                 >
                   ×
-                </button>
-              </div>
+                </Pressable>
+        </motion.div>
             ))}
           </div>
-        </div>
+        </Enter>
       )}
     </div>
   );

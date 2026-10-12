@@ -3,7 +3,46 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
-## Unreleased
+## v0.11.0
+
+### Animations
+
+**`motion` is now the single animation source.** The `.omp-*` classes and their
+eighteen `@keyframes` are gone from `app/globals.css`; every moving surface now
+runs through `components/motion/`. The duplicated `session-info-pop` keyframes
+that lived in an inline `<style>` block inside `AppShell` are gone with them.
+
+- **A global switch: Settings → Animations.** Full, Reduced or Off. It is stored
+  as `omp-animations` in `localStorage`, deliberately not as a `/api/settings`
+  key — that route projects a schema out of the pinned
+  `@oh-my-pi/pi-coding-agent`, so a new path there would mean patching a
+  foreign package for a value the server never reads. Off stands still
+  regardless of the OS setting; Reduced defers to `prefers-reduced-motion`.
+  Changing it takes effect without a reload, and `hooks/useTheme.ts` reads the
+  same attribute so a theme change does not wipe while everything else stands
+  still.
+- **Loading states are no longer blank text or nothing at all.**
+  - A session that is still loading shows three skeleton lines instead of a
+    bare "Loading session" string.
+  - The file explorer shows ten skeleton rows instead of "Loading files…", and
+    the gear that appears while a directory opens now turns. It was rendered
+    without any animation before, on a path the user takes on every folder
+    click.
+  - The terminal's "connecting…" chip runs as a shimmer, and the status dot in
+    the terminal menu pulses while a session is running instead of standing
+    still. Its colour is now `var(--success)` rather than a hard-coded hex, so
+    an imported theme applies to it.
+  - The models, skills and plugins detail panels render skeletons instead of
+    leaving the whole area empty.
+  - While the agent writes a message, a three-dot shimmer runs under it. That
+  separates "the agent is thinking" from "the agent is writing" — previously
+  only the first was visible.
+- **The press feedback lost a distinction that no longer exists.**
+  `.omp-press-scale` was needed because a CSS keyframe overwrote `transform`
+  outright and clobbered an element's own rotation. Motion composes transforms,
+  so it is now the same `whileTap` as the plain variant.
+- SMIL `<animateTransform>` on the subagent spinner is replaced by motion.
+  SMIL and motion on the same node fight each other.
 
 **Not verified in this release.** Stated plainly, because a release note that
 claims more than was tested is worse than one that admits the gap:
@@ -19,6 +58,10 @@ claims more than was tested is worse than one that admits the gap:
   `~/omp-cwd-*` grant, for instance — that terminal will now be refused with a
   remediation instead of opening. Bind it deliberately rather than expecting it
   to keep working.
+- The animation switch itself has **not** been exercised through a browser. The
+  mode mapping, the fallback on an invalid stored value and the storage/DOM
+  round trip are covered by `components/motion/motion.test.mjs`; the rendered
+  motion is not. Verify it on a real session before relying on it.
 
 ### Terminal
 
@@ -216,3 +259,16 @@ The upstream remote has been removed. There is no merge path and no automatic
 tracking; pulling upstream changes in is now a deliberate operation. The npm
 publish workflow inherited from the fork is disabled. Releases are GitHub
 releases only, installed from a checkout or a release tarball.
+
+### Internal
+
+- `components/motion/animation-mode.ts` holds the animation-mode rules without
+  React or JSX, so they can be tested directly instead of inferred from
+  component source. `AnimationProvider.tsx` is only the React binding.
+- Every primitive in `components/motion/` forwards its ref and the remaining
+  motion props. Several popovers measure their own box to decide which way to
+  open; a primitive that cannot hand back a ref gets reimplemented inline, and
+  that is how the duplicated `session-info-pop` keyframes ended up in
+  `AppShell` in the first place.
+- `AGENTS.md` gained an "Animations" section recording the same decision, so
+  the next animation does not go back to a keyframe or to `/api/settings`.

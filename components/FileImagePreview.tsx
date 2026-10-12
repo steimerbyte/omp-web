@@ -2,8 +2,12 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import styles from "./FileImagePreview.module.css";
+import { motion } from "motion/react";
+import { EASE_POP } from "./motion/animations";
+import { Pressable } from "./motion/Pressable";
 import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
 import { useI18n } from "@/hooks/useI18n";
+import { ModalBackdrop, ModalPanel } from "./motion/Enter";
 
 export interface FileImagePreviewProps {
   /** true rendert Backdrop und Panel, false rendert gar nichts. */
@@ -370,16 +374,16 @@ export function FileImagePreview({
   };
 
   return (
-    <div
-      className={`omp-modal-backdrop ${styles.backdrop}`}
+    <ModalBackdrop
+      className={styles.backdrop}
       data-nested-overlay
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div
+      <ModalPanel
         ref={panelRef}
-        className={`omp-modal-panel ${styles.panel}`}
+        className={styles.panel}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -394,9 +398,9 @@ export function FileImagePreview({
           )}
           <div className={styles.headerActions}>
             {onPrev && (
-              <button
+              <Pressable
                 type="button"
-                className={`omp-press ${styles.iconButton}`}
+                className={styles.iconButton}
                 onClick={onPrev}
                 title={t("fileImagePreview.previousImage")}
                 aria-label={t("fileImagePreview.previousImage")}
@@ -404,12 +408,12 @@ export function FileImagePreview({
                 <svg className={styles.glyph} viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m15 18-6-6 6-6" />
                 </svg>
-              </button>
+              </Pressable>
             )}
             {onNext && (
-              <button
+              <Pressable
                 type="button"
-                className={`omp-press ${styles.iconButton}`}
+                className={styles.iconButton}
                 onClick={onNext}
                 title={t("fileImagePreview.nextImage")}
                 aria-label={t("fileImagePreview.nextImage")}
@@ -417,11 +421,11 @@ export function FileImagePreview({
                 <svg className={styles.glyph} viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m9 18 6-6-6-6" />
                 </svg>
-              </button>
+              </Pressable>
             )}
-            <button
+            <Pressable
               type="button"
-              className={`omp-press ${styles.iconButton}`}
+              className={styles.iconButton}
               onClick={onClose}
               title={t("i18n.close")}
               aria-label={t("i18n.close")}
@@ -429,7 +433,7 @@ export function FileImagePreview({
               <svg className={styles.glyph} viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
-            </button>
+            </Pressable>
           </div>
         </div>
 
@@ -447,18 +451,24 @@ export function FileImagePreview({
               className={styles.imageFrame}
               style={{ transform: `translate(-50%, -50%) translate(${transform.offsetX}px, ${transform.offsetY}px)` }}
             >
-              {/* `omp-pop-in` sitzt auf dem Bild, nicht auf der Zoom-Huelle:
-                  die Animation faehrt `transform` und wuerde den Zoom-Versatz
-                  im `both`-Fill ueberschreiben. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              {/* Der Einblende-Lauf sitzt auf dem `img` selbst, nicht auf der Zoom-Huelle
+                  und nicht auf einem `Reveal`-Wrapper: `Reveal` rendert ein
+                  `div` und wuerde damit den Zoom-Versatz der Huelle nicht
+                  anfassen koennen, waehrend die Huelle ihren `transform` aus
+                  dem Style braucht. Der Lauf bleibt deshalb auf `opacity` und
+                  `filter` beschraenkt und laesst den `style`-Transform der
+                  Huelle unberuehrt. */}
+              <motion.img
                 key={imageKey}
                 ref={imageRef}
-                className={`omp-pop-in ${styles.image}`}
+                className={styles.image}
                 src={src}
                 alt={title}
                 draggable={false}
                 data-loaded={loadState === "loaded" ? "true" : "false"}
+                initial={{ opacity: 0, filter: "blur(6px)" }}
+                animate={{ opacity: 1, filter: "blur(0px)" }}
+                transition={{ duration: 0.24, ease: EASE_POP }}
                 style={naturalSize ? {
                   width: naturalSize.width * renderScale,
                   height: naturalSize.height * renderScale,
@@ -483,60 +493,60 @@ export function FileImagePreview({
           {loadState === "error" && (
             <div className={`${styles.state} ${styles.stateError}`} role="alert">
               <span>{t("fileImagePreview.loadFailed")}</span>
-              <button
+              <Pressable
                 type="button"
-                className={`omp-press ${styles.retryButton}`}
+                className={styles.retryButton}
                 onClick={() => setReloadKey((key) => key + 1)}
               >
                 {t("i18n.refresh")}
-              </button>
+              </Pressable>
             </div>
           )}
         </div>
 
         <div className={styles.footer}>
-          <button
+          <Pressable
             type="button"
-            className={`omp-press ${styles.toolButton}`}
+            className={styles.toolButton}
             onClick={() => applyZoom(1 / ZOOM_STEP)}
             disabled={transform.scale <= scaleMin}
             title={t("fileImagePreview.zoomOut")}
             aria-label={t("fileImagePreview.zoomOut")}
           >
             <svg className={styles.glyph} viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
-          </button>
+          </Pressable>
           <span className={styles.zoomReadout} aria-live="polite">
             {zoomPercent}%
           </span>
-          <button
+          <Pressable
             type="button"
-            className={`omp-press ${styles.toolButton}`}
+            className={styles.toolButton}
             onClick={() => applyZoom(ZOOM_STEP)}
             disabled={transform.scale >= scaleMax}
             title={t("fileImagePreview.zoomIn")}
             aria-label={t("fileImagePreview.zoomIn")}
           >
             <svg className={styles.glyph} viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          </button>
-          <button
+          </Pressable>
+          <Pressable
             type="button"
-            className={`omp-press ${styles.toolButton}`}
+            className={styles.toolButton}
             onClick={fitToWindow}
             disabled={transform.scale === 1 && transform.offsetX === 0 && transform.offsetY === 0}
             title={t("fileImagePreview.zoomFit")}
           >
             {t("fileImagePreview.fit")}
-          </button>
-          <button
+          </Pressable>
+          <Pressable
             type="button"
-            className={`omp-press ${styles.toolButton}`}
+            className={styles.toolButton}
             onClick={toggleNativeSize}
             title={t("fileImagePreview.zoomActual")}
           >
             100%
-          </button>
+          </Pressable>
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalBackdrop>
   );
 }

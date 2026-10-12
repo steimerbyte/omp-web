@@ -6,6 +6,7 @@ import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { useI18n } from "@/hooks/useI18n";
+import { Pressable } from "./motion/Pressable";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { OmpWordmark } from "./OmpWordmark";
@@ -42,8 +43,8 @@ function ToolbarIconButton({
     e.currentTarget.style.background = background;
   };
   return (
-    <button
-      className="omp-press-tint"
+    <Pressable
+      tint
       onClick={onClick}
       title={title}
       aria-label={title}
@@ -64,7 +65,7 @@ function ToolbarIconButton({
       onMouseLeave={leave}
     >
       {children}
-    </button>
+    </Pressable>
   );
 }
 
@@ -1048,9 +1049,9 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
               onClick={() => loadSessions(false, true)}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
-                background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
-                border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
-                color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
+                background: sessionRefreshDone ? "color-mix(in srgb, var(--success) 18%, transparent)" : "var(--bg-hover)",
+                border: `1px solid ${sessionRefreshDone ? "color-mix(in srgb, var(--success) 40%, transparent)" : "var(--border)"}`,
+                color: sessionRefreshDone ? "var(--success)" : "var(--text-muted)",
                 cursor: "pointer",
                 width: 32, height: 32,
                 borderRadius: 7,
@@ -1073,7 +1074,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
               title={t("sidebar.refresh")}
             >
               {sessionRefreshDone ? (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               ) : (
@@ -1217,9 +1218,8 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                   background: isSelectedProject ? "var(--bg-hover)" : "transparent",
                 }}
               >
-                <button
+                <Pressable
                   type="button"
-                  className="omp-press"
                   onClick={() => toggleProjectCollapsed(project)}
                   title={isCollapsed ? t("sidebar.expandProject") : t("sidebar.collapseProject")}
                   aria-label={isCollapsed ? t("sidebar.expandProject") : t("sidebar.collapseProject")}
@@ -1253,7 +1253,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                   >
                     <polyline points="2.5 4 6 7.5 9.5 4" />
                   </svg>
-                </button>
+                </Pressable>
                 <button
                   type="button"
                   onClick={() => setSelectedCwd(project)}
@@ -1780,8 +1780,8 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           }}
         >
           <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-            <button
-              className="omp-press-tint"
+            <Pressable
+              tint
               onClick={() => setExplorerOpen((open) => {
                 const next = !open;
                 saveExplorerOpen(next);
@@ -1812,7 +1812,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                 <polyline points="3 2 7 5 3 8" />
               </svg>
               {t("files.explorer")}
-            </button>
+            </Pressable>
             {explorerOpen && changesCount > 0 && (
               <ToolbarIconButton
                 onClick={() => setChangesCollapsed((v) => !v)}
@@ -2428,8 +2428,7 @@ function SessionItem({
 
           {/* Collapse toggle — always visible when has children */}
           {hasChildren && (
-            <button
-              className="omp-press-scale"
+            <Pressable
               onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
               title={collapsed ? t("sidebar.expandForks") : t("sidebar.collapseForks")}
               style={{
@@ -2444,14 +2443,13 @@ function SessionItem({
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="2 3.5 5 6.5 8 3.5" />
               </svg>
-            </button>
+            </Pressable>
           )}
 
           {/* Action buttons — shown on hover */}
           {hovered && !session.transient && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <button
-                className="omp-press"
+              <Pressable
                 onClick={startRename}
                 title={t("sidebar.rename")}
                 style={{
@@ -2476,9 +2474,8 @@ function SessionItem({
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
-              </button>
-              <button
-                className="omp-press"
+              </Pressable>
+              <Pressable
                 onClick={performArchive}
                 title={t("sidebar.archive")}
                 style={{
@@ -2503,7 +2500,7 @@ function SessionItem({
                   <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
                   <path d="M10 12h4" />
                 </svg>
-              </button>
+              </Pressable>
               <button
                 onClick={handleDeleteClick}
                 title={t("sidebar.deleteWithShiftClick")}

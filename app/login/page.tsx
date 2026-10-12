@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { OmpWordmark } from "@/components/OmpWordmark";
+import { AnimationProvider } from "@/components/motion/AnimationProvider";
+import { Reveal } from "@/components/motion/Reveal";
 import styles from "./login.module.css";
 
 /**
@@ -57,8 +59,9 @@ export default function LoginPage() {
   }, [password, router, username]);
 
   return (
-    <main className={styles.page}>
-      <div className={`${styles.card} omp-pop-in ${styles.idleLoop}`}>
+    <AnimationProvider>
+      <main className={styles.page}>
+        <Reveal className={`${styles.card} ${styles.idleLoop}`}>
         <div className={styles.brand}>
           <OmpWordmark markSize={20} />
         </div>
@@ -136,7 +139,8 @@ export default function LoginPage() {
         <p className={styles.aside}>
           <Link href="/recover">Forgot password?</Link>
         </p>
-      </div>
-    </main>
+        </Reveal>
+      </main>
+    </AnimationProvider>
   );
 }

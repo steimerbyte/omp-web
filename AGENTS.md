@@ -369,6 +369,42 @@ TypeScript half type-checks against — keep the two in sync.
 - The button label is user content and is therefore never translated; only the
   settings section's own strings go through i18n.
 
+### Animations
+- **`motion` is the only animation source.** The old `.omp-*` classes and their
+  `@keyframes` are gone from `app/globals.css`. Do not add a new keyframe for a
+  one-off: build it from `components/motion/`.
+- The primitives are `Shimmer` (loading wash), `Skeleton` (loading placeholder,
+  reserves its box when animations are off), `Reveal` (panel entrance),
+  `Pressable` (tap feedback, `tint` for the accent flash), and `Enter` /
+  `ModalBackdrop` / `ModalPanel` / `Spin`. Shared timings live in
+  `components/motion/animations.ts` — import from there instead of writing your
+  own duration.
+- **All of them forward their ref and the rest of the motion props.** That is
+  deliberate: several popovers measure their own box to decide which way to
+  open, and a primitive that cannot hand back a ref gets reimplemented inline,
+  which is how the duplicated `session-info-pop` keyframes appeared in the
+  first place. If a primitive does not fit a callsite, widen the primitive.
+- **The mode lives in `localStorage` as `omp-animations`**, not in
+  `/api/settings`. That route projects a schema out of the pinned
+  `@oh-my-pi/pi-coding-agent`, so a new path there means patching a foreign
+  package for a value the server never reads. It is a surface preference, the
+  same line as `omp-sound-enabled` and `omp-theme`.
+  `components/motion/animation-mode.ts` holds the rules (no React, so they are
+  testable) and `AnimationProvider.tsx` the React binding, mounted in
+  `app/page.tsx`, `app/login/page.tsx` and `app/recover/page.tsx`.
+- `MotionConfig reducedMotion="always"` stops what motion owns; the
+  `html[data-omp-animations="off"]` block at the end of `globals.css` stops the
+  rest — the login CSS module, the panel-width transitions, every inline
+  `transition:` string. A millisecond, not zero, so a `transitionend` listener
+  still fires.
+- `hooks/useTheme.ts` checks the same attribute before running the view
+  transition. Without it a theme change would sweep while everything else
+  stands still.
+- **Never set `will-change` by hand and never write a colour literal.** Motion
+  manages `will-change`; pinning it on a permanently animated element holds a
+  compositing layer for the life of the page. Colour literals break imported
+  themes, because `applyOmpPalette` rewrites the variables at runtime.
+
 ### Exported session HTML
 - `/api/sessions/[id]/export` delegates to omp's export helper, then patches recursive tree helpers in the generated HTML to iterative versions so very deep linear sessions do not overflow the browser call stack.
 

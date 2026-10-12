@@ -212,6 +212,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.addAllUploadedFiles": "将所有上传的文件添加到聊天",
     "files.dismissUploadResults": "关闭上传结果",
     "files.loading": "正在加载文件...",
+    "files.emptyNode": "空文件夹",
     "files.noFiles": "未找到文件",
     "files.explorer": "文件浏览器",
     "files.changedCount": "{count} 个文件",

@@ -3,6 +3,8 @@
 import { forwardRef, useState, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { createPortal } from "react-dom";
+import { Pressable } from "./motion/Pressable";
+import { Skeleton } from "./motion/Skeleton";
 import windowStyles from "./FileExplorerWindow.module.css";
 import {
   encodeFilePathForApi,
@@ -20,6 +22,7 @@ import { FileImagePreview } from "./FileImagePreview";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type FileTab } from "./TabBar";
 import { useI18n } from "@/hooks/useI18n";
+import { ModalBackdrop, ModalPanel, Spin } from "./motion/Enter";
 type Translate = ReturnType<typeof useI18n>["t"];
 
 /**
@@ -397,8 +400,7 @@ function ImageOpenIcon({ size = 11 }: { size?: number }) {
 
 function DismissButton({ onClick, title }: { onClick: () => void; title: string }) {
   return (
-    <button
-    className="omp-press"
+    <Pressable
       type="button"
       onClick={onClick}
       title={title}
@@ -411,7 +413,7 @@ function DismissButton({ onClick, title }: { onClick: () => void; title: string 
         <path d="m6 6 12 12" />
         <path d="m18 6-12 12" />
       </svg>
-    </button>
+    </Pressable>
   );
 }
 
@@ -475,15 +477,13 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
   }, [onClose]);
 
   return (
-    <div
-      className="omp-modal-backdrop"
+    <ModalBackdrop
       data-nested-overlay
       style={{ position: "fixed", inset: 0, zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)" }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
-      <div
+      <ModalPanel
         ref={panelRef}
-        className="omp-modal-panel"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -551,9 +551,8 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button
+          <Pressable
             type="button"
-            className="omp-press"
             onClick={onClose}
             style={{
               height: 24,
@@ -568,10 +567,10 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
             }}
           >
             {t("files.cancel")}
-          </button>
+          </Pressable>
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalBackdrop>
   );
 }
 
@@ -658,9 +657,8 @@ function EmptyTabView({
             fontSize: 11,
           }}
         />
-        <button
+        <Pressable
           type="submit"
-          className="omp-press"
           disabled={!path.trim()}
           style={{
             height: 26,
@@ -677,7 +675,7 @@ function EmptyTabView({
           }}
         >
           {t("files.explorerWindowOpenPath")}
-        </button>
+        </Pressable>
       </form>
     </div>
   );
@@ -950,15 +948,15 @@ function FileExplorerWindow({
   if (!portalTarget) return null;
 
   return createPortal(
-    <div
-      className={`omp-modal-backdrop ${windowStyles.backdrop}`}
+    <ModalBackdrop
+      className={windowStyles.backdrop}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div
+      <ModalPanel
         ref={panelRef}
-        className={`omp-modal-panel ${windowStyles.panel}`}
+        className={windowStyles.panel}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -968,9 +966,9 @@ function FileExplorerWindow({
           <span id={titleId} className={windowStyles.title} title={cwd}>
             {t("files.explorerWindowTitle")}: {cwd}
           </span>
-          <button
+          <Pressable
             type="button"
-            className={`omp-press ${windowStyles.iconButton}`}
+            className={windowStyles.iconButton}
             onClick={onClose}
             title={t("i18n.close")}
             aria-label={t("i18n.close")}
@@ -978,7 +976,7 @@ function FileExplorerWindow({
             <svg className={windowStyles.glyph} viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
-          </button>
+          </Pressable>
         </div>
 
         {/* Leiste und Arbeitsbereich. Die Leiste ist IMMER da, auch ohne
@@ -1082,8 +1080,8 @@ function FileExplorerWindow({
             <div className={windowStyles.empty}>{t("files.explorerWindowNoTab")}</div>
           ) : null}
         </div>
-      </div>
-    </div>,
+      </ModalPanel>
+    </ModalBackdrop>,
     portalTarget,
   );
 }
@@ -1195,9 +1193,8 @@ function ExplorerToolbar({
       }}
     >
       {!draftOpen ? (
-        <button
+        <Pressable
           type="button"
-          className="omp-press"
           title={t("files.toolbarNewFolder")}
           aria-label={t("files.toolbarNewFolder")}
           style={TOOLBAR_BUTTON_STYLE}
@@ -1210,7 +1207,7 @@ function ExplorerToolbar({
             <line x1="12" y1="11" x2="12" y2="16" />
             <line x1="9.5" y1="13.5" x2="14.5" y2="13.5" />
           </svg>
-        </button>
+        </Pressable>
       ) : (
         <form
           onSubmit={(event) => {
@@ -1244,9 +1241,8 @@ function ExplorerToolbar({
         </form>
       )}
 
-      <button
+      <Pressable
         type="button"
-        className="omp-press"
         title={t("files.toolbarRefresh")}
         aria-label={t("files.toolbarRefresh")}
         style={{
@@ -1273,11 +1269,10 @@ function ExplorerToolbar({
             <polyline points="21 3 21 9 15 9" />
           </svg>
         )}
-      </button>
+      </Pressable>
 
-      <button
+      <Pressable
         type="button"
-        className="omp-press"
         title={t("files.toolbarUpload")}
         aria-label={t("files.toolbarUpload")}
         disabled={uploadBusy}
@@ -1291,14 +1286,13 @@ function ExplorerToolbar({
           <path d="m7 9 5-5 5 5" />
           <path d="M5 20h14" />
         </svg>
-      </button>
+      </Pressable>
 
       {/* Das grosse Fenster. Ohne `onOpenPopup` faellt der Knopf weg — das ist
           der Rekursionsschutz fuer die Instanz, die im Fenster selbst sitzt. */}
       {onOpenPopup && (
-        <button
+        <Pressable
           type="button"
-          className="omp-press"
           title={t("files.toolbarOpenWindow")}
           aria-label={t("files.toolbarOpenWindow")}
           style={TOOLBAR_BUTTON_STYLE}
@@ -1311,7 +1305,7 @@ function ExplorerToolbar({
             <path d="M3 9h18" />
             <path d="M8 14h8" />
           </svg>
-        </button>
+        </Pressable>
       )}
 
       {selection.length > 0 && (
@@ -1321,9 +1315,8 @@ function ExplorerToolbar({
             {t("files.selectionCount", { count: selection.length })}
           </span>
 
-          <button
+          <Pressable
             type="button"
-            className="omp-press"
             title={t("files.toolbarCopyTo")}
             aria-label={t("files.toolbarCopyTo")}
             style={TOOLBAR_BUTTON_STYLE}
@@ -1335,11 +1328,10 @@ function ExplorerToolbar({
               <rect x="9" y="3" width="11" height="12" rx="2" />
               <path d="M5 21V8a2 2 0 0 1 2-2h4" />
             </svg>
-          </button>
+          </Pressable>
 
-          <button
+          <Pressable
             type="button"
-            className="omp-press"
             title={t("files.toolbarMoveTo")}
             aria-label={t("files.toolbarMoveTo")}
             style={TOOLBAR_BUTTON_STYLE}
@@ -1351,7 +1343,7 @@ function ExplorerToolbar({
               <path d="M5 12h13" />
               <polyline points="13 6 19 12 13 18" />
             </svg>
-          </button>
+          </Pressable>
 
           {selection.length === 1 && (
             <a
@@ -1371,9 +1363,8 @@ function ExplorerToolbar({
             </a>
           )}
 
-          <button
+          <Pressable
             type="button"
-            className="omp-press"
             title={t("files.toolbarProperties")}
             aria-label={t("files.toolbarProperties")}
             style={TOOLBAR_BUTTON_STYLE}
@@ -1386,11 +1377,10 @@ function ExplorerToolbar({
               <path d="M12 11v5" />
               <path d="M12 8h.01" />
             </svg>
-          </button>
+          </Pressable>
 
-          <button
+          <Pressable
             type="button"
-            className="omp-press"
             title={t("files.clearSelection")}
             aria-label={t("files.clearSelection")}
             style={TOOLBAR_BUTTON_STYLE}
@@ -1402,7 +1392,7 @@ function ExplorerToolbar({
               <path d="m6 6 12 12" />
               <path d="m18 6-12 12" />
             </svg>
-          </button>
+          </Pressable>
         </>
       )}
     </div>
@@ -1652,13 +1642,14 @@ function TreeNode({
           </span>
         )}
         {loading && (
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
-          </svg>
+          <Spin style={{ display: "inline-flex", width: 10, height: 10 }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
+            </svg>
+          </Spin>
         )}
         {onAtMention && hovered && (
-          <button
-            className="omp-press-scale"
+          <Pressable
             onClick={(e) => {
               e.stopPropagation();
               onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
@@ -1687,11 +1678,10 @@ function TreeNode({
           >
             <MentionIcon />
             {t("files.mention")}
-          </button>
+          </Pressable>
         )}
         {canPreviewImage && hovered && (
-          <button
-            className="omp-press-scale"
+          <Pressable
             onClick={(e) => {
               // Ohne Halt ruft der Klick auf den Knopf den Zeilen-Klick auf und
               // oeffnet dieselbe Vorschau ein zweites Mal.
@@ -1719,7 +1709,7 @@ function TreeNode({
             }}
           >
             <ImageOpenIcon />
-          </button>
+          </Pressable>
         )}
         {hovered && !node.isDir && (
           <a
@@ -1791,7 +1781,7 @@ function TreeNode({
           ))}
           {children.length === 0 && loaded && (
             <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
-              empty
+              {t("files.emptyNode")}
             </div>
           )}
         </div>
@@ -1858,8 +1848,7 @@ function Breadcrumb({
           Der Pfad ist die scrollendeFlaeche, die Knöpfe sind es nicht: ohne
           `flex: 1` und `minWidth: 0` waere der Pfad die starre Komponente und
           die Leiste auf einem Telefon breiter als das Panel, in dem sie steht. */}
-      <button
-        className="omp-press"
+      <Pressable
         type="button"
         onClick={onNavigateBack}
         disabled={!canGoBack}
@@ -1873,9 +1862,8 @@ function Breadcrumb({
           <path d="M19 12H5" />
           <polyline points="12 19 5 12 12 5" />
         </svg>
-      </button>
-      <button
-        className="omp-press"
+      </Pressable>
+      <Pressable
         type="button"
         onClick={onNavigateForward}
         disabled={!canGoForward}
@@ -1889,9 +1877,8 @@ function Breadcrumb({
           <path d="M5 12h14" />
           <polyline points="12 5 19 12 12 19" />
         </svg>
-      </button>
-      <button
-        className="omp-press"
+      </Pressable>
+      <Pressable
         type="button"
         onClick={onNavigateHome}
         disabled={atHome}
@@ -1905,9 +1892,8 @@ function Breadcrumb({
           <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
           <polyline points="9 22 9 12 15 12 15 22" />
         </svg>
-      </button>
-      <button
-        className="omp-press"
+      </Pressable>
+      <Pressable
         type="button"
         onClick={onNavigateUp}
         disabled={!canGoUp}
@@ -1920,7 +1906,7 @@ function Breadcrumb({
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="m18 15-6-6-6 6" />
         </svg>
-      </button>
+      </Pressable>
       {/* Der Rand zwischen den Wegen und dem Pfad: ohne ihn laesst die Leiste
           einen Knopf und den ersten Pfadabschnitt zusammen lesen. */}
       <span style={{ flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2, overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin", paddingLeft: 4 }}>
@@ -1928,8 +1914,7 @@ function Breadcrumb({
           const isLast = index === segments.length - 1;
           return (
             <span key={segment.fullPath} style={{ display: "inline-flex", alignItems: "center", gap: 2, minWidth: 0 }}>
-              <button
-                className="omp-press"
+              <Pressable
                 type="button"
                 onClick={() => onNavigate(segment.fullPath)}
                 title={segment.fullPath}
@@ -1952,7 +1937,7 @@ function Breadcrumb({
                 onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
               >
                 {segment.name}
-              </button>
+              </Pressable>
               {!isLast && <span style={{ color: "var(--text-dim)" }}>/</span>}
             </span>
           );
@@ -2637,9 +2622,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
           <div role="status" aria-live="polite" aria-label={uploadPhase === "checking" ? t("files.checking") : t("files.uploading", { progress: uploadProgress })}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 14, color: "var(--text-muted)" }}>
               {uploadPhase === "checking" ? (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite" }} aria-hidden="true">
+                <Spin style={{ display: "inline-flex" }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                   <path d="M21 12a9 9 0 1 1-5.7-8.4" />
                 </svg>
+              </Spin>
               ) : (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M12 16V4" />
@@ -2721,8 +2708,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 )}
               </div>
               {uploadSummary.uploaded.length > 0 && onAtMentions && (
-                <button
-                className="omp-press"
+                <Pressable
                   type="button"
                   onClick={addUploadedFilesToChat}
                   title={uploadSummary.uploaded.length === 1 ? t("files.addUploadedFile") : t("files.addAllUploadedFiles")}
@@ -2731,7 +2717,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 >
                   <MentionIcon />
                   {t("files.mention")}
-                </button>
+                </Pressable>
               )}
               <DismissButton onClick={() => setUploadSummary(null)} title={t("files.dismissUploadResults")} />
             </div>
@@ -2799,7 +2785,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       {(changesCollapsed || gitFiles.length === 0) && (
         <div style={{ padding: "2px 4px" }}>
           {loading ? (
-            <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>Loading files...</div>
+            <div
+              role="status"
+              aria-label={t("files.loading")}
+              style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 12px" }}
+            >
+              {Array.from({ length: 10 }, (_, index) => (
+                <Skeleton key={index} height={18} />
+              ))}
+            </div>
           ) : error ? (
             <div style={{ padding: "8px 12px", fontSize: 11, color: "#f87171" }}>{error}</div>
           ) : (

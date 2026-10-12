@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Reveal } from "./motion/Reveal";
 
 interface Stats {
   cpuPercent: number | null;
@@ -36,9 +37,9 @@ function formatBytes(bytes: number): string {
 
 function colorFor(percent: number | null): string {
   if (percent === null) return "var(--text-dim)";
-  if (percent >= 90) return "#ef4444";
-  if (percent >= 70) return "#d6a84b";
-  return "#4ade80";
+  if (percent >= 90) return "var(--danger)";
+  if (percent >= 70) return "var(--warning)";
+  return "var(--success)";
 }
 
 interface Sample {
@@ -271,11 +272,10 @@ export function SystemStatsBadge() {
         </span>
       </button>
       {open && (
-        <div
+        <Reveal
           ref={popoverRef}
           role="dialog"
           aria-label="System resource history"
-          className="omp-pop-in"
           style={{
             position: "absolute",
             top: "calc(100% - 1px)",
@@ -369,7 +369,7 @@ export function SystemStatsBadge() {
               )}
             </div>
           )}
-        </div>
+        </Reveal>
       )}
     </div>
   );

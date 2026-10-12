@@ -5,6 +5,8 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "@/hooks/useTheme";
+import { Enter } from "./motion/Enter";
+import { Shimmer } from "./motion/Shimmer";
 
 interface Props {
   terminalId: string;
@@ -171,7 +173,7 @@ export function TerminalViewer({ terminalId, onExit }: Props) {
   }, [status]);
 
   return (
-    <div className="omp-slide-in-down" style={{ position: "relative", height: "100%", width: "100%", display: "flex", flexDirection: "column", background: isDark ? "#1e1e1e" : "#ffffff" }}>
+    <Enter direction="down" style={{ position: "relative", height: "100%", width: "100%", display: "flex", flexDirection: "column", background: isDark ? "#1e1e1e" : "#ffffff" }}>
       <div
         style={{
           display: "flex",
@@ -193,8 +195,8 @@ export function TerminalViewer({ terminalId, onExit }: Props) {
             width: 8,
             height: 8,
             borderRadius: "50%",
-            background: status === "running" ? "#4ade80" : status === "exited" ? "var(--text-dim)" : "#fbbf24",
-            boxShadow: status === "running" ? "0 0 4px #4ade80" : "none",
+            background: status === "running" ? "var(--success)" : status === "exited" ? "var(--text-dim)" : "var(--warning)",
+            boxShadow: status === "running" ? "0 0 4px var(--success)" : "none",
             flexShrink: 0,
           }}
         />
@@ -205,24 +207,24 @@ export function TerminalViewer({ terminalId, onExit }: Props) {
       </div>
       <div ref={containerRef} style={{ flex: 1, minHeight: 0, padding: 8, position: "relative" }} />
       {(status === "connecting" || status === "error" || status === "exited") && (
-        <div
+        <Shimmer
+          radius={999}
           style={{
             position: "absolute",
             bottom: 12,
             right: 12,
             fontSize: 11,
             padding: "2px 8px",
-            borderRadius: 4,
-            background: status === "error" ? "rgba(239, 68, 68, 0.2)" : "rgba(120, 120, 120, 0.2)",
-            color: status === "error" ? "#f87171" : "var(--text-muted)",
+            backgroundColor: status === "error" ? "rgba(239, 68, 68, 0.2)" : "rgba(120, 120, 120, 0.2)",
+            color: status === "error" ? "var(--danger)" : "var(--text-muted)",
             fontFamily: "var(--font-mono)",
             pointerEvents: "none",
             zIndex: 5,
           }}
         >
           {status === "connecting" ? "connecting…" : status === "exited" ? "exited" : errorMessage ?? "error"}
-        </div>
+        </Shimmer>
       )}
-    </div>
+    </Enter>
   );
 }

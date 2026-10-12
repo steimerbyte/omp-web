@@ -194,7 +194,12 @@ export function useTheme(options?: { cwd?: string | null; syncWithOmp?: boolean 
       setThemeState(nextPref, nextTheme, true);
     };
 
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    // The view-transition wipe is a motion of its own, so it has to obey the
+    // same switch `MotionConfig` obeys. Without the second term a theme change
+    // would still sweep while every other animation stands still.
+    const reduceMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true ||
+      document.documentElement.dataset.ompAnimations === "off";
     const supportsVT = typeof document.startViewTransition === "function";
 
     if (!supportsVT || reduceMotion) {

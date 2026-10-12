@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import styles from "./FileBrowserDialog.module.css";
+import { Pressable } from "./motion/Pressable";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { encodeFilePathForApi, getFileDirectory, joinFilePath, normalizeFilePathSlashes } from "@/lib/file-paths";
 import { isImagePath } from "@/lib/file-types";
 import { useI18n } from "@/hooks/useI18n";
+import { ModalBackdrop, ModalPanel } from "./motion/Enter";
 
 export type FileBrowserView = "list" | "grid";
 export type FileBrowserSortDirection = "asc" | "desc";
@@ -234,9 +236,9 @@ function GridTile({
 
   if (isDirectory) {
     return (
-      <button
+      <Pressable
         type="button"
-        className={`omp-press ${className}`}
+        className={className}
         style={position}
         data-active={active}
        
@@ -244,7 +246,7 @@ function GridTile({
         title={entry.name}
       >
         {content}
-      </button>
+      </Pressable>
     );
   }
 
@@ -265,9 +267,9 @@ function GridTile({
   }
 
   return (
-    <button
+    <Pressable
       type="button"
-      className={`omp-press ${className}`}
+      className={className}
       style={position}
       data-active={active}
      
@@ -275,7 +277,7 @@ function GridTile({
       title={entry.name}
     >
       {content}
-    </button>
+    </Pressable>
   );
 }
 
@@ -501,16 +503,16 @@ export function FileBrowserDialog({
   } as React.CSSProperties;
 
   return (
-    <div
-      className={`omp-modal-backdrop ${styles.backdrop}`}
+    <ModalBackdrop
+      className={styles.backdrop}
       data-nested-overlay
       onClick={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
       }}
     >
-      <div
+      <ModalPanel
         ref={panelRef}
-        className={`omp-modal-panel ${styles.panel}`}
+        className={styles.panel}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -519,9 +521,9 @@ export function FileBrowserDialog({
       >
         <div className={styles.header}>
           <span id={titleId} className={styles.title}>{title}</span>
-          <button
+          <Pressable
             type="button"
-            className={`omp-press ${styles.iconButton}`}
+            className={styles.iconButton}
             onClick={onCancel}
             disabled={busy}
             title={t("i18n.close")}
@@ -530,14 +532,14 @@ export function FileBrowserDialog({
             <svg className={styles.iconGlyph} viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
-          </button>
+          </Pressable>
         </div>
 
         <div className={styles.crumbs}>
           {canGoUp && (
-            <button
+            <Pressable
               type="button"
-              className={`omp-press ${styles.crumb} ${styles.upButton}`}
+              className={`${styles.crumb} ${styles.upButton}`}
               onClick={() => parentPath && navigateTo(parentPath)}
               title={t("fileBrowser.upOneLevel")}
               aria-label={t("fileBrowser.upOneLevel")}
@@ -545,7 +547,7 @@ export function FileBrowserDialog({
               <svg className={styles.iconGlyph} viewBox="0 0 24 24" aria-hidden="true">
                 <path d="m18 15-6-6-6 6" />
               </svg>
-            </button>
+            </Pressable>
           )}
           {crumbs.map((crumb, index) => {
             const isLast = index === crumbs.length - 1;
@@ -556,14 +558,14 @@ export function FileBrowserDialog({
                     {crumb.name}
                   </span>
                 ) : (
-                  <button
+                  <Pressable
                     type="button"
-                    className={`omp-press ${styles.crumb}`}
+                    className={styles.crumb}
                     onClick={() => navigateTo(crumb.fullPath)}
                     title={crumb.fullPath}
                   >
                     {crumb.name}
-                  </button>
+                  </Pressable>
                 )}
                 {!isLast && <span className={styles.crumbSeparator}>/</span>}
               </span>
@@ -572,9 +574,9 @@ export function FileBrowserDialog({
         </div>
 
         <div className={styles.toolbar}>
-          <button
+          <Pressable
             type="button"
-            className={`omp-press ${styles.sortButton}`}
+            className={styles.sortButton}
             onClick={() => setSortDirection((previous) => previous === "asc" ? "desc" : "asc")}
             title={t("fileBrowser.sortByName")}
            
@@ -589,12 +591,13 @@ export function FileBrowserDialog({
             >
               {sortDirection === "asc" ? <path d="m6 15 6-6 6 6" /> : <path d="m6 9 6 6 6-6" />}
             </svg>
-          </button>
+          </Pressable>
           {onViewChange && (
             <div className={styles.viewToggle} role="group" aria-label={t("fileBrowser.viewMode")}>
-              <button
+              <Pressable
+                tint
                 type="button"
-                className={`omp-press-tint ${styles.viewButton} ${activeView === "list" ? styles.viewButtonActive : ""}`}
+                className={`${styles.viewButton} ${activeView === "list" ? styles.viewButtonActive : ""}`}
                 onClick={() => activeView !== "list" && toggleView()}
                 disabled={activeView === "list"}
                 title={t("fileBrowser.viewList")}
@@ -604,10 +607,11 @@ export function FileBrowserDialog({
                 <svg className={styles.iconGlyph} viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
-              </button>
-              <button
+              </Pressable>
+              <Pressable
+                tint
                 type="button"
-                className={`omp-press-tint ${styles.viewButton} ${activeView === "grid" ? styles.viewButtonActive : ""}`}
+                className={`${styles.viewButton} ${activeView === "grid" ? styles.viewButtonActive : ""}`}
                 onClick={() => activeView !== "grid" && toggleView()}
                 disabled={activeView === "grid"}
                 title={t("fileBrowser.viewGrid")}
@@ -617,7 +621,7 @@ export function FileBrowserDialog({
                 <svg className={styles.iconGlyph} viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />
                 </svg>
-              </button>
+              </Pressable>
             </div>
           )}
         </div>
@@ -641,10 +645,10 @@ export function FileBrowserDialog({
                 const fullPath = joinFilePath(currentPath, entry.name);
                 if (!entry.isDir) {
                   return (
-                    <button
+                    <Pressable
                       key={entry.name}
                       type="button"
-                      className={`omp-press ${styles.entry} ${styles.fileRow} ${selectedFile === fullPath ? styles.entrySelected : ""}`}
+                      className={`${styles.entry} ${styles.fileRow} ${selectedFile === fullPath ? styles.entrySelected : ""}`}
                       data-active={navigableIndex === activeIndex}
                       onClick={() => onSelectFile?.(fullPath)}
                       onMouseEnter={() => setActiveIndex(navigableIndex)}
@@ -653,14 +657,14 @@ export function FileBrowserDialog({
                     >
                       {getFileIcon(entry.name, 13)}
                       <span className={styles.entryName}>{entry.name}</span>
-                    </button>
+                    </Pressable>
                   );
                 }
                 return (
-                  <button
+                  <Pressable
                     key={entry.name}
                     type="button"
-                    className={`omp-press ${styles.entry}`}
+                    className={styles.entry}
                     data-active={navigableIndex === activeIndex}
                     onClick={() => navigateTo(fullPath)}
                     onMouseEnter={() => setActiveIndex(navigableIndex)}
@@ -672,7 +676,7 @@ export function FileBrowserDialog({
                     <svg className={styles.entryArrow} viewBox="0 0 24 24" aria-hidden="true">
                       <path d="m9 18 6-6-6-6" />
                     </svg>
-                  </button>
+                  </Pressable>
                 );
               })
             )}
@@ -725,23 +729,23 @@ export function FileBrowserDialog({
         {visibleError && (
           <div className={styles.errorRow} role="alert">
             <span className={styles.errorText}>{visibleError}</span>
-            <button
+            <Pressable
               type="button"
-              className={`omp-press ${styles.errorRetry}`}
+              className={styles.errorRetry}
               onClick={() => navigateTo(currentPath)}
               disabled={loading}
             >
               {t("i18n.refresh")}
-            </button>
-            <button
+            </Pressable>
+            <Pressable
               type="button"
-              className={`omp-press ${styles.errorRetry}`}
+              className={styles.errorRetry}
               onClick={() => setDismissedError(loadError)}
               title={t("fileBrowser.dismiss")}
               aria-label={t("fileBrowser.dismiss")}
             >
               {t("i18n.close")}
-            </button>
+            </Pressable>
           </div>
         )}
 
@@ -749,24 +753,25 @@ export function FileBrowserDialog({
           <span className={styles.currentPath} title={currentPath} aria-label={t("fileBrowser.selectedFolder")}>
             {currentPath}
           </span>
-          <button
+          <Pressable
             type="button"
-            className={`omp-press ${styles.button}`}
+            className={styles.button}
             onClick={onCancel}
             disabled={busy}
           >
             {t("i18n.cancel")}
-          </button>
-          <button
+          </Pressable>
+          <Pressable
+            tint
             type="button"
-            className={`omp-press-tint ${styles.button} ${styles.primary}`}
+            className={`${styles.button} ${styles.primary}`}
             onClick={() => onConfirm(currentPath)}
             disabled={!canConfirm}
           >
             {confirmLabel}
-          </button>
+          </Pressable>
         </div>
-      </div>
-    </div>
+      </ModalPanel>
+    </ModalBackdrop>
   );
 }
