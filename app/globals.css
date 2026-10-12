@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@import "shadcn/tailwind.css";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
 
 @theme {
   --color-bg: var(--bg);
@@ -9,8 +13,12 @@
   --color-text: var(--text);
   --color-text-muted: var(--text-muted);
   --color-text-dim: var(--text-dim);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
+  /* omp's --accent is the brand blue; shadcn's --accent is a hover surface.
+     Brand blue reaches Tailwind as `brand`, hover surface stays `accent`. */
+  --color-accent: var(--bg-hover);
+  --color-accent-hover: var(--bg-selected);
+  --color-brand: var(--accent);
+  --color-brand-hover: var(--accent-hover);
   --color-user-bg: var(--user-bg);
   --color-assistant-bg: var(--assistant-bg);
   --color-tool-bg: var(--tool-bg);
@@ -1489,4 +1497,83 @@ html[data-omp-animations="off"] *::after {
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
+}
+
+/* ---------------------------------------------------------------------------
+   shadcn/ui alias layer
+   ---------------------------------------------------------------------------
+   shadcn components read Tailwind theme names (--background, --primary,
+   --muted, --accent-foreground, --sidebar-*). None of those exist in the omp
+   palette, which uses --bg, --bg-panel, --accent and friends. Every shadcn
+   token below is therefore an alias onto the omp token, declared with var()
+   rather than a literal colour, so a palette written by applyOmpPalette
+   (hooks/useTheme.ts) flows straight through. Do not give these literal
+   values: they would freeze the shadcn layer to the bootstrap palette and
+   break under every runtime palette.
+
+   The one deliberate exception is --radius, which shadcn uses for its
+   rounded-* scale and which no omp token covers.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--bg-panel);
+  --card-foreground: var(--text);
+  --popover: var(--bg-panel);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-fg, var(--bg));
+  --secondary: var(--bg-subtle);
+  --secondary-foreground: var(--text);
+  --muted: var(--bg-hover);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--accent);
+  --sidebar: var(--bg-panel);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-fg, var(--bg));
+  --sidebar-accent: var(--bg-selected);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
+  --radius: 0.5rem;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-accent-foreground: var(--accent-foreground);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
