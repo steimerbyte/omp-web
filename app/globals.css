@@ -1246,6 +1246,10 @@ span.linenumber {
   z-index: 220;
   width: 12px;
   margin: 0 -6px;
+  /* The negative margins make the handle cost nothing in the row: the two
+     panels around it grow by the 6px it overlaps on each side. Its basis comes
+     from `width` — react-resizable-panels sets `flex-basis: auto` inline and
+     forbids overriding it, which is exactly what a fixed-width handle wants. */
   flex: 0 0 12px;
   cursor: col-resize;
   touch-action: none;
@@ -1264,7 +1268,7 @@ span.linenumber {
 }
 .panel-resize-handle:hover::after,
 .panel-resize-handle:focus-visible::after,
-.panel-resize-handle.is-resizing::after {
+.panel-resize-handle[data-separator]:active::after {
   background: color-mix(in srgb, var(--text-muted) 70%, var(--border));
 }
 
@@ -1286,9 +1290,14 @@ span.linenumber {
  * weiterhin ein `role="separator"` mit `aria-valuenow` — also genau der
  * Bediengriff, der hier aus dem Weg muss. `visibility: hidden` nimmt ihn aus
  * der Fokusreihenfolge und aus der Trefferpruefung, ohne den Platz zu
- * veraendern: die Breite der Seitenleiste richtet sich nach
- * `sidebarResizer.width`, nicht nach der Anwesenheit des Trenners, das Layout
- * springt also nicht.
+ * veraendern: die Breite der Seitenleiste richtet sich nach dem Layout der
+ * Group, nicht nach der Anwesenheit des Trenners, das Layout springt also
+ * nicht.
+ *
+ * Zusaetzlich setzt `AppShell.tsx` `disabled` auf dem Separator, waehrend das
+ * Fenster offen ist. Die Bibliothek laesst dann das `tabIndex` weg — der Griff
+ * ist also auch ohne den Umweg ueber `visibility` nicht mehr zu erreichen,
+ * weder mit dem Zeiger noch mit der Tastatur.
  *
  * Das `!important` ist nicht uebertrieben: `pointer-events: none` gewinnt
  * sonst gegen nichts, aber die Eigenschaften hier sollen sich auch dann
@@ -1305,7 +1314,29 @@ span.linenumber {
   display: none;
 }
 
-/* Desktop sidebar: animate width */
+/*
+ * The split layout.
+ *
+ * react-resizable-panels sizes a panel by `flex-grow` on its own wrapper — the
+ * element carrying `data-panel`, which the component puts its `className` on a
+ * child of. Nothing here may set a width on the panel itself any more: an
+ * inline `width` from the component would fight the flex basis and the
+ * pixel-based `minSize`/`maxSize` would stop meaning anything.
+ *
+ * `--sidebar-width` and `--right-panel-width` are therefore outputs, not
+ * inputs. `AppShell.tsx` writes them from `onResize` (`PanelSize.inPixels`),
+ * and only the rules for the panels' children read them.
+ */
+.app-shell-split [data-panel] {
+  transition: flex-grow 0.2s ease;
+}
+/* While a separator is held, the panels must follow the pointer, not a
+   0.2s-long version of it. */
+.app-shell-split.is-dragging [data-panel] {
+  transition: none !important;
+}
+
+/* Desktop sidebar: a real column, and nothing more. */
 @media (min-width: 641px) {
   .sidebar-overlay-backdrop {
     display: none !important;
@@ -1313,15 +1344,8 @@ span.linenumber {
   .sidebar-container {
     position: relative;
     overflow: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
-  }
-  .sidebar-container.sidebar-open {
-    width: var(--sidebar-width, 260px);
-    min-width: var(--sidebar-width, 260px);
   }
   .sidebar-container.sidebar-closed {
-    width: 0;
-    min-width: 0;
     border-right: none !important;
   }
   /* keep inner content at fixed width so it doesn't reflow during animation */
@@ -1329,36 +1353,20 @@ span.linenumber {
     width: var(--sidebar-width, 260px);
     min-width: var(--sidebar-width, 260px);
   }
-  .sidebar-container.sidebar-resizing,
-  .sidebar-container.sidebar-resizing > * {
-    transition: none !important;
-  }
 }
 
 /* Wide desktop file panel: participate in the split layout. */
 @media (min-width: 960px) {
   .right-panel-container {
     overflow: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
-    flex-shrink: 0;
-  }
-  .right-panel-container.right-panel-open {
-    width: var(--right-panel-width, clamp(360px, 42vw, 640px));
-    min-width: 300px;
   }
   .right-panel-container.right-panel-closed {
-    width: 0;
-    min-width: 0;
     border-left: none !important;
   }
   /* keep inner content at fixed width so it doesn't reflow during animation */
   .right-panel-container > * {
     width: var(--right-panel-width, clamp(360px, 42vw, 640px));
     min-width: 300px;
-  }
-  .right-panel-container.right-panel-resizing,
-  .right-panel-container.right-panel-resizing > * {
-    transition: none !important;
   }
 }
 
@@ -1387,11 +1395,20 @@ span.linenumber {
     right: env(safe-area-inset-right);
     bottom: 0;
     z-index: 250;
-    width: min(560px, calc(100vw - 48px));
+    /* `!important` beats the `width: auto` that react-resizable-panels sets
+       inline on every panel. */
+    width: min(560px, calc(100vw - 48px)) !important;
     min-width: 300px;
     overflow: hidden;
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.18);
     transition: transform 0.2s ease;
+  }
+  /* The panel is out of flow here, so its wrapper must not keep a share of the
+     row reserved for it — otherwise the library would still shrink the chat by
+     the percentage it thinks the panel occupies. */
+  #file-panel[data-panel] {
+    flex-grow: 0 !important;
+    flex-basis: 0 !important;
   }
   .right-panel-container.right-panel-open {
     transform: translateX(0);
@@ -1416,7 +1433,9 @@ span.linenumber {
     top: 0;
     left: env(safe-area-inset-left);
     bottom: 0;
-    width: 280px;
+    /* `!important` beats the `width: auto` that react-resizable-panels sets
+       inline on every panel. */
+    width: 280px !important;
     max-width: 85vw;
     height: var(--app-viewport-height, 100dvh);
     /* Nur hier, nur auf dem Telefon. Die Seitenleiste liegt dann ueber ihrem
@@ -1436,6 +1455,16 @@ span.linenumber {
   .sidebar-container.sidebar-closed {
     transform: translateX(calc(-100% - env(safe-area-inset-left)));
     box-shadow: none;
+  }
+  /* Both side panels are overlays here, so neither wrapper may reserve a share
+     of the row. */
+  #session-sidebar[data-panel] {
+    flex-grow: 0 !important;
+    flex-basis: 0 !important;
+  }
+  #file-panel[data-panel] {
+    flex-grow: 0 !important;
+    flex-basis: 0 !important;
   }
 
   .right-panel-container {
@@ -1517,13 +1546,13 @@ html[data-omp-animations="off"] *::after {
    COLLISION WARNING — `--sidebar-*` vs `--sidebar-width`.
    The tokens below are shadcn's colour semantics. `components/ui/sidebar.tsx`
    is a SEPARATE thing: it writes `--sidebar-width` / `--sidebar-width-icon`
-   as lengths, while `useResizablePanel` (hooks/useResizablePanel.ts) writes
-   `--sidebar-width` in px from `.sidebar-container` (globals.css, the
-   `@media (min-width: 641px)` block). If shadcn's SidebarProvider ever mounts
-   in this tree, the two overwrite each other and the app sidebar collapses to
-   16rem. shadcn's Sidebar is currently unimported — keep it that way, or
-   rename one of the two before it mounts. shadcn's `--sidebar-*` COLOUR tokens
-   are safe: they never appear in the resizer path.
+   as lengths. The app's own sidebar width is written under the same name —
+   not by the resizer any more, but from `Panel.onResize` in `AppShell.tsx`,
+   onto the panel element that `.sidebar-container` sits in. If shadcn's
+   SidebarProvider ever mounts in this tree, the two overwrite each other and
+   the app sidebar collapses to 16rem. shadcn's Sidebar is currently unimported
+   — keep it that way, or rename one of the two before it mounts. shadcn's
+   `--sidebar-*` COLOUR tokens are safe: they never appear in the resizer path.
    --------------------------------------------------------------------------- */
 
 :root {

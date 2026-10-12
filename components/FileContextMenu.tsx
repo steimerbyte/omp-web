@@ -10,6 +10,14 @@ import { FileBrowserDialog } from "./FileBrowserDialog";
 import { useI18n } from "@/hooks/useI18n";
 import { Reveal } from "./motion/Reveal";
 import { Enter } from "./motion/Enter";
+import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { Input } from "@/components/ui/input";
 
 /** Rechtsklick-Ziel einer Baumzeile, x/y in Viewport-Koordinaten. */
 export interface FileMenuTarget {
@@ -66,91 +74,15 @@ const MENU_MARGIN = 8;
  * Overlays. Der Explorer-Ordnerdialog sitzt bei 1100, die Bildvorschau bei 1200
  * und das grosse Explorer-Fenster bei 1300; ein Menue, das im Fenster oder in
  * der Bildvorschau aufgeht, faellt mit den frueheren 320 vollstaendig weg. Der
- * Wert liegt darueber, damit es in jeder Einbettung sichtbar bleibt.
+ * Wert liegt darueber, damit es in jeder Einbettung sichtbar bleibt. Radix
+ * liest ihn einmalig aus dem berechneten Stil des Panels und traegt ihn auf den
+ * Positionierungs-Wrapper, deshalb muss er dort als Inline-Wert stehen und
+ * nicht als Tailwind-Klasse.
  */
 const MENU_Z_INDEX = 1400;
 const MENU_MIN_WIDTH = 172;
 const MENU_MAX_WIDTH = 240;
 const PANEL_CONTENT_WIDTH = 208;
-
-const MENU_ITEM_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  width: "100%",
-  padding: "5px 9px",
-  background: "transparent",
-  border: "none",
-  borderRadius: 4,
-  color: "var(--text)",
-  cursor: "pointer",
-  fontSize: 12,
-  textAlign: "left",
-  whiteSpace: "nowrap",
-};
-
-const INPUT_STYLE: React.CSSProperties = {
-  width: PANEL_CONTENT_WIDTH,
-  maxWidth: "100%",
-  boxSizing: "border-box",
-  height: 24,
-  padding: "0 6px",
-  background: "var(--bg)",
-  border: "1px solid var(--border)",
-  borderRadius: 4,
-  color: "var(--text)",
-  fontFamily: "var(--font-mono)",
-  fontSize: 12,
-  outline: "none",
-};
-
-/** Beschriftung im Kopf der Formularschritte; Pfad darunter als Kontext. */
-const CONTEXT_STYLE: React.CSSProperties = {
-  fontSize: 10,
-  color: "var(--text-dim)",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  maxWidth: PANEL_CONTENT_WIDTH,
-};
-
-function secondaryButtonStyle(): React.CSSProperties {
-  return {
-    height: 22,
-    padding: "0 8px",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    background: "transparent",
-    color: "var(--text-muted)",
-    cursor: "pointer",
-    fontSize: 11,
-    fontWeight: 600,
-    whiteSpace: "nowrap",
-  };
-}
-
-function primaryButtonStyle(): React.CSSProperties {
-  return {
-    height: 22,
-    padding: "0 8px",
-    border: "1px solid var(--accent)",
-    borderRadius: 4,
-    background: "var(--accent)",
-    color: "var(--accent-fg, #fff)",
-    cursor: "pointer",
-    fontSize: 11,
-    fontWeight: 600,
-    whiteSpace: "nowrap",
-  };
-}
-
-function dangerButtonStyle(): React.CSSProperties {
-  return { ...secondaryButtonStyle(), border: "1px solid var(--danger)", color: "var(--danger)" };
-}
-
-/** Formularschritte teilen sich Aufbau, Fusszeile und Bestaetigungsknoten. */
-const FORM_STYLE: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 6, padding: 3 };
-const FORM_FOOTER_STYLE: React.CSSProperties = { display: "flex", justifyContent: "flex-end", gap: 5 };
 
 /** `error` plus `reason`, damit ein 403 die Begruendung nicht verschluckt. */
 function describeApiError(data: FileActionResponse, status: number): string {
@@ -200,7 +132,7 @@ async function deleteEntry(targetPath: string): Promise<ActionResult> {
 
 function MenuIcon({ children }: { children: ReactNode }) {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, opacity: 0.85 }}>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {children}
     </svg>
   );
@@ -216,11 +148,17 @@ interface MenuItem {
 /**
  * Rechtsklick-Menue fuer eine Zeile im Dateibaum.
  *
- * Das Panel ist `position: fixed` und misst sich nach dem Mount, um sich an
- * den Viewport-Rand zu klemmen, statt rechts oder unten herauszuschieben. Alle
- * Aktionen schliessen das Menue; Erfolg und Fehler melden sie ueber
- * `onMutated` bzw. `onNotify` nach aussen, damit der Aufrufer das Ergebnis an
- * einer Stelle behandelt statt in jedem Zweig des Panels.
+ * Die Listenphase ist ein Radix `ContextMenu`: Portal, Klemme gegen den
+ * Viewportrand, Pfeiltasten, Enter-Auswahl und `role="menu"` kommen von dort,
+ * und `onSelect` statt `onClick` ist der Punkt, an dem sich die Tastatur- von
+ * der Mausbedienung nicht mehr unterscheidet.
+ *
+ * Die Formularschritte (`rename`, `new-folder`, `confirm-delete`) liegen
+ * bewusst AUSSERHALB dieses Panels. Sie sind Geschwister im selben Portal, nicht
+ * Submenues: nur so bleibt Escape in einem Formularschritt "zurueck zur Liste",
+ * ohne dass der Weg zum naechsten Schritt verloren geht. Erfolg und Fehler
+ * melden sie ueber `onMutated` bzw. `onNotify` nach aussen, damit der Aufrufer
+ * das Ergebnis an einer Stelle behandelt statt in jedem Zweig des Panels.
  */
 export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenImage }: FileContextMenuProps) {
   const { t } = useI18n();
@@ -230,32 +168,64 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
   // Explorer: das Menue ist der einzige Ort, der Quelle (`target.path`) und
   // Absicht (`kind`) kennt.
   const [transfer, setTransfer] = useState<{ kind: TransferKind; busy: boolean } | null>(null);
-  // Das Menue haengt an `document.body`, nicht am aufrufenden Explorer. Grund
-  // ist das Koordinatensystem, nicht die Stapelebene: `position: fixed` richtet
-  // sich nach dem Bezugssystem des Vorfahren, und jeder Vorfahre mit `transform`,
-  // `filter`, `backdrop-filter`, `perspective`, `contain` oder `will-change`
-  // eroeffnet ein eigenes. Im grossen Explorer-Fenster tut das bereits der
-  // Backdrop (`backdrop-filter: blur(8px)`, `FileExplorerWindow.module.css:75`)
-  // und — bis `ModalPanel` seinen Lauf beendet ist — auch das Panel selbst
-  // (`scale`/`y` laufen ueber motion und enden auf der Identitaet, dann steht
-  // dort `transform: none`; `backdrop-filter` haelt den Effekt dauerhaft).
+  // Klemme der Formularschritte. Die Listenphase klemmt Radix selbst ueber
+  // `collisionPadding`; diese Schritte sind kein Radix-Panel und brauchen
+  // deshalb weiterhin eine Messung.
+  const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
+  // Die Formularschritte haengen an `document.body`, nicht am aufrufenden
+  // Explorer. Grund ist das Koordinatensystem, nicht die Stapelebene:
+  // `position: fixed` richtet sich nach dem Bezugssystem des Vorfahren, und
+  // jeder Vorfahre mit `transform`, `filter`, `backdrop-filter`, `perspective`,
+  // `contain` oder `will-change` eroeffnet ein eigenes. Im grossen
+  // Explorer-Fenster tut das bereits der Backdrop (`backdrop-filter:
+  // blur(8px)`, `FileExplorerWindow.module.css:75`) und auch das Panel selbst.
   // `left`/`top` waeren dann Koordinaten RELATIV ZU DIESEM FENSTER statt zum
   // Viewport, und `window.innerWidth` waere die falsche Bezugsbreite. Das
   // Menue stuende dann um genau den Fensterrand daneben — 5vh/5vw plus 1px
   // Rahmen, im gemessenen Fall 48px in der Breite und 49px in der Hoehe.
-  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
-  const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  // Der Ziel wird beim ersten Render gelesen statt in einem Effekt nachgetragen:
+  // auf dem Server ist `document` nicht da, im Browser schon beim ersten Render
+  // — es gibt also keine Zwischenphase mehr, in der das Panel ohne Portal
+  // gerendert wuerde.
+  const [portalTarget] = useState<HTMLElement | null>(() =>
+    typeof document === "undefined" ? null : document.body,
+  );
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const formPanelRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  // `onCloseAutoFocus` feuert, nachdem Radix sein Panel bereits geschlossen hat.
+  // Der `ContextMenuContent` existiert aber nur bei `phase === "root"` — TypeScript
+  // erkennt deshalb, dass die Vergleichsfelder nie ueberschneiden, und meldet
+  // TS2367. Zur Laufzeit stimmt der Vergleich trotzdem, weil der Phasenwechsel
+  // in `onSelect` passiert und `phase` dann bereits der neue Wert ist. Die Ref
+  // umgeht die statische Pruefung, ohne den Wert zu veralten.
+  const phaseRef = useRef<MenuPhase>(phase);
+  phaseRef.current = phase;
 
-  useEffect(() => {
-    setPortalTarget(document.body);
-  }, []);
+  // Radix erbt die Position des Panels aus dem `contextmenu`-Event auf seinem
+  // Trigger und macht daraus einen virtuellen Anker am Klickpunkt. Der Explorer
+  // oeffnet das Menue aber von aussen — er setzt `menuTarget` aus
+  // `event.clientX/clientY` der Baumzeile —, es gibt also keinen Trigger, der
+  // das Ereignis natuerlich empfaenge, und `radix-ui` 1.8.0 stellt fuer
+  // `ContextMenu` keinen eigenen `Anchor` bereit (nur `Popover` hat einen).
+  // Deshalb laeuft derselbe Weg hier einmal programmatisch ab: das Event mit
+  // den bekannten Viewportkoordinaten auf den Trigger legen. Ohne diesen
+  // Schritt verankert sich das Menue in der linken oberen Viewporthuecke —
+  // genau das sagt die Dev-Warnung "its position is indeterminate".
+  useLayoutEffect(() => {
+    triggerRef.current?.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: target.x,
+      clientY: target.y,
+    }));
+  }, [target.x, target.y]);
 
   // Erst messen, dann setzen: der Layout-Effekt laeuft vor dem Paint, das
-  // Panel erscheint also direkt an seiner endgueltigen Position. Die Abhaengig-
-  // keit von `phase` faengt den Groessenwechsel der Formularschritte ein.
+  // Panel erscheint also direkt an seiner endgueltigen Position. Die
+  // Abhaengigkeit von `phase` faengt den Groessenwechsel der Formularschritte
+  // ein.
   //
   // Gemessen wird `offsetWidth`/`offsetHeight`, nicht `getBoundingClientRect()`:
   // sobald das Panel am `body` haengt, ist es viewport-relativ und beide Groessen
@@ -263,7 +233,8 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
   // transformierten Vorfahren liefern gezeichnete Masse, und nur darum geht es
   // hier: die Klemme rechnet in derselben Einheit wie `window.innerWidth`.
   useLayoutEffect(() => {
-    const panel = panelRef.current;
+    if (phase === "root") return;
+    const panel = formPanelRef.current;
     if (!panel) return;
     const width = panel.offsetWidth;
     const height = panel.offsetHeight;
@@ -271,81 +242,76 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
       left: Math.min(Math.max(target.x, MENU_MARGIN), Math.max(MENU_MARGIN, window.innerWidth - width - MENU_MARGIN)),
       top: Math.min(Math.max(target.y, MENU_MARGIN), Math.max(MENU_MARGIN, window.innerHeight - height - MENU_MARGIN)),
     });
-    // `portalTarget` gehoert in die Abhaengigkeiten, weil das Panel erst im
-    // zweiten Durchlauf existiert: im ersten liefert `if (!portalTarget)
-    // return null` nichts, `panelRef.current` waere also noch null. Ohne diese
-    // Abhaengigkeit bliebe `placement` dauerhaft null und die Klemme liefte nie.
-  }, [phase, portalTarget, target.x, target.y]);
+  }, [phase, target.x, target.y]);
 
-  useLayoutEffect(() => {
-    if (phase === "root") {
-      panelRef.current?.focus();
-      return;
-    }
-    if (phase === "rename") {
-      draftRef.current?.focus();
-      draftRef.current?.select();
-      return;
-    }
-    // Die Bestaetigung startet auf "Abbrechen" und nicht auf dem roten Knopf,
-    // damit ein gewohnheitsmaessiges Enter nichts loescht.
-    if (phase === "confirm-delete") cancelRef.current?.focus();
-    // `portalTarget` in den Abhaengigkeiten, weil die Refs erst im zweiten
-    // Durchlauf belegt sind: im ersten liefert `if (!portalTarget) return null`
-    // noch kein Panel, und der Fokus bliebe auf dem `body` stehen — die
-    // Tastaturbedienung des Menues hinge an einem Element, das den Fokus nie
-    // bekaem.
-  }, [phase, portalTarget]);
+  // Der Fokuswechsel in die Formularschritte sitzt an `onCloseAutoFocus` am
+  // `ContextMenuContent`, nicht hier. Drei Ansaetze waren hier vorher, alle
+  // gemessen und keiner hat gewirkt, weil sie alleZU SPAET kamen:
+  //   - `useLayoutEffect` mit `focus()`: Radix gibt beim Schliessen danach den
+  //     Fokus zurueck.
+  //   - `autoFocus` am Input: greift nicht, das Attribut wird im Portal-Mount
+  //     nicht gesetzt (`inp.autofocus === false`).
+  //   - `requestAnimationFrame` nach dem Mount: der Fokuswechsel passiert
+  //     waehrend `onSelect`, also vor dem ersten Frame. Gemessen bei `+0ms` lag
+  //     er schon auf dem Explorer-Panel.
 
   useEffect(() => {
     // Solange der Ziel-Dialog offen ist, gehoeren Escape, Klick-daneben und
     // Scroll dem Dialog: seine eigene Backdrop- und Escape-Behandlung gilt.
     // Sonst wuerde das Schliessen des Menuepfads den Dialog mitschliessen.
     if (transfer) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!panelRef.current?.contains(event.target as Node)) onClose();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
     // Die Position haengt am Viewport, nicht am Element: bei Scroll oder
     // Fenstergroessenaenderung waere sie veraltet, also schliessen statt
-    // springen.
+    // springen. Das gilt fuer beide Phasen. Radix wuerde die Listenphase zwar
+    // neu ausrichten, der Anker sitzt aber am Klickpunkt und bliebe dabei
+    // genau dort, wo die Zeile einmal war.
     const onViewportChange = () => onClose();
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
     window.addEventListener("scroll", onViewportChange, true);
     window.addEventListener("resize", onViewportChange);
+    // Escape und Klick-daneben uebernimmt die Listenphase selbst ueber ihre
+    // DismissableLayer. Die Formularschritte liegen ausserhalb davon und
+    // brauchen dieselbe Behandlung von Hand.
+    if (phase === "root") {
+      return () => {
+        window.removeEventListener("scroll", onViewportChange, true);
+        window.removeEventListener("resize", onViewportChange);
+      };
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (!formPanelRef.current?.contains(event.target as Node)) onClose();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      // Escape innerhalb des Panels heisst "zurueck zur Liste" und wird schon
+      // dort behandelt; dieser Zweig fasst nur die Tastatur ausserhalb an.
+      if (event.key === "Escape" && !formPanelRef.current?.contains(event.target as Node)) onClose();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("scroll", onViewportChange, true);
       window.removeEventListener("resize", onViewportChange);
     };
-  }, [onClose, transfer]);
+  }, [onClose, phase, transfer]);
 
-  const moveFocus = useCallback((delta: number) => {
-    const items = panelRef.current?.querySelectorAll<HTMLElement>("[role='menuitem']:not([disabled])");
-    if (!items || items.length === 0) return;
-    const current = Array.from(items).findIndex((item) => item === document.activeElement);
-    const base = current === -1 ? (delta > 0 ? -1 : 0) : current;
-    items[(base + delta + items.length) % items.length]?.focus();
+  // Radix wuerde den Ziel-Dialog als "Klick daneben" lesen und das Menue unter
+  // ihm zuschliessen. Solange der Dialog offen ist, bleiben die drei
+  // Weg-weisen-Events deshalb Radix vorenthalten.
+  const holdWhileTransfer = useCallback((event: { preventDefault: () => void }) => {
+    if (transfer) event.preventDefault();
+  }, [transfer]);
+
+  const handlePanelKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") return;
+    // In den Formularschritten heisst Escape "zurueck zur Liste", nicht
+    // "Menue schliessen" — sonst verliert man den Weg zum naechsten Schritt.
+    // Das Panel stoppt den Weg nach oben, damit nicht zugleich der
+    // Dokument-Listener aus dem Effekt oberhalb das ganze Menue schliesst.
+    event.preventDefault();
+    event.stopPropagation();
+    setPhase("root");
   }, []);
-
-  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      // In den Formularschritten heisst Escape "zurueck zur Liste", nicht
-      // "Menue schliessen" — sonst verliert man den Weg zum naechsten Schritt.
-      event.preventDefault();
-      event.stopPropagation();
-      if (phase === "root") onClose(); else setPhase("root");
-      return;
-    }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      moveFocus(event.key === "ArrowDown" ? 1 : -1);
-    }
-  }, [moveFocus, onClose, phase]);
 
   const run = useCallback((work: () => Promise<ActionResult>, notice: string) => {
     onClose();
@@ -496,106 +462,164 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
         ? t("files.contextDelete")
         : t("files.contextLabel", { name: target.name });
 
-  // Ohne Portal laeuft das Panel nicht ueber dem Fenster, sondern in dessen
-  // Koordinatensystem (Begruendung an `portalTarget`). Der Dialog darueber ist
-  // ein Geschwister und damit von derselben Sache betroffen, sitzt aber ohnehin
-  // ueber dem Menue.
-  if (!portalTarget) return null;
-
-  return createPortal(
-    <>
-      <Reveal
-      ref={panelRef}
-      tabIndex={-1}
-      role={phase === "root" ? "menu" : "dialog"}
-      aria-label={panelLabel}
-      aria-modal={phase === "root" ? undefined : true}
-      onKeyDown={handleKeyDown}
-      onContextMenu={(event) => event.preventDefault()}
-      style={{
-        position: "fixed",
-        left: placement?.left ?? target.x,
-        top: placement?.top ?? target.y,
-        zIndex: MENU_Z_INDEX,
-        minWidth: MENU_MIN_WIDTH,
-        maxWidth: `min(${MENU_MAX_WIDTH}px, calc(100vw - ${MENU_MARGIN * 2}px))`,
-        display: "flex",
-        flexDirection: "column",
-        padding: 4,
-        background: "var(--bg-panel)",
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
-        outline: "none",
-      }}
+  return (
+    <ContextMenu
+      open
+      // `modal={false}` ist keine Verlegenheitsloesung: ein modales Menue legt
+      // `pointer-events: none` ueber alles ausserhalb seiner DismissableLayer
+      // und sperrt den Fokus. Der Ziel-Dialog liegt mit z-index 1100 ueber dem
+      // Menue und muss bedienbar bleiben, und ein Fokusfalle hinter einem
+      // zweiten Overlay ist genau die Kopplung, die invariant 5 aufloest.
+      modal={false}
+      onOpenChange={(open) => { if (!open) onClose(); }}
     >
-      {phase === "root" && items.map((item) => (
-        <Pressable
-          key={item.action}
-          type="button"
-          role="menuitem"
-          onClick={() => selectAction(item.action)}
-          style={item.danger ? { ...MENU_ITEM_STYLE, color: "var(--danger)" } : MENU_ITEM_STYLE}
-          onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
-          onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
-        >
-          {item.icon}
-          <span style={{ flex: 1 }}>{item.label}</span>
-        </Pressable>
-      ))}
-
-      {(phase === "rename" || phase === "new-folder") && (
-        <form
+      <ContextMenuTrigger ref={triggerRef} className="hidden" aria-hidden />
+      {phase === "root" && (
+        <ContextMenuContent
           aria-label={panelLabel}
-          onSubmit={(event) => {
+          // Die Klemme macht Radix ueber die Kollisionserkennung; `MENU_MARGIN`
+          // ist derselbe Rand, den die Formularschritte von Hand rechnen.
+          collisionPadding={MENU_MARGIN}
+          // Ohne Versatz beginnt das Panel genau am Klickpunkt wie vorher.
+          sideOffset={0}
+          // Die Pfeiltasten zyklisieren, so wie es die eigene `moveFocus` tat.
+          loop
+          onEscapeKeyDown={holdWhileTransfer}
+          onPointerDownOutside={holdWhileTransfer}
+          onFocusOutside={holdWhileTransfer}
+          // Radix gibt den Fokus beim Schliessen an das Element zurueck, das es
+          // vor dem Oeffnen gemerkt hat — hier das Panel des grossen Explorer-
+          // Fensters. Gemessen: nach `Rename` lag `document.activeElement` auf
+          // `FileExplorerWindow_panel__LVi1G`, nicht im Eingabefeld. Der
+          // Phasenwechsel passiert in `onSelect`, also waehrend des Schliessens;
+          // ein `requestAnimationFrame` danach kam messbar zu spaet (+0ms lag
+          // der Fokus schon woanders). Der Haken sitzt deshalb genau hier.
+          onCloseAutoFocus={(event) => {
             event.preventDefault();
-            handleSubmitName(draft);
+            if (phaseRef.current === "rename") {
+              draftRef.current?.focus();
+              draftRef.current?.select();
+              return;
+            }
+            // Die Bestaetigung startet auf "Abbrechen" und nicht auf dem roten
+            // Knopf, damit ein gewohnheitsmaessiges Enter nichts loescht.
+            if (phaseRef.current === "confirm-delete") cancelRef.current?.focus();
           }}
-          style={FORM_STYLE}
+          onContextMenu={(event) => event.preventDefault()}
+          style={{
+            zIndex: MENU_Z_INDEX,
+            minWidth: MENU_MIN_WIDTH,
+            maxWidth: `min(${MENU_MAX_WIDTH}px, calc(100vw - ${MENU_MARGIN * 2}px))`,
+          }}
         >
-          <span title={target.path} style={CONTEXT_STYLE}>
-            {phase === "rename" ? target.name : target.path}
-          </span>
-          <input
-            ref={draftRef}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            aria-label={panelLabel}
-            placeholder={phase === "new-folder" ? t("files.newFolderName") : undefined}
-            style={INPUT_STYLE}
-          />
-          <div style={FORM_FOOTER_STYLE}>
-            <Pressable ref={cancelRef} type="button" onClick={() => setPhase("root")} style={secondaryButtonStyle()}>
-              {t("files.cancel")}
-            </Pressable>
-            <Pressable tint type="submit" style={primaryButtonStyle()}>
-              {phase === "rename" ? t("files.actionRename") : t("files.actionCreate")}
-            </Pressable>
-          </div>
-        </form>
+          {items.map((item) => (
+            <ContextMenuItem
+              key={item.action}
+              variant={item.danger ? "destructive" : "default"}
+              className="gap-2 text-xs"
+              onSelect={(event) => {
+                // Radix schliesst das Menue nach einem `onSelect` von sich aus.
+                // Hier entscheidet der Pfad, wer das Menue schliesst:
+                // `preview` laesst es offen, die Formularschritte uebergeben an
+                // den Panel-Zustand, und die abrschliessenden Aktionen rufen in
+                // ihrem Zweig selbst `onClose`. `preventDefault` nimmt Radix in
+                // allen drei Faellen das Schliessen ab, statt die Regel auf
+                // mehrere Ebenen zu verteilen.
+                event.preventDefault();
+                selectAction(item.action);
+              }}
+            >
+              {item.icon}
+              <span className="flex-1">{item.label}</span>
+            </ContextMenuItem>
+          ))}
+        </ContextMenuContent>
       )}
 
-      {phase === "confirm-delete" && (
-        <div aria-label={panelLabel} style={{ ...FORM_STYLE, maxWidth: PANEL_CONTENT_WIDTH + 16 }}>
-          <span style={{ fontSize: 11, lineHeight: 1.35, color: "var(--text)", overflowWrap: "anywhere" }}>
-            {t("files.confirmDelete", { name: target.name })}
-          </span>
-          {target.isDir && (
-            <span style={{ fontSize: 10, lineHeight: 1.35, color: "var(--danger)", overflowWrap: "anywhere" }}>
-              {t("files.confirmDeleteFolder")}
-            </span>
+      {/* Die Formularschritte sind Geschwister der Liste im selben Portal und
+          ausdruecklich KEINE Submenues: Escape muss hier "zurueck zur Liste"
+          bedeuten. Sie klemmen sich deshalb selbst, weil sie kein Radix-Panel
+          sind. */}
+      {phase !== "root" && portalTarget && createPortal(
+        <Reveal
+          ref={formPanelRef}
+          role="dialog"
+          aria-modal
+          aria-label={panelLabel}
+          tabIndex={-1}
+          onKeyDown={handlePanelKeyDown}
+          onContextMenu={(event) => event.preventDefault()}
+          style={{
+            position: "fixed",
+            left: placement?.left ?? target.x,
+            top: placement?.top ?? target.y,
+            zIndex: MENU_Z_INDEX,
+            maxWidth: `min(${MENU_MAX_WIDTH}px, calc(100vw - ${MENU_MARGIN * 2}px))`,
+          }}
+          className="rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-md outline-none"
+        >
+          {(phase === "rename" || phase === "new-folder") && (
+            <form
+              aria-label={panelLabel}
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleSubmitName(draft);
+              }}
+              className="flex flex-col gap-1.5"
+              style={{ width: PANEL_CONTENT_WIDTH, maxWidth: "100%" }}
+            >
+              <span title={target.path} className="truncate text-[10px] text-muted-foreground">
+                {phase === "rename" ? target.name : target.path}
+              </span>
+              <Input
+                ref={draftRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                aria-label={panelLabel}
+                placeholder={phase === "new-folder" ? t("files.newFolderName") : undefined}
+                className="h-6 font-mono text-xs"
+                // Kein `autoFocus`: im Portal-Mount greift es nicht
+                // (`inp.autofocus === false` gemessen), der Fokus laeuft ueber
+                // den `requestAnimationFrame` im Effekt weiter oben.
+              />
+              <div className="flex justify-end gap-1.5">
+                <Button ref={cancelRef} type="button" variant="outline" size="xs" onClick={() => setPhase("root")}>
+                  {t("files.cancel")}
+                </Button>
+                <Button type="submit" size="xs">
+                  {phase === "rename" ? t("files.actionRename") : t("files.actionCreate")}
+                </Button>
+              </div>
+            </form>
           )}
-          <div style={FORM_FOOTER_STYLE}>
-            <Pressable ref={cancelRef} type="button" onClick={() => setPhase("root")} style={secondaryButtonStyle()}>
-              {t("files.cancel")}
-            </Pressable>
-            <Pressable type="button" onClick={handleDelete} style={dangerButtonStyle()}>
-              {t("files.contextDelete")}
-            </Pressable>
-          </div>
-        </div>
+
+          {phase === "confirm-delete" && (
+            <div
+              aria-label={panelLabel}
+              className="flex flex-col gap-1.5"
+              style={{ width: PANEL_CONTENT_WIDTH + 16, maxWidth: "100%" }}
+            >
+              <span className="break-words text-[11px] leading-[1.35]">
+                {t("files.confirmDelete", { name: target.name })}
+              </span>
+              {target.isDir && (
+                <span className="break-words text-[10px] leading-[1.35] text-destructive">
+                  {t("files.confirmDeleteFolder")}
+                </span>
+              )}
+              <div className="flex justify-end gap-1.5">
+                <Button ref={cancelRef} type="button" variant="outline" size="xs" onClick={() => setPhase("root")}>
+                  {t("files.cancel")}
+                </Button>
+                <Button type="button" variant="destructive" size="xs" onClick={handleDelete}>
+                  {t("files.contextDelete")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </Reveal>,
+        portalTarget,
       )}
-      </Reveal>
 
       {transfer && (
         // Der Dialog ist ein Geschwister des Panels, nicht ein Kind: nur so
@@ -613,8 +637,7 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
           onConfirm={handleTransferConfirm}
         />
       )}
-    </>,
-    portalTarget,
+    </ContextMenu>
   );
 }
 

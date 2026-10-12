@@ -1,7 +1,18 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Group,
+  Panel,
+  Separator,
+  useGroupRef,
+  usePanelRef,
+  type Layout,
+  type LayoutChangedMeta,
+  type PanelImperativeHandle,
+  type PanelSize,
+} from "react-resizable-panels";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { SubagentPanel } from "./SubagentPanel";
@@ -22,7 +33,6 @@ import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
-import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
@@ -35,15 +45,21 @@ import {
 import { getInitialNavigation } from "@/lib/initial-navigation";
 import { clearLastOpen, getLastOpenSession, setLastOpenSession } from "@/lib/workspace-memory";
 import {
-  getDefaultRightPanelWidth,
-  getRightPanelMaxWidth,
-  getSidebarMaxWidth,
-  RIGHT_PANEL_FALLBACK_WIDTH,
+  CHAT_PANEL_ID,
+  DESKTOP_CHAT_MIN_WIDTH,
+  FILE_PANEL_ID,
+  getChatMinWidth,
+  normalizePanelLayout,
+  PANEL_LAYOUT_STORAGE_KEY,
+  parsePanelLayout,
+  RIGHT_PANEL_DEFAULT_PERCENT,
   RIGHT_PANEL_MAX_WIDTH,
   RIGHT_PANEL_MIN_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SIDEBAR_PANEL_ID,
+  type PanelLayout,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode, SubagentSnapshot } from "@/lib/types";
 import type { ProjectTrustStatus } from "@/lib/api-types";
@@ -59,6 +75,65 @@ type AutoNameStatus =
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
+
+/**
+ * Breakpoint at which the file panel joins the split layout. Below it the panel
+ * is a fixed overlay (app/globals.css, `@media (max-width: 959px)`) and must
+ * not take room from the chat — the layout below reacts to it, the library must
+ * not. Reads as "split" on the server and on the first client paint, then syncs
+ * to the real viewport, exactly like `useIsMobile`.
+ */
+const SPLIT_PANEL_MEDIA_QUERY = "(min-width: 960px)";
+
+function subscribeSplitPanel(cb: () => void): () => void {
+  if (typeof window === "undefined" || !window.matchMedia) return () => {};
+  const mql = window.matchMedia(SPLIT_PANEL_MEDIA_QUERY);
+  mql.addEventListener("change", cb);
+  return () => mql.removeEventListener("change", cb);
+}
+
+function getSplitPanelSnapshot(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return true;
+  return window.matchMedia(SPLIT_PANEL_MEDIA_QUERY).matches;
+}
+
+function useIsSplitViewport(): boolean {
+  return useSyncExternalStore(subscribeSplitPanel, getSplitPanelSnapshot, () => true);
+}
+
+/**
+ * Arrow-key handling for a separator.
+ *
+ * The library steps in percent (5% per press, which is a 96px jump on a wide
+ * screen). The shell has always moved in 12px, 32px with shift, so the arrow
+ * keys are claimed here and converted back: a pixel step against the total
+ * width of the two panels the separator sits between. `preventDefault` is what
+ * makes the library skip its own handling — its key handler bails out on an
+ * already-prevented event. Home, End and Enter are left to the library, which
+ * answers them exactly (minimum, maximum, collapse/expand).
+ */
+function separatorArrowKeys(
+  panelRef: React.RefObject<PanelImperativeHandle | null>,
+  neighborRef: React.RefObject<PanelImperativeHandle | null>,
+  growthDirection: 1 | -1,
+) {
+  const growKey = growthDirection === 1 ? "ArrowRight" : "ArrowLeft";
+  const shrinkKey = growthDirection === 1 ? "ArrowLeft" : "ArrowRight";
+  return {
+    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== growKey && event.key !== shrinkKey) return;
+      const panel = panelRef.current;
+      const neighbor = neighborRef.current;
+      if (!panel || !neighbor) return;
+      const size = panel.getSize();
+      const total = size.inPixels + neighbor.getSize().inPixels;
+      if (total <= 0) return;
+      const step = (event.shiftKey ? 32 : 12) * growthDirection * (event.key === growKey ? 1 : -1);
+      event.preventDefault();
+      panel.resize(((size.inPixels + step) / total) * 100);
+    },
+  };
+}
 
 export function AppShell() {
   const router = useRouter();
@@ -113,59 +188,64 @@ export function AppShell() {
   const handleExplorerPopupOpenChange = useCallback((open: boolean) => {
     setExplorerWindowOpen((prev) => (prev === open ? prev : open));
   }, []);
-  const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
-  const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
-  const getResponsiveRightPanelWidth = useCallback(
-    () => typeof window === "undefined"
-      ? RIGHT_PANEL_FALLBACK_WIDTH
-      : getDefaultRightPanelWidth(window.innerWidth),
-    [],
+  const isSplitViewport = useIsSplitViewport();
+  const groupRef = useGroupRef();
+  const sidebarPanelRef = usePanelRef();
+  const chatPanelRef = usePanelRef();
+  const filePanelRef = usePanelRef();
+  const sidebarPanelElementRef = useRef<HTMLDivElement | null>(null);
+  const filePanelElementRef = useRef<HTMLDivElement | null>(null);
+  // Last size each panel had while it was open, in percent of the group. A
+  // collapsed panel reports 0, and 0 is not something worth remembering — see
+  // `normalizePanelLayout`.
+  const lastPanelSizeRef = useRef<PanelLayout>({});
+  const [panelDragActive, setPanelDragActive] = useState(false);
+
+  const handleSidebarPanelResize = useCallback((size: PanelSize) => {
+    lastPanelSizeRef.current[SIDEBAR_PANEL_ID] = size.asPercentage;
+    // `.sidebar-container > *` keeps a fixed pixel width so the content does
+    // not reflow while the panel animates. The panel itself is sized by flex
+    // now, so the variable is an output of the library rather than the source
+    // of truth it used to be.
+    if (size.inPixels <= 0) return;
+    sidebarPanelElementRef.current?.style.setProperty(
+      "--sidebar-width",
+      `${Math.round(size.inPixels)}px`,
+    );
+  }, []);
+  const handleFilePanelResize = useCallback((size: PanelSize) => {
+    lastPanelSizeRef.current[FILE_PANEL_ID] = size.asPercentage;
+    if (size.inPixels <= 0) return;
+    filePanelElementRef.current?.style.setProperty(
+      "--right-panel-width",
+      `${Math.round(size.inPixels)}px`,
+    );
+  }, []);
+
+  // Only direct user input is worth remembering. Layout commits the library
+  // makes on its own — a constraint recompute, a window resize, the collapse
+  // this component triggers — would otherwise overwrite the user's sizes with
+  // whatever happened to be on screen when they last resized the window.
+  const handleLayoutChanged = useCallback((layout: Layout, meta: LayoutChangedMeta) => {
+    if (!meta.isUserInteraction) return;
+    const normalized = normalizePanelLayout(layout, lastPanelSizeRef.current, window.innerWidth);
+    lastPanelSizeRef.current = normalized;
+    try {
+      window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      // Resizing stays available when storage is unavailable.
+    }
+  }, []);
+
+  const sidebarSeparatorKeys = useMemo(
+    () => separatorArrowKeys(sidebarPanelRef, chatPanelRef, 1),
+    [sidebarPanelRef, chatPanelRef],
   );
-  const getResponsiveSidebarMaxWidth = useCallback(
-    () => typeof window === "undefined"
-      ? SIDEBAR_MAX_WIDTH
-      : getSidebarMaxWidth({
-        viewportWidth: window.innerWidth,
-        rightPanelOpen,
-        rightPanelWidth: rightPanelWidthRef.current,
-      }),
-    [rightPanelOpen],
+  const fileSeparatorKeys = useMemo(
+    () => separatorArrowKeys(filePanelRef, chatPanelRef, -1),
+    [filePanelRef, chatPanelRef],
   );
-  const getResponsiveRightPanelMaxWidth = useCallback(
-    () => typeof window === "undefined"
-      ? RIGHT_PANEL_MAX_WIDTH
-      : getRightPanelMaxWidth({
-        viewportWidth: window.innerWidth,
-        sidebarOpen,
-        sidebarWidth: sidebarWidthRef.current,
-      }),
-    [sidebarOpen],
-  );
-  const sidebarResizer = useResizablePanel({
-    ariaLabel: translate("layout.resizeSidebar"),
-    cssVariable: "--sidebar-width",
-    defaultWidth: SIDEBAR_DEFAULT_WIDTH,
-    getMaxWidth: getResponsiveSidebarMaxWidth,
-    growthDirection: "right",
-    maxWidth: SIDEBAR_MAX_WIDTH,
-    minWidth: SIDEBAR_MIN_WIDTH,
-    storageKey: "omp-sidebar-width",
-    widthRef: sidebarWidthRef,
-  });
-  const rightPanelResizer = useResizablePanel({
-    ariaLabel: translate("layout.resizeFilePanel"),
-    cssVariable: "--right-panel-width",
-    defaultWidth: RIGHT_PANEL_FALLBACK_WIDTH,
-    getDefaultWidth: getResponsiveRightPanelWidth,
-    getMaxWidth: getResponsiveRightPanelMaxWidth,
-    growthDirection: "left",
-    maxWidth: RIGHT_PANEL_MAX_WIDTH,
-    minWidth: RIGHT_PANEL_MIN_WIDTH,
-    storageKey: "omp-right-panel-width",
-    widthRef: rightPanelWidthRef,
-  });
-  const reclampSidebarWidth = sidebarResizer.reclampWidth;
-  const reclampRightPanelWidth = rightPanelResizer.reclampWidth;
+
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   useEffect(() => {
@@ -174,11 +254,61 @@ export function AppShell() {
   useEffect(() => {
     setMobileSidebarReady(true);
   }, []);
+
+  // Die Breiten liegen unter `PANEL_LAYOUT_STORAGE_KEY` als Prozente, weil
+  // `react-resizable-panels` selbst nichts speichert — die Bibliothek hat kein
+  // `autoSaveId`, der Schreibende und Lesende ist der Effekt weiter unten. Die
+  // Pixelwerte, die `useResizablePanel` unter eigenen Keys abgelegt hatte, sind
+  // tote Last und muessen weg: niemand liest sie, und eine verwaiste
+  // Pixelzahl ist genau die Sorte Zahl, die spaeter als plausibler Prozentwert
+  // missverstanden wird.
   useEffect(() => {
-    if (!rightPanelOpen) return;
-    reclampSidebarWidth();
-    reclampRightPanelWidth();
-  }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+    try {
+      window.localStorage.removeItem("omp-sidebar-width");
+      window.localStorage.removeItem("omp-right-panel-width");
+    } catch {
+      // Storage may be unavailable; the layout then simply is not remembered.
+    }
+  }, []);
+
+  // Restore after hydration rather than during the first render: a layout read
+  // from storage would otherwise disagree with what the server rendered. Until
+  // this runs the panels show their defaults, exactly as before the migration.
+  useEffect(() => {
+    let stored: PanelLayout | null = null;
+    try {
+      stored = parsePanelLayout(window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY));
+    } catch {
+      stored = null;
+    }
+    lastPanelSizeRef.current = stored ?? {};
+    if (stored) groupRef.current?.setLayout(stored);
+  }, [groupRef]);
+
+  // Open and close by collapsing the panel rather than by unmounting it: the
+  // file viewer and its terminals have to survive being closed.
+  useEffect(() => {
+    const panel = sidebarPanelRef.current;
+    if (!panel) return;
+    if (sidebarOpen) panel.expand();
+    else panel.collapse();
+  }, [sidebarPanelRef, sidebarOpen]);
+  useEffect(() => {
+    const panel = filePanelRef.current;
+    if (!panel) return;
+    if (!rightPanelOpen) {
+      panel.collapse();
+      return;
+    }
+    // `expand()` restores the size this session collapsed from. Right after a
+    // page load the panel starts closed and there is nothing to restore — the
+    // library would answer with the panel's 300px minimum. The remembered
+    // percentage is applied directly instead, falling back to the size the
+    // panel declares as its own default.
+    if (panel.isCollapsed()) {
+      panel.resize(lastPanelSizeRef.current[FILE_PANEL_ID] ?? RIGHT_PANEL_DEFAULT_PERCENT);
+    }
+  }, [filePanelRef, rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
@@ -914,51 +1044,93 @@ export function AppShell() {
         }}
       />
 
-      {/* Left sidebar */}
-      <div
-        ref={sidebarResizer.panelRef}
-        id="session-sidebar"
-        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}${sidebarResizer.isResizing ? " sidebar-resizing" : ""}`}
-        style={{
-          "--sidebar-width": `${sidebarResizer.width}px`,
-          background: "var(--bg-panel)",
-          borderRight: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-          flexShrink: 0,
-          paddingTop: "env(safe-area-inset-top)",
-          paddingBottom: "env(safe-area-inset-bottom)",
-          /* KEIN z-index hier. Die Seitenleiste trage auf dem Desktop keines,
-           * und das ist Absicht, nicht Versehen: `position: relative` kommt aus
-           * `.sidebar-container` (globals.css, `@media (min-width: 641px)`),
-           * und `position` + `z-index` wuerden zusammen einen Stapelkontext
-           * erzeugen. Alles, was im Explorer der Seitenleiste liegt — auch
-           * `position: fixed` — bliebe darin gefangen, auch wenn es selbst
-           * `z-index: 1300` traegt. Genau daran ist das grosse Explorer-Fenster
-           * gescheitert: es steckt im Explorer der Seitenleiste, sein Backdrop
-           * (1300) wurde gegen den Resizer (220) gerechnet und verlor, weil
-           * beide nie in derselben Stapelebene lagen. Ohne `z-index` hat die
-           * Seitenleiste auf dem Desktop keinen Stapelkontext, das Fenster
-           * zaehlt wieder gegen die ganze Seite — und der Resizer liegt wieder
-           * darunter. Auf dem Telefon traegt `.sidebar-container` das
-           * `z-index: 200` im zugehoerigen Media-Query, weil es dort ueber
-           * seinem eigenen Backdrop (199) liegen muss. */
-        } as React.CSSProperties}
+      {/* The three-column split. `Group` is a plain flex row without a
+          `position` of its own, so it introduces no stacking context and the
+          layering rules the explorer window depends on are unchanged. */}
+      <Group
+        id="app-shell-split"
+        groupRef={groupRef}
+        orientation="horizontal"
+        onLayoutChanged={handleLayoutChanged}
+        className={`app-shell-split${panelDragActive ? " is-dragging" : ""}`}
+        style={{ flex: 1, minWidth: 0 }}
       >
-        {sidebarContent}
-      </div>
-      {sidebarOpen && (
-        <div
-          {...sidebarResizer.separatorProps}
-          aria-controls="session-sidebar"
-          className={`panel-resize-handle sidebar-resize-handle${sidebarResizer.isResizing ? " is-resizing" : ""}${explorerWindowOpen ? " overlay-blocked-resizer" : ""}`}
-          data-resize-handle="sidebar"
-          title={`${translate("layout.resizeSidebar")}: ${translate("layout.resizeHint")}`}
-        />
-      )}
+        {/* Left sidebar */}
+        <Panel
+          id={SIDEBAR_PANEL_ID}
+          className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}`}
+          style={{
+            background: "var(--bg-panel)",
+            borderRight: "1px solid var(--border)",
+            display: "flex",
+            flexDirection: "column",
+            paddingTop: "env(safe-area-inset-top)",
+            paddingBottom: "env(safe-area-inset-bottom)",
+            /* The library puts `overflow: auto` on this element; the sidebar
+             * scrolls its own body and must not grow a second scrollbar. */
+            overflow: "hidden",
+            /* KEIN z-index hier. Die Seitenleiste trage auf dem Desktop keines,
+             * und das ist Absicht, nicht Versehen: `position: relative` kommt aus
+             * `.sidebar-container` (globals.css, `@media (min-width: 641px)`),
+             * und `position` + `z-index` wuerden zusammen einen Stapelkontext
+             * erzeugen. Alles, was im Explorer der Seitenleiste liegt — auch
+             * `position: fixed` — bliebe darin gefangen, auch wenn es selbst
+             * `z-index: 1300` traegt. Genau daran ist das grosse Explorer-Fenster
+             * gescheitert: es steckt im Explorer der Seitenleiste, sein Backdrop
+             * (1300) wurde gegen den Resizer (220) gerechnet und verlor, weil
+             * beide nie in derselben Stapelebene lagen. Ohne `z-index` hat die
+             * Seitenleiste auf dem Desktop keinen Stapelkontext, das Fenster
+             * zaehlt wieder gegen die ganze Seite — und der Resizer liegt wieder
+             * darunter. Auf dem Telefon traegt `.sidebar-container` das
+             * `z-index: 200` im zugehoerigen Media-Query, weil es dort ueber
+             * seinem eigenen Backdrop (199) liegen muss.
+             *
+             * Dass die Seitenleiste jetzt ein Panel der Bibliothek ist, aendert
+             * daran nichts: der Panel-Wrapper traegt weder `position` noch
+             * `z-index`, die Group auch nicht. */
+          } as React.CSSProperties}
+          panelRef={sidebarPanelRef}
+          elementRef={sidebarPanelElementRef}
+          onResize={handleSidebarPanelResize}
+          collapsedSize={0}
+          collapsible
+          defaultSize={SIDEBAR_DEFAULT_WIDTH}
+          minSize={SIDEBAR_MIN_WIDTH}
+          maxSize={SIDEBAR_MAX_WIDTH}
+        >
+          {sidebarContent}
+        </Panel>
 
-      {/* Center: chat */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      {/* Sidebar separator. `disabled` is what keeps the explorer window and
+            the split layout in agreement: the library drops the tab index of a
+            disabled separator, so while the window above it is open the handle
+            is not merely hidden (`.overlay-blocked-resizer`) but also gone from
+            the tab order and from the keyboard handling. */}
+        {sidebarOpen && (
+          <Separator
+            aria-label={translate("layout.resizeSidebar")}
+            className={`panel-resize-handle sidebar-resize-handle${explorerWindowOpen ? " overlay-blocked-resizer" : ""}`}
+            data-resize-handle="sidebar"
+            disabled={explorerWindowOpen}
+            title={`${translate("layout.resizeSidebar")}: ${translate("layout.resizeHint")}`}
+            onPointerDown={() => setPanelDragActive(true)}
+            onPointerUp={() => setPanelDragActive(false)}
+            onPointerCancel={() => setPanelDragActive(false)}
+            onLostPointerCapture={() => setPanelDragActive(false)}
+            onKeyDown={sidebarSeparatorKeys.onKeyDown}
+            onKeyUp={() => setPanelDragActive(false)}
+            onBlur={() => setPanelDragActive(false)}
+          />
+        )}
+
+        {/* Center: chat */}
+        <Panel
+          id={CHAT_PANEL_ID}
+          panelRef={chatPanelRef}
+          style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}
+          defaultSize={DESKTOP_CHAT_MIN_WIDTH}
+          minSize={getChatMinWidth(isSplitViewport)}
+        >
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
           <Pressable
@@ -1720,36 +1892,50 @@ export function AppShell() {
             </div>
           )}
         </div>
-      </div>
+        </Panel>
 
-      <div
-        aria-hidden="true"
-        className={`right-panel-overlay-backdrop${rightPanelOpen ? " is-open" : ""}`}
-        onClick={() => setRightPanelOpen(false)}
-      />
-      {rightPanelOpen && (
-        <div
-          {...rightPanelResizer.separatorProps}
-          aria-controls="file-panel"
-          className={`panel-resize-handle right-panel-resize-handle${rightPanelResizer.isResizing ? " is-resizing" : ""}${explorerWindowOpen ? " overlay-blocked-resizer" : ""}`}
-          data-resize-handle="right-panel"
-          title={`${translate("layout.resizeFilePanel")}: ${translate("layout.resizeHint")}`}
-        />
-      )}
+        {/* File panel separator. Below the split breakpoint the panel is a
+            fixed overlay, so the handle is disabled rather than merely hidden:
+            the library then neither moves the panel nor lets the keyboard
+            reach it. */}
+        {rightPanelOpen && (
+          <Separator
+            aria-label={translate("layout.resizeFilePanel")}
+            className={`panel-resize-handle right-panel-resize-handle${explorerWindowOpen ? " overlay-blocked-resizer" : ""}`}
+            data-resize-handle="right-panel"
+            disabled={!isSplitViewport || explorerWindowOpen}
+            title={`${translate("layout.resizeFilePanel")}: ${translate("layout.resizeHint")}`}
+            onPointerDown={() => setPanelDragActive(true)}
+            onPointerUp={() => setPanelDragActive(false)}
+            onPointerCancel={() => setPanelDragActive(false)}
+            onLostPointerCapture={() => setPanelDragActive(false)}
+            onKeyDown={fileSeparatorKeys.onKeyDown}
+            onKeyUp={() => setPanelDragActive(false)}
+            onBlur={() => setPanelDragActive(false)}
+          />
+        )}
 
-      {/* Right panel: file viewer — always mounted, width animated via CSS */}
-      <div
-        ref={rightPanelResizer.panelRef}
-        id="file-panel"
-        className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelResizer.isResizing ? " right-panel-resizing" : ""}`}
-        style={{
-          "--right-panel-width": `${rightPanelResizer.width}px`,
-          display: "flex",
-          flexDirection: "column",
-          borderLeft: "1px solid var(--border)",
-          background: "var(--bg)",
-        } as React.CSSProperties}
-      >
+        {/* Right panel: file viewer — always mounted, width animated via CSS */}
+        <Panel
+          id={FILE_PANEL_ID}
+          className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}`}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            borderLeft: "1px solid var(--border)",
+            background: "var(--bg)",
+          } as React.CSSProperties}
+          panelRef={filePanelRef}
+          elementRef={filePanelElementRef}
+          onResize={handleFilePanelResize}
+          collapsedSize={0}
+          collapsible
+          defaultSize={rightPanelOpen ? `${RIGHT_PANEL_DEFAULT_PERCENT}%` : 0}
+          minSize={RIGHT_PANEL_MIN_WIDTH}
+          maxSize={RIGHT_PANEL_MAX_WIDTH}
+          disabled={!isSplitViewport}
+        >
         {/* Right panel tab bar */}
         <div style={{
           display: "flex",
@@ -1796,7 +1982,18 @@ export function AppShell() {
             </div>
           )}
         </div>
-      </div>
+        </Panel>
+      </Group>
+
+      {/* Backdrop of the compact file panel. It sits outside the split group
+          because it is not part of it: it is a fixed overlay, and the panel it
+          dims is one for exactly as long as the group is below the split
+          breakpoint. */}
+      <div
+        aria-hidden="true"
+        className={`right-panel-overlay-backdrop${rightPanelOpen ? " is-open" : ""}`}
+        onClick={() => setRightPanelOpen(false)}
+      />
     </div>
     {/* File panel toggle — always visible at top-right */}
     <Pressable
