@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogOverlay,
   DialogPortal,
@@ -67,6 +67,30 @@ const PICKER_Z_INDEX = 1000;
 /** Deckt das Overlay ab: der alte Backdrop hatte kein `backdrop-filter`. */
 const NO_BACKDROP_BLUR = "supports-backdrop-filter:backdrop-blur-none";
 
+/**
+ * Markiert die gesamte Eingabe, damit der naechste Tastendruck sie ersetzt
+ * statt an sie anzusetzen.
+ *
+ * `select()` und `setSelectionRange(0, value.length)` liefern in Chromium
+ * dasselbe, auch im leeren Fall — gemessen: leer `0/0` bei beiden, gefuellt
+ * `0/18` bei beiden. Der Aufruf ist also nicht der Grund des Befunds.
+ *
+ * Der Grund ist die Reihenfolge: beim Oeffnen ist das Feld noch leer, weil
+ * `navigateTo()` den ersten Pfad erst per `fetch` nachliefert. Der erste Aufruf
+ * markiert damit `0/0`, und sobald React den Wert setzt, legt Chromium den
+ * Cursor ans Ende des neuen Textes — gemessen `23/23` bei
+ * `/home/user/project`. Wer den Aufruf liest, sieht eine vollstaendige
+ * Markierung und schliesst daraus auf eine, die es nicht gibt.
+ *
+ * `setSelectionRange(0, value.length)` steht hier, weil es die Absicht ohne
+ * Umweg ausdrueckt: von 0 bis zum Ende des aktuellen Wertes, auch wenn dieser
+ * leer ist. Siehe den Effekt weiter unten, der die Markierung nach dem
+ * nachgelieferten Pfad erneut setzt.
+ */
+function selectWholeInput(input: HTMLInputElement): void {
+  input.setSelectionRange(0, input.value.length);
+}
+
 interface Props {
   onCancel: () => void;
   onSelect: (path: string) => void;
@@ -116,6 +140,21 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
     void navigateTo();
   }, [navigateTo]);
 
+  // Der erste Pfad kommt asynchron aus `navigateTo()`, und beim Setzen eines
+  // Wertes auf ein fokussiertes Feld legt Chromium den Cursor ans Ende. Die
+  // Markierung aus `onOpenAutoFocus` gilt also nur fuer den leeren Zustand und
+  // waere beim ersten sichtbaren Pfad schon wieder verschwunden.
+  //
+  // Deshalb wird sie nach jedem neuen Pfad erneut gesetzt — aber nur, solange
+  // das Feld wirklich den Fokus traegt. Sonst wuerde ein spaeteres `navigateTo()`
+  // (Klick auf einen Unterordner, Enter im Wegfeld) die Markierung eines
+  // Feldes ueberschreiben, in dem der Nutzer gerade schreibt.
+  useEffect(() => {
+    const input = pathInputRef.current;
+    if (!input || document.activeElement !== input) return;
+    selectWholeInput(input);
+  }, [pathInput]);
+
   const handlePathSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const candidate = pathInput.trim();
@@ -145,17 +184,29 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
       }}
     >
       <DialogPortal>
+        {/*
+          Genau ein Overlay, und es ist dieses.
+
+          `DialogContent` aus `@/components/ui/dialog` bringt ein eigenes
+          `<DialogPortal><DialogOverlay />` mit. Zusammen mit dem hier
+          gerenderten `DialogOverlay` waren das zwei, beide `fixed inset-0`:
+          gemessen `querySelectorAll('[data-slot="dialog-overlay"]').length === 2`.
+          Die zusaetzliche Flaeche war unsichtbar, hat aber mit
+          `supports-backdrop-filter:backdrop-blur-xs` den ganzen Bildschirm
+          weichgezeichnet, ohne dass dafuer ein Grund auf der Flaeche lag.
+
+          Deshalb kommt hier der Radix-Primitive direkt. Die Zentrierung, die
+          der shadcn-Wrapper mitbringt, steht jetzt ausgeschrieben in der
+          Klasse darunter — sie ist `fixed top-1/2 left-1/2` plus den beiden
+          `translate`, ohne sie hinge das Panel oben links statt mittig.
+        */}
         <DialogOverlay
           className={NO_BACKDROP_BLUR}
           style={{ zIndex: PICKER_Z_INDEX, background: "rgba(0,0,0,0.35)" }}
         />
-        <DialogContent
-          showCloseButton={false}
-          // Der Wrapper traegt `grid w-full max-w-… p-4 gap-4 rounded-xl ring-1`
-          // und einen eigenen Close-Button. Beides ist hier nicht gewollt: das
-          // Panel ist eine Spalte ohne Innenabstand, seine Groesse kommt aus dem
-          // Style darunter, und der X-Knopf ist der eigene in der Kopfzeile.
-          className="flex w-auto max-w-none gap-0 rounded-none p-0 ring-0 sm:max-w-none"
+        <DialogPrimitive.Content
+          data-slot="dialog-content"
+          className="fixed top-1/2 left-1/2 z-50 flex w-auto max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 rounded-none p-0 outline-none ring-0 sm:max-w-none"
           style={{ zIndex: PICKER_Z_INDEX, width: 520, maxWidth: "calc(100vw - 16px)", height: "min(620px, calc(100dvh - 16px))", maxHeight: "calc(100dvh - 16px)", flexDirection: "column", overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
           // Radix setzt beim Oeffnen sonst auf das erste fokussierbare Element,
           // und das ist der X-Knopf in der Kopfzeile. Das `autoFocus` am
@@ -166,7 +217,12 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
             const input = pathInputRef.current;
             if (!input) return;
             input.focus();
-            input.select();
+            // Der Fokus und die Auswahl gehoeren an das Wegfeld, nicht an den
+            // X-Knopf, den Radix sonst als erstes fokussierbares Element
+            // nimmt. Die Auswahl markiert zu diesem Zeitpunkt `0/0`, weil das
+            // Feld leer ist; der Pfad kommt erst per `fetch`. Der Effekt unten
+            // setzt sie deshalb erneut, sobald er eintrifft.
+            selectWholeInput(input);
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
@@ -292,7 +348,7 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
               {busy ? t("i18n.checking") : t("directoryPicker.selectThisFolder")}
             </button>
           </div>
-        </DialogContent>
+        </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
   );

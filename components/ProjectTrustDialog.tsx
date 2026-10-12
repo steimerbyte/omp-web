@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogOverlay,
   DialogPortal,
@@ -24,6 +24,36 @@ const TRUST_Z_INDEX = 1100;
 /** Deckt das Overlay ab: der alte Backdrop hatte kein `backdrop-filter`. */
 const NO_BACKDROP_BLUR = "supports-backdrop-filter:backdrop-blur-none";
 
+/**
+ * Wohin der Fokus geht, wenn der Knopf im selben Commit mit verschwindet.
+ *
+ * Beim Bestaetigen setzt `AppShell` in einem Commit `trusted=true` und
+ * schliesst den Dialog. Der Aufrufer, also genau der Knopf, auf den
+ * `restoreFocusTo` zeigt, steht unter dem Guard
+ * `showChat && projectTrust?.requiresTrust && !projectTrust.trusted` und wird
+ * im selben Commit unmountet. `isConnected` ist dann `false`.
+ *
+ * Der alte Code hinderte `preventDefault()` in diesem Fall trotzdem. Damit
+ * greift auch der Fallback von Radix' `FocusScope` nicht, und gemessen war
+ * `document.activeElement === document.body` — das naechste Tab begann wieder
+ * vom Dokumentanfang, mitten im Chat.
+ *
+ * `anchor` ist der Container, in dem der Knopf lag, beim Oeffnen gemerkt. Er
+ * ueberlebt den Commit, weil er nicht an `trusted` haengt. Ein `div` ist nicht
+ * von selbst fokussierbar, deshalb bekommt er `tabindex="-1"` — das nimmt ihn
+ * nicht in die Tab-Reihenfolge auf, macht ihn aber programmatisch fokussierbar.
+ *
+ * Der Knopf selbst wird nicht wiederbelebt: `HTMLElement.focus()` auf einem
+ * Element ohne `tabindex` wird von Chromium stillschweigend verworfen, das
+ * wuerde also wieder auf dem `body` landen. Deshalb ist es der Elternknoten.
+ */
+function focusFallbackAfterTriggerRemoval(anchor: HTMLElement | null): boolean {
+  if (!anchor?.isConnected) return false;
+  if (!anchor.hasAttribute("tabindex")) anchor.setAttribute("tabindex", "-1");
+  anchor.focus();
+  return document.activeElement === anchor;
+}
+
 export function ProjectTrustDialog({
   cwd,
   busy,
@@ -42,12 +72,24 @@ export function ProjectTrustDialog({
   // Wohin der Fokus zurueckgeht, wenn der Dialog schliesst. Radix gibt ihn im
   // `onCloseAutoFocus` an seinen `DialogTrigger` zurueck; einen gibt es hier
   // nicht, weil `AppShell` den Dialog von aussen ueber eine Zustandsvariable
-  // oeffnet. `triggerRef.current` ist also `null`, der Default laeuft ins Leere
-  // und der Fokus landet auf dem `body`. Deshalb wird er verhindert und das
-  // Element gefokust, das beim Oeffnen aktiv war.
-  const [restoreFocusTo] = useState<HTMLElement | null>(() =>
-    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
-  );
+  // oeffnet. `triggerRef.current` ist also `null` und Radix' eigener Default
+  // (`@radix-ui/react-dialog`, Z. 174-177) laeuft deshalb in einen
+  // `triggerRef.current?.focus()` ohne Wirkung. Gemessen bleibt der Fokus
+  // deshalb in jedem Fall auf dem `body`.
+  //
+  // `restoreFocusAnchor` ist der Elternknoten des Knopfes, beim Oeffnen
+  // gemerkt, weil genau der Knopf beim Bestaetigen mit verschwindet. Siehe
+  // `focusFallbackAfterTriggerRemoval`.
+  // Ein Tupel in EINEM `useState`, nicht zwei: `useState` liefert
+  // `[wert, setter]`, und beim Aufspalten von `useState<[A, B]>` in
+  // `[a, b] = useState(...)` landet `a` auf dem Tupel und `b` auf dem Setter.
+  const [restoreTargets] = useState<[HTMLElement | null, HTMLElement | null]>(() => {
+    if (typeof document === "undefined") return [null, null];
+    const active = document.activeElement as HTMLElement | null;
+    return [active, active?.parentElement ?? null];
+  });
+  const restoreFocusTo = restoreTargets[0];
+  const restoreFocusAnchor = restoreTargets[1];
 
   // Solange die Anfrage laeuft, belong weder Escape noch ein Klick neben dem
   // Dialog zum Abbruch — vorher war das an `disabled` und am
@@ -68,17 +110,29 @@ export function ProjectTrustDialog({
       }}
     >
       <DialogPortal>
+        {/*
+          Genau ein Overlay, und es ist dieses.
+
+          `DialogContent` aus `@/components/ui/dialog` bringt ein eigenes
+          `<DialogPortal><DialogOverlay />` mit. Zusammen mit dem hier
+          gerenderten `DialogOverlay` waren das zwei, beide `fixed inset-0`:
+          gemessen `querySelectorAll('[data-slot="dialog-overlay"]').length === 2`.
+          Die zusaetzliche Flaeche war unsichtbar, hat aber mit
+          `supports-backdrop-filter:backdrop-blur-xs` den ganzen Bildschirm
+          weichgezeichnet, ohne dass dafuer ein Grund auf der Flaeche lag.
+
+          Deshalb kommt hier der Radix-Primitive direkt. Die Zentrierung, die
+          der shadcn-Wrapper mitbringt, steht jetzt ausgeschrieben in der
+          Klasse darunter — sie ist `fixed top-1/2 left-1/2` plus den beiden
+          `translate`, ohne sie hinge das Panel oben links statt mittig.
+        */}
         <DialogOverlay
           className={NO_BACKDROP_BLUR}
           style={{ zIndex: TRUST_Z_INDEX, background: "rgba(0,0,0,0.4)" }}
         />
-        <DialogContent
-          showCloseButton={false}
-          // Der Wrapper traegt `grid w-full max-w-… p-4 gap-4 rounded-xl ring-1`
-          // und einen eigenen Close-Button. Beides ist hier nicht gewollt: das
-          // Layout ist eine Spalte ohne Innenabstand, die Groesse kommt aus dem
-          // Style darunter, und der Dialog hat keinen X-Knopf.
-          className="flex w-auto max-w-none gap-0 rounded-none p-0 ring-0 sm:max-w-none"
+        <DialogPrimitive.Content
+          data-slot="dialog-content"
+          className="fixed top-1/2 left-1/2 z-50 flex w-auto max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 rounded-none p-0 outline-none ring-0 sm:max-w-none"
           style={{
             zIndex: TRUST_Z_INDEX,
             flexDirection: "column",
@@ -94,7 +148,16 @@ export function ProjectTrustDialog({
           onPointerDownOutside={blockWhileBusy}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
+            // Der Abbruch-Weg: der Knopf lebt, und genau dorthin gehoert der
+            // Fokus zurueck.
+            if (restoreFocusTo?.isConnected) {
+              restoreFocusTo.focus();
+              return;
+            }
+            // Der Bestaetigungs-Weg: `AppShell` hat `trusted` gesetzt und den
+            // Knopf im selben Commit entfernt. Ohne diesen Zweig bliebe der
+            // Fokus auf dem `body` — gemessen, nicht vermutet.
+            focusFallbackAfterTriggerRemoval(restoreFocusAnchor);
           }}
         >
           <div style={{ display: "flex", gap: 12, padding: "18px 18px 14px" }}>
@@ -197,7 +260,7 @@ export function ProjectTrustDialog({
               {busy ? t("trust.trusting") : t("trust.trustProject")}
             </button>
           </div>
-        </DialogContent>
+        </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
   );
