@@ -105,10 +105,23 @@ function useIsSplitViewport(): boolean {
  *
  * The library steps in percent (5% per press, which is a 96px jump on a wide
  * screen). The shell has always moved in 12px, 32px with shift, so the arrow
- * keys are claimed here and converted back. `preventDefault` is what makes the
- * library skip its own handling — its key handler bails out on an
- * already-prevented event. Home, End and Enter are left to the library, which
- * answers them exactly (minimum, maximum, collapse/expand).
+ * keys are claimed here and converted back.
+ *
+ * The claim has to happen in the CAPTURE phase, and that is not a stylistic
+ * choice. The library registers a *native* `addEventListener("keydown", Ot)`
+ * directly on the separator element (react-resizable-panels.js:2160), while
+ * React attaches its own listeners at the root. A native listener on the
+ * target element therefore fires before React's bubble-phase `onKeyDown`, and
+ * `Ot` bails out only on `defaultPrevented` — which is still `false` at that
+ * point. `preventDefault` in a bubbling handler is therefore too late: the
+ * library has already applied its own 5% step, and every arrow press moved the
+ * separator twice. There is no prop that turns the keyboard handling off
+ * without also killing mouse dragging (`disabled` is filtered out of the
+ * pointer hit test, `bt`). Stopping propagation during capture is the only
+ * lever: the event never descends to the separator element, so `Ot` never runs.
+ *
+ * Home, End, Enter and F6 deliberately fall through untouched — only `Ot`
+ * answers them, and it answers them exactly.
  */
 function separatorArrowKeys(
   panelRef: React.RefObject<PanelImperativeHandle | null>,
@@ -118,7 +131,7 @@ function separatorArrowKeys(
   const growKey = growthDirection === 1 ? "ArrowRight" : "ArrowLeft";
   const shrinkKey = growthDirection === 1 ? "ArrowLeft" : "ArrowRight";
   return {
-    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+    onKeyDownCapture: (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key !== growKey && event.key !== shrinkKey) return;
       const panel = panelRef.current;
       if (!panel) return;
@@ -133,7 +146,16 @@ function separatorArrowKeys(
       const size = panel.getSize();
       const step = (event.shiftKey ? 32 : 12) * growthDirection * (event.key === growKey ? 1 : -1);
       event.preventDefault();
-      panel.resize(((size.inPixels + step) / groupWidth) * 100);
+      // The unit is the whole contract here. `resize()` runs its argument
+      // through the same parser as `defaultSize`/`minSize`, and that parser
+      // maps a bare `number` to PIXELS (sn() in the bundle: `case "number":
+      // return [e, "px"]`), while a `"%"` string is a share of the axis. A
+      // naked `18.9` is 18.9px — below `minSize` — and gets clamped away, so
+      // the promised 12px step never happened at all. Only the string carries
+      // the percent.
+      panel.resize(`${((size.inPixels + step) / groupWidth) * 100}%`);
+      // Without this the native `Ot` handler runs its own `we(t, ±5)` after us.
+      event.stopPropagation();
     },
   };
 }
@@ -235,8 +257,15 @@ export function AppShell() {
     );
   }, []);
   const handleFilePanelResize = useCallback((size: PanelSize) => {
-    lastPanelSizeRef.current[FILE_PANEL_ID] = size.asPercentage;
+    // `collapse()` is a resize like any other and reports 0. Storing that 0
+    // means the reopen below reads 0 — `0 ?? 42` is 0, not 42 — and the panel
+    // comes back at nothing at all. Measured on a 1600px row: dragged to
+    // 700px, closed, reopened → 0px with the 0 stored, 700px without. The
+    // guard belongs here rather than at the read: the reader cannot tell a
+    // collapsed panel from a panel the user actually squeezed to zero, and
+    // only the writer knows which one just happened.
     if (size.inPixels <= 0) return;
+    lastPanelSizeRef.current[FILE_PANEL_ID] = size.asPercentage;
     filePanelElementRef.current?.style.setProperty(
       "--right-panel-width",
       `${Math.round(size.inPixels)}px`,
@@ -331,6 +360,14 @@ export function AppShell() {
     // library would answer with the panel's 300px minimum. The remembered
     // percentage is applied directly instead, falling back to the size the
     // panel declares as its own default.
+    //
+    // Both `resize()` calls below carry the value as a `"%"` STRING on
+    // purpose. `resize()` shares the unit parser with `defaultSize`
+    // (`sn()` in react-resizable-panels), and a bare number there means
+    // PIXELS: `resize(42)` asked for a 42px file panel, which is under
+    // `RIGHT_PANEL_MIN_WIDTH` (300) and got clamped — so every remembered
+    // width collapsed onto the minimum and the persistence did nothing at
+    // all. The number alone is not the percentage it looks like.
     if (!panel.isCollapsed()) return;
     // Capped so the chat keeps its reserve. Without the cap a 1024px window
     // asks for 42% (430px) on top of a 260px sidebar and a 420px chat minimum,
@@ -339,20 +376,22 @@ export function AppShell() {
     // 1160px and up the cap is already above 42% and does nothing.
     const groupWidth = groupElementRef.current?.clientWidth ?? 0;
     if (groupWidth <= 0) {
-      panel.resize(lastPanelSizeRef.current[FILE_PANEL_ID] ?? RIGHT_PANEL_DEFAULT_PERCENT);
+      panel.resize(
+        `${lastPanelSizeRef.current[FILE_PANEL_ID] ?? RIGHT_PANEL_DEFAULT_PERCENT}%`,
+      );
       return;
     }
     const sidebarShare =
       ((sidebarPanelRef.current?.getSize().inPixels ?? 0) / groupWidth) * 100;
     const chatReserve = (getChatMinWidth(isSplitViewport) / groupWidth) * 100;
     panel.resize(
-      Math.max(
+      `${Math.max(
         0,
         Math.min(
           lastPanelSizeRef.current[FILE_PANEL_ID] ?? RIGHT_PANEL_DEFAULT_PERCENT,
           100 - sidebarShare - chatReserve,
         ),
-      ),
+      )}%`,
     );
   }, [filePanelRef, groupElementRef, isSplitViewport, rightPanelOpen, sidebarPanelRef]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
@@ -1165,7 +1204,7 @@ export function AppShell() {
             onPointerUp={() => setPanelDragActive(false)}
             onPointerCancel={() => setPanelDragActive(false)}
             onLostPointerCapture={() => setPanelDragActive(false)}
-            onKeyDown={sidebarSeparatorKeys.onKeyDown}
+            onKeyDownCapture={sidebarSeparatorKeys.onKeyDownCapture}
             onKeyUp={() => setPanelDragActive(false)}
             onBlur={() => setPanelDragActive(false)}
           />
@@ -1957,7 +1996,7 @@ export function AppShell() {
             onPointerUp={() => setPanelDragActive(false)}
             onPointerCancel={() => setPanelDragActive(false)}
             onLostPointerCapture={() => setPanelDragActive(false)}
-            onKeyDown={fileSeparatorKeys.onKeyDown}
+            onKeyDownCapture={fileSeparatorKeys.onKeyDownCapture}
             onKeyUp={() => setPanelDragActive(false)}
             onBlur={() => setPanelDragActive(false)}
           />
