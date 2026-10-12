@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { forwardRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { Virtuoso, type ListProps, type ListRange, type VirtuosoHandle } from "react-virtuoso";
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
@@ -348,6 +349,31 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
   return roots;
 }
 
+/** One rendered row of the virtualized session list. The project header, its
+ *  sessions (flattened out of the parent/child tree) and the "show more"
+ *  toggle live in a single array so Virtuoso measures and recycles them one
+ *  by one instead of mounting every project at once. */
+type SidebarRow =
+  | { kind: "project"; key: string; project: string; name: string }
+  | { kind: "empty"; key: string }
+  | { kind: "session"; key: string; session: SessionInfo; depth: number; hasChildren: boolean; collapsed: boolean }
+  | { kind: "more"; key: string; project: string };
+
+/** Session rows are the majority of the list and have a fixed height, so this
+ *  is both the item height and Virtuoso's pre-measurement estimate. */
+const SESSION_ROW_HEIGHT = 40;
+
+/** Virtuoso drives paddingTop/paddingBottom on the list element itself, so only
+ *  the horizontal inset of the old scroll container is layered on here. */
+const SidebarVirtuosoList = forwardRef<HTMLDivElement, ListProps>(function SidebarVirtuosoList({ style, ...props }, ref) {
+  return <div {...props} ref={ref} style={{ ...style, paddingLeft: 6, paddingRight: 6 }} />;
+});
+
+/** Replaces the 10px bottom padding the hand-built scroll container had. */
+function SidebarVirtuosoFooter() {
+  return <div style={{ height: 10 }} />;
+}
+
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
 function useScramble(target: string, running: boolean): string {
@@ -445,15 +471,25 @@ function PiWebTitle() {
 export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onBackgroundTaskDone }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
-  const sessionsForDisplay = optimisticSession && !allSessions.some((session) => session.id === optimisticSession.id)
-    ? [optimisticSession, ...allSessions]
-    : allSessions;
+  // Memoized so the derived lists below keep a stable identity across the many
+  // renders a running-session poll causes — Virtuoso compares `data` by
+  // reference and reuses its measurements when it does not change.
+  const sessionsForDisplay = useMemo(
+    () => (optimisticSession && !allSessions.some((session) => session.id === optimisticSession.id)
+      ? [optimisticSession, ...allSessions]
+      : allSessions),
+    [optimisticSession, allSessions],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [homeDir, setHomeDir] = useState<string>("");
   const [projectFilter, setProjectFilter] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
+  // Fork collapse lives here instead of inside a per-node component: the rows
+  // handed to Virtuoso are flattened, so the list itself has to decide which
+  // children of a node are emitted.
+  const [collapsedForks, setCollapsedForks] = useState<Set<string>>(() => new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [hoveredProject, setHoveredProject] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState<string | null>(null);
@@ -477,6 +513,10 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   const [changesCount, setChangesCount] = useState(0);
   const [changesCollapsed, setChangesCollapsed] = useState(true);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
+  // True once the virtualized list has measured itself at least once. The list
+  // is not mounted while the first load or an error is showing, so the
+  // selection effect has to wait for it before it can scroll anything.
+  const [sessionListReady, setSessionListReady] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
@@ -485,6 +525,12 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   const runningPollAuthoritativeRef = useRef(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
+  // Imperative handle of the virtualized session list + the row range it
+  // currently has mounted, so a selection that lands outside the window can be
+  // scrolled into view instead of silently staying off-screen.
+  const sessionListRef = useRef<VirtuosoHandle>(null);
+  const visibleRowRangeRef = useRef<ListRange | null>(null);
+  const sidebarRowsRef = useRef<SidebarRow[]>([]);
   useEffect(() => {
     setCollapsedProjects(loadCollapsedProjects());
     setRemovedProjects(loadRemovedProjects());
@@ -900,12 +946,33 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
     });
   }, []);
 
+  const toggleForkCollapsed = useCallback((sessionId: string) => {
+    setCollapsedForks((current) => {
+      const next = new Set(current);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }, []);
+
+  const toggleProjectExpanded = useCallback((project: string) => {
+    setExpandedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(project)) next.delete(project);
+      else next.add(project);
+      return next;
+    });
+  }, []);
+
   const selectedProject = projectRootFor(selectedCwd);
-  const projectPaths = getRecentProjects(sessionsForDisplay)
-    .filter((project) => !removedProjects.has(normalizeProjectKey(project)));
-  if (selectedProject && !removedProjects.has(normalizeProjectKey(selectedProject)) && !projectPaths.includes(selectedProject)) {
-    projectPaths.unshift(selectedProject);
-  }
+  const projectPaths = useMemo(() => {
+    const paths = getRecentProjects(sessionsForDisplay)
+      .filter((project) => !removedProjects.has(normalizeProjectKey(project)));
+    if (selectedProject && !removedProjects.has(normalizeProjectKey(selectedProject)) && !paths.includes(selectedProject)) {
+      paths.unshift(selectedProject);
+    }
+    return paths;
+  }, [sessionsForDisplay, removedProjects, selectedProject]);
   const handleRemoveProject = (project: string) => {
     const key = normalizeProjectKey(project);
     setRemovedProjects((current) => {
@@ -927,14 +994,17 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
     }
   };
 
-  const sessionsByProject = new Map<string, SessionInfo[]>();
-  for (const session of sessionsForDisplay) {
-    const project = session.projectRoot ?? session.cwd;
-    if (!project) continue;
-    const projectSessions = sessionsByProject.get(project);
-    if (projectSessions) projectSessions.push(session);
-    else sessionsByProject.set(project, [session]);
-  }
+  const sessionsByProject = useMemo(() => {
+    const byProject = new Map<string, SessionInfo[]>();
+    for (const session of sessionsForDisplay) {
+      const project = session.projectRoot ?? session.cwd;
+      if (!project) continue;
+      const projectSessions = byProject.get(project);
+      if (projectSessions) projectSessions.push(session);
+      else byProject.set(project, [session]);
+    }
+    return byProject;
+  }, [sessionsForDisplay]);
 
   // Per-project activity counts (running / unread) for the project rows, keyed
   // the same way as getRecentProjects (projectRoot ?? cwd). Small data set —
@@ -953,7 +1023,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   }, [sessionsForDisplay, runningSessionIds, unreadSessionIds]);
 
   const normalizedProjectFilter = projectFilter.trim().toLowerCase();
-  const projectGroups = projectPaths.flatMap((project) => {
+  const projectGroups = useMemo(() => projectPaths.flatMap((project) => {
     const segments = project.replace(/[\\/]+$/, "").split(/[\\/]/);
     const name = segments.at(-1) || project;
     const sessions = sessionsByProject.get(project) ?? [];
@@ -966,7 +1036,63 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
     });
     if (!projectMatches && matchingSessions.length === 0) return [];
     return [{ project, name, sessions: projectMatches ? sessions : matchingSessions }];
-  });
+  }), [projectPaths, sessionsByProject, normalizedProjectFilter]);
+
+  /** Flatten projects, their session trees and their "show more" toggle into the
+   *  row array Virtuoso virtualizes. Order matches the previous markup:
+   *  project header, optional "no sessions" note, the sessions, the toggle. */
+  const sidebarRows = useMemo(() => {
+    const rows: SidebarRow[] = [];
+    const appendTree = (nodes: SessionTreeNode[], depth: number) => {
+      for (const node of nodes) {
+        const collapsed = collapsedForks.has(node.session.id);
+        rows.push({
+          kind: "session",
+          key: `session:${node.session.id}`,
+          session: node.session,
+          depth,
+          hasChildren: node.children.length > 0,
+          collapsed,
+        });
+        if (node.children.length > 0 && !collapsed) appendTree(node.children, depth + 1);
+      }
+    };
+
+    for (const { project, name, sessions } of projectGroups) {
+      rows.push({ kind: "project", key: `project:${project}`, project, name });
+      if (collapsedProjects.has(project) && !normalizedProjectFilter) continue;
+      if (sessions.length === 0 && project === selectedProject) {
+        rows.push({ kind: "empty", key: `empty:${project}` });
+      }
+      appendTree(
+        buildSessionTree(expandedProjects.has(project) ? sessions : sessions.slice(0, PROJECT_SESSION_LIMIT)),
+        0,
+      );
+      if (sessions.length > PROJECT_SESSION_LIMIT) {
+        rows.push({ kind: "more", key: `more:${project}`, project });
+      }
+    }
+    return rows;
+  }, [projectGroups, collapsedProjects, normalizedProjectFilter, expandedProjects, collapsedForks, selectedProject]);
+
+  // The scroll-into-view effect below must see the rows of the render that
+  // changed the selection, so the ref is refreshed before it runs.
+  useEffect(() => {
+    sidebarRowsRef.current = sidebarRows;
+  }, [sidebarRows]);
+
+  // Virtualized rows unmount when they leave the window, so a session selected
+  // from outside the list (URL restore, archived section) would otherwise stay
+  // off-screen. Rows already inside the mounted range are left untouched so
+  // clicking a visible session does not jerk the list.
+  useEffect(() => {
+    if (!selectedSessionId || !sessionListReady) return;
+    const index = sidebarRowsRef.current.findIndex((row) => row.key === `session:${selectedSessionId}`);
+    if (index < 0) return;
+    const range = visibleRowRangeRef.current;
+    if (range && index >= range.startIndex && index <= range.endIndex) return;
+    sessionListRef.current?.scrollIntoView({ index, align: "center", behavior: "smooth" });
+  }, [selectedSessionId, sessionListReady]);
 
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit
@@ -982,6 +1108,80 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
         (worktree.branch ?? displayCwd(worktree.path, homeDir)).toLowerCase().includes(wtFilter.trim().toLowerCase()))
     : (worktreeState?.worktrees ?? []);
 
+  const handleVisibleRangeChange = useCallback((range: ListRange) => {
+    visibleRowRangeRef.current = range;
+    setSessionListReady(true);
+  }, []);
+
+  /** Renders every row except the project header, which stays inline in
+   *  `itemContent` because it needs a dozen pieces of worktree menu state. */
+  const renderSidebarRow = (row: SidebarRow) => {
+    if (row.kind === "session") {
+      return (
+        <div style={{ position: "relative", paddingLeft: 12 }}>
+          {row.depth > 0 && (
+            <div style={{
+              position: "absolute",
+              left: row.depth * 12 + 6,
+              top: 0, bottom: 0,
+              width: 1,
+              background: "var(--border)",
+              pointerEvents: "none",
+            }} />
+          )}
+          <SessionItem
+            session={row.session}
+            isSelected={row.session.id === selectedSessionId}
+            isRunning={runningSessionIds.has(row.session.id)}
+            isUnread={unreadSessionIds.has(row.session.id)}
+            onClick={() => handleSelectSessionFromList(row.session)}
+            onRenamed={loadSessions}
+            onDeleted={(id) => {
+              onSessionDeleted?.(id);
+              loadSessions();
+            }}
+            onArchived={handleSessionArchived}
+            depth={row.depth}
+            hasChildren={row.hasChildren}
+            collapsed={row.collapsed}
+            onToggleCollapse={() => toggleForkCollapsed(row.session.id)}
+          />
+        </div>
+      );
+    }
+
+    if (row.kind === "empty") {
+      return (
+        <div style={{ padding: "6px 12px 7px 32px", color: "var(--text-dim)", fontSize: 11 }}>
+          {t("sidebar.noSessions")}
+        </div>
+      );
+    }
+
+    if (row.kind === "more") {
+      return (
+        <button
+          type="button"
+          onClick={() => toggleProjectExpanded(row.project)}
+          style={{
+            display: "block",
+            margin: "3px 0 3px 32px",
+            padding: "5px 8px",
+            border: "none",
+            background: "transparent",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            fontSize: 12,
+            textAlign: "left",
+          }}
+        >
+          {expandedProjects.has(row.project) ? t("sidebar.showLess") : t("sidebar.showMore")}
+        </button>
+      );
+    }
+
+    return null;
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1179,45 +1379,64 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           />
         </label>
 
-      <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", minHeight: 80, padding: "0 6px 10px" }}>
-        {loading && (
-          <div style={{ padding: "12px 8px", color: "var(--text-muted)", fontSize: 12 }}>
-            {t("sidebar.loading")}
+      <div
+        style={{
+          flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto",
+          minHeight: 80,
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {loading || error || projectGroups.length === 0 ? (
+          <div style={{ padding: "0 6px 10px" }}>
+            {loading && (
+              <div style={{ padding: "12px 8px", color: "var(--text-muted)", fontSize: 12 }}>
+                {t("sidebar.loading")}
+              </div>
+            )}
+            {error && (
+              <div style={{ padding: "10px 8px", color: "#f87171", fontSize: 12 }}>
+                {error}
+              </div>
+            )}
+            {!loading && !error && projectGroups.length === 0 && (
+              <div style={{ padding: "12px 8px", color: "var(--text-muted)", fontSize: 12 }}>
+                {normalizedProjectFilter ? t("sidebar.noMatchingProjects") : t("sidebar.noSessions")}
+              </div>
+            )}
           </div>
-        )}
-        {error && (
-          <div style={{ padding: "10px 8px", color: "#f87171", fontSize: 12 }}>
-            {error}
-          </div>
-        )}
-        {!loading && !error && projectGroups.length === 0 && (
-          <div style={{ padding: "12px 8px", color: "var(--text-muted)", fontSize: 12 }}>
-            {normalizedProjectFilter ? t("sidebar.noMatchingProjects") : t("sidebar.noSessions")}
-          </div>
-        )}
-        {!loading && !error && projectGroups.map(({ project, name, sessions }) => {
-          const isSelectedProject = project === selectedProject;
-          const isCollapsed = collapsedProjects.has(project) && !normalizedProjectFilter;
-          const isExpanded = expandedProjects.has(project);
-          const visibleSessionsForProject = isExpanded ? sessions : sessions.slice(0, PROJECT_SESSION_LIMIT);
-          const sessionTree = buildSessionTree(visibleSessionsForProject);
-          const showMore = sessions.length > PROJECT_SESSION_LIMIT;
-
-          return (
-            <section key={project} style={{ marginBottom: isCollapsed ? 3 : 9 }}>
-              <div
-                ref={projectMenuOpen === project ? wtDropdownRef : undefined}
-                onMouseEnter={() => setHoveredProject(project)}
-                onMouseLeave={() => setHoveredProject((current) => current === project && projectMenuOpen !== project ? null : current)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  minHeight: 34,
-                  position: "relative",
-                  borderRadius: 6,
-                  background: isSelectedProject ? "var(--bg-hover)" : "transparent",
-                }}
-              >
+        ) : (
+          /* Virtuoso owns the scroll container. It is absolutely positioned so
+             the flex item above keeps deciding the available height regardless
+             of how much content the list currently has. */
+          <Virtuoso
+            ref={sessionListRef}
+            data={sidebarRows}
+            computeItemKey={(_index, row) => row.key}
+            defaultItemHeight={SESSION_ROW_HEIGHT}
+            rangeChanged={handleVisibleRangeChange}
+            components={{ List: SidebarVirtuosoList, Footer: SidebarVirtuosoFooter }}
+            style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, height: "auto" }}
+            itemContent={(_index, row) => {
+              if (row.kind !== "project") return renderSidebarRow(row);
+              const { project, name } = row;
+              const isSelectedProject = project === selectedProject;
+              const isCollapsed = collapsedProjects.has(project) && !normalizedProjectFilter;
+              return (
+                <section style={{ marginBottom: isCollapsed ? 3 : 9 }}>
+                  <div
+                    ref={projectMenuOpen === project ? wtDropdownRef : undefined}
+                    onMouseEnter={() => setHoveredProject(project)}
+                    onMouseLeave={() => setHoveredProject((current) => current === project && projectMenuOpen !== project ? null : current)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      minHeight: 34,
+                      position: "relative",
+                      borderRadius: 6,
+                      background: isSelectedProject ? "var(--bg-hover)" : "transparent",
+                    }}
+                  >
                 <Pressable
                   type="button"
                   onClick={() => toggleProjectCollapsed(project)}
@@ -1702,62 +1921,11 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                   </div>
                 )}
               </div>
-
-              {!isCollapsed && sessions.length === 0 && isSelectedProject && (
-                <div style={{ padding: "6px 12px 7px 32px", color: "var(--text-dim)", fontSize: 11 }}>
-                  {t("sidebar.noSessions")}
-                </div>
-              )}
-              {!isCollapsed && sessionTree.length > 0 && (
-                <div style={{ paddingLeft: 12 }}>
-                  {sessionTree.map((node) => (
-                    <SessionTreeItem
-                      key={node.session.id}
-                      node={node}
-                      selectedSessionId={selectedSessionId}
-                      runningSessionIds={runningSessionIds}
-                      unreadSessionIds={unreadSessionIds}
-                      onSelectSession={handleSelectSessionFromList}
-                      onRenamed={loadSessions}
-                      onSessionDeleted={(id) => {
-                        onSessionDeleted?.(id);
-                        loadSessions();
-                      }}
-                      onSessionArchived={handleSessionArchived}
-                      depth={0}
-                    />
-                  ))}
-                </div>
-              )}
-              {!isCollapsed && showMore && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExpandedProjects((current) => {
-                      const next = new Set(current);
-                      if (next.has(project)) next.delete(project);
-                      else next.add(project);
-                      return next;
-                    });
-                  }}
-                  style={{
-                    display: "block",
-                    margin: "3px 0 3px 32px",
-                    padding: "5px 8px",
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-muted)",
-                    cursor: "pointer",
-                    fontSize: 12,
-                    textAlign: "left",
-                  }}
-                >
-                  {isExpanded ? t("sidebar.showLess") : t("sidebar.showMore")}
-                </button>
-              )}
-            </section>
-          );
-        })}
+                  </section>
+              );
+            }}
+          />
+        )}
       </div>
 
       <ArchivedSessionsSection
@@ -1966,81 +2134,6 @@ function ArchivedSessionsSection({
         </div>
       )}
     </section>
-  );
-}
-
-function SessionTreeItem({
-  node,
-  selectedSessionId,
-  runningSessionIds,
-  unreadSessionIds,
-  onSelectSession,
-  onRenamed,
-  onSessionDeleted,
-  onSessionArchived,
-  depth,
-}: {
-  node: SessionTreeNode;
-  selectedSessionId: string | null;
-  runningSessionIds: Set<string>;
-  unreadSessionIds: Set<string>;
-  onSelectSession: (s: SessionInfo) => void;
-  onRenamed?: () => void;
-  onSessionDeleted?: (id: string) => void;
-  onSessionArchived?: (id: string) => void;
-  depth: number;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  const hasChildren = node.children.length > 0;
-
-  return (
-    <div>
-      <div style={{ position: "relative" }}>
-        {/* Indent line for child sessions */}
-        {depth > 0 && (
-          <div style={{
-            position: "absolute",
-            left: depth * 12 + 6,
-            top: 0, bottom: 0,
-            width: 1,
-            background: "var(--border)",
-            pointerEvents: "none",
-          }} />
-        )}
-        <SessionItem
-          session={node.session}
-          isSelected={node.session.id === selectedSessionId}
-          isRunning={runningSessionIds.has(node.session.id)}
-          isUnread={unreadSessionIds.has(node.session.id)}
-          onClick={() => onSelectSession(node.session)}
-          onRenamed={onRenamed}
-          onDeleted={(id) => onSessionDeleted?.(id)}
-          onArchived={(id) => onSessionArchived?.(id)}
-          depth={depth}
-          hasChildren={hasChildren}
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((v) => !v)}
-        />
-      </div>
-      {hasChildren && !collapsed && (
-        <div>
-          {node.children.map((child) => (
-            <SessionTreeItem
-              key={child.session.id}
-              node={child}
-              selectedSessionId={selectedSessionId}
-              runningSessionIds={runningSessionIds}
-              unreadSessionIds={unreadSessionIds}
-              onSelectSession={onSelectSession}
-              onRenamed={onRenamed}
-              onSessionDeleted={onSessionDeleted}
-              onSessionArchived={onSessionArchived}
-              depth={depth + 1}
-            />
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -2291,7 +2384,6 @@ function SessionItem({
   }, [onRenamed, session.cwd, session.id, session.name, session.path]);
 
   // Fixed height keeps hover and confirmation states from reflowing the list.
-  const ITEM_HEIGHT = 40;
 
   return (
     <div
@@ -2300,7 +2392,7 @@ function SessionItem({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
-        height: ITEM_HEIGHT,
+        height: SESSION_ROW_HEIGHT,
         display: "flex",
         alignItems: "center",
         paddingLeft: depth > 0 ? depth * 10 + 8 : 8,

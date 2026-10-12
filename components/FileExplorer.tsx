@@ -1,6 +1,15 @@
 "use client";
 
-import { forwardRef, useState, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useState, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  Tree,
+  type CursorProps,
+  type DragPreviewProps,
+  type NodeApi,
+  type NodeRendererProps,
+  type RowRendererProps,
+  type TreeApi,
+} from "react-arborist";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { createPortal } from "react-dom";
 import { Pressable } from "./motion/Pressable";
@@ -1399,127 +1408,463 @@ function ExplorerToolbar({
   );
 }
 
-function TreeNode({
-  node,
-  depth,
-  cwd,
-  onOpenFile,
-  onAtMention,
-  expandedPaths,
-  onToggleExpanded,
-  onNavigate,
-  onContextMenu,
-  refreshToken,
-  highlightedPaths,
-  gitStatusByPath,
-  changedDirectoryPaths,
-  selectedPaths,
-  onToggleSelected,
-  onOpenImage,
-  imageTarget,
-  t,
-}: {
-  node: FileNode;
-  depth: number;
+/**
+ * Masse des Baums. Sie stehen hier statt verstreut in den Komponenten, weil
+ * drei Stellen dieselben Zahlen brauchen: die Zeilenhoehe entscheidet, was
+ * `react-window` ueberhaupt rendert, die Einrueckung muss in der Zeile UND in
+ * ihrer Hoehe uebereinstimmen, und die untere Luefte haelt die letzte Zeile
+ * vom Rand des Panels weg.
+ */
+const TREE_ROW_HEIGHT = 24;
+const TREE_INDENT = 14;
+const TREE_EMPTY_ROW_HEIGHT = 22;
+const TREE_BOTTOM_GAP = 8;
+const TREE_MIN_HEIGHT = 120;
+
+/**
+ * Der naechste Vorfahr, der selbst scrollt.
+ *
+ * `react-arborist` braucht eine feste Pixelhoehe, weil sein virtualisiertes
+ * Fenster eine Zahl will. Der Explorer liegt aber in keinem eigenen
+ * scrollenden Kasten — er sitzt im Scrollcontainer der Seitenleiste, und im
+ * Fenster im Panel. Beide muss man suchen, statt sie zu raten: die Kette wird
+ * nach oben verfolgt, bis ein Element mit `overflow-y: auto|scroll` auftaucht.
+ * Findet sich keiner, misst der Baum gegen den Fensterrand.
+ */
+function findScrollParent(el: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = el.parentElement;
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+interface ExplorerTreeProps {
+  /** Der Baum in Arborist-Form: `children === []` = Ordner, `undefined` = Datei. */
+  data: FileNode[];
   cwd: string;
-  onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
-  onAtMention?: (relativePath: string, isDir: boolean) => void;
-  expandedPaths: Set<string>;
-  onToggleExpanded: (fullPath: string, open: boolean) => void;
-  onNavigate?: (fullPath: string) => void;
-  onContextMenu: (fullPath: string, name: string, isDir: boolean, x: number, y: number) => void;
-  refreshToken: string;
+  currentPath: string;
+  /**
+   * Wechselt den Wert, wenn ein frischer Baum gebraucht wird. Der Schluessel
+   * haengt an Projektordner und angezeigtem Ordner, denn beides ersetzt die
+   * Knoten — und nur eine frische Instanz liest `initialOpenState` ueberhaupt.
+   */
+  resetKey: string;
+  /** Startzustand fuer genau diese Instanz, aus dem gemeldeten Blick. */
+  initialOpenState: Record<string, boolean>;
+  loadingPaths: Set<string>;
   highlightedPaths: Set<string>;
   gitStatusByPath: Map<string, GitFileStatus>;
   changedDirectoryPaths: Set<string>;
-  selectedPaths: Set<string>;
-  onToggleSelected: (entry: SelectionEntry) => void;
-  /**
-   * Wird fuer Bilddateien statt `onOpenFile` aufgerufen, damit der Explorer
-   * die grosse Vorschau oeffnen kann. Optional: fehlt der Callback, verhalten
-   * sich Bilder wie zuvor und gehen in den normalen Datei-Tab.
-   */
+  /** Die Auswahl der Toolbar. Sie ist die Quelle der Wahrheit, nicht Arborist. */
+  selection: ReadonlyMap<string, SelectionEntry>;
+  /** `false`, wenn diese Instanz keine grosse Bildvorschau kennt (das Fenster). */
+  imagePreviewEnabled: boolean;
+  onToggleExpanded: (fullPath: string, open: boolean) => void;
+  onNavigate: (fullPath: string) => void;
+  onOpenFile: OpenFileHandler;
+  onContextMenu: (fullPath: string, name: string, isDir: boolean, x: number, y: number) => void;
+  onSelectionChange: (entries: SelectionEntry[]) => void;
+  /** Ziehen im Baum: verschiebt die genannten Eintraege in einen Ordner. */
+  onDropMove: (entries: SelectionEntry[], destination: string) => void;
+  onAtMention?: (relativePath: string, isDir: boolean) => void;
   onOpenImage?: (filePath: string, fileName: string) => void;
-  /**
-   * Wohin Bilder gehen. Nur fuer den Augen-Knopf wichtig: bei `"openFile"`
-   * wuerde er ueber `onOpenImage` zwar schon den Tab oeffnen, aber als Knopf
-   * mit dem Titel "grosse Vorschau" taeuscht er das Versprechen, das er nicht
-   * einloest. Siehe `canPreviewImage`.
-   */
-  imageTarget: "preview" | "openFile";
   t: Translate;
+}
+
+/**
+ * Was eine Zeile braucht, ohne es ueber `renderRow`/`renderNode` durchreichen
+ * zu muessen. Beide Renderer werden von Arborist mit festen Props gerufen; ein
+ * Kontext-Objekt haelt die Instanz-spezifischen Wege an einer Stelle.
+ */
+interface TreeRowContext {
+  cwd: string;
+  loadingPaths: Set<string>;
+  highlightedPaths: Set<string>;
+  gitStatusByPath: Map<string, GitFileStatus>;
+  changedDirectoryPaths: Set<string>;
+  imagePreviewEnabled: boolean;
+  onRowClick: (node: NodeApi<FileNode>, event: React.MouseEvent) => void;
+  onRowContextMenu: (node: NodeApi<FileNode>, event: React.MouseEvent) => void;
+  onAtMention?: (relativePath: string, isDir: boolean) => void;
+  onOpenImage?: (filePath: string, fileName: string) => void;
+  t: Translate;
+}
+
+/**
+ * Ein Ordner, der offen steht, geladen ist und nichts enthaelt. Fuer ihn
+ * stand im alten Baum eine eigene Zeile mit `files.emptyNode` unter dem
+ * Chevron; sie ist hier eine zweite Zeile im gleichen Baumknoten, damit sie
+ * beim Scrollen mitscrollt und beim Virtualisieren nicht verloren geht.
+ */
+function isEmptyOpenFolder(node: NodeApi<FileNode>): boolean {
+  return node.isOpen && !node.isLeaf && node.data.loaded === true && (node.children?.length ?? 0) === 0;
+}
+
+/**
+ * Der Inhalt einer Zeile ohne den Rahmen, den `react-window` um sie legt.
+ *
+ * `dragHandle` wird von Arborist fuer den React-DnD-Quellhaken geliefert und
+ * sitzt hier auf dem Zeileninhalt. Das ist Absicht: die Zeilenwerkzeuge
+ * (Mention, Bild, Download) sind ebenfalls Kinder dieses Elements, und ein
+ * Element mit `draggable` koennte sonst beim Ziehen an ihnen haengen bleiben.
+ * Sie halten ihren eigenen `mousedown` zurueck und starten damit weder einen
+ * Zug noch eine Textauswahl.
+ */
+function FileTreeLabel({
+  node,
+  dragHandle,
+  ctx,
+}: {
+  node: NodeApi<FileNode>;
+  dragHandle?: (el: HTMLDivElement | null) => void;
+  ctx: TreeRowContext;
 }) {
-  const open = expandedPaths.has(node.fullPath);
-  const highlighted = highlightedPaths.has(node.fullPath);
-  const selected = selectedPaths.has(node.fullPath);
-  const normalizedPath = normalizeFilePathSlashes(node.fullPath);
-  const gitStatus = gitStatusByPath.get(normalizedPath);
-  const containsGitChanges = node.isDir && (
-    gitStatus !== undefined || changedDirectoryPaths.has(normalizedPath)
-  );
-  const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
-  const [loaded, setLoaded] = useState(node.loaded ?? false);
-  const [loading, setLoading] = useState(false);
+  const { data } = node;
   const [hovered, setHovered] = useState(false);
+  const normalizedPath = normalizeFilePathSlashes(data.fullPath);
+  const gitStatus = ctx.gitStatusByPath.get(normalizedPath);
+  const containsGitChanges = data.isDir && (
+    gitStatus !== undefined || ctx.changedDirectoryPaths.has(normalizedPath)
+  );
 
   /**
-   * Der Knopf fuer die grosse Vorschau teilt sich den Weg mit dem Zeilen-Klick:
-   * beide rufen `onOpenImage` auf, und beide setzen dieselbe Bildvorschau des
-   * Explorers. Ohne den Callback (Aufrufer ohne eigene Vorschau) faellt der
-   * Knopf weg, und der Klick auf die Zeile geht wie zuvor an `onOpenFile`.
-   * Ordner sind nie Bilder, `isImagePath` entscheidet also nur noch ueber die
-   * Endung.
-   *
-   * `imageTarget === "openFile"` nimmt ihn ebenfalls weg, und das ist der
-   * Punkt, an dem der Umbau sonst halb geblieben waere. Der Aufrufer ist dann
-   * zwar derselbe `onOpenImage` und wuerde den Tab oeffnen — aber der Knopf
-   * heisst "grosse Vorschau", hat den Titel `files.openImageLarge` und steht
-   * da, wo in der Seitenleiste das Overlay aufgeht. Er wuerde im Fenster also
-   * etwas anderes tun als sein Name sagt, und der Nutzer haelt ihn fuer
-   * kaputt, wenn er denselben Knopf an beiden Orten sieht. Die Vorschau gibt
-   * es im Fenster nicht mehr; ein Knopf dafuer erst recht nicht.
+   * Der Knopf fuer die grosse Vorschau teilt sich den Weg mit dem Zeilen-Klick.
+   * `imagePreviewEnabled` ist genau die Bedingung, an der auch der Eintrag im
+   * Rechtsklick-Menue haengt: die Instanz im Fenster kennt keine grosse
+   * Vorschau, also bekommen Zeile und Menue dort beide nichts zu zeigen. Der
+   * Klick auf die Bildzeile geht trotzdem wie zuvor an `onOpenFile` — das
+   * entscheidet `handleRowClick`, nicht dieser Knopf.
    */
-  const canPreviewImage = imageTarget === "preview" && onOpenImage !== undefined && !node.isDir && isImagePath(node.name);
+  const canPreviewImage = ctx.imagePreviewEnabled && !data.isDir && isImagePath(data.name);
 
-  const loadChildren = useCallback(async (force = false) => {
-    if (loaded && !force) return;
-    setLoading(true);
-    try {
-      const entries = await fetchEntries(node.fullPath);
-      setChildren(entries);
-      setLoaded(true);
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
+  return (
+    <div
+      ref={dragHandle}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        paddingRight: 8,
+        height: TREE_ROW_HEIGHT,
+        cursor: "pointer",
+        userSelect: "none",
+      }}
+    >
+      {!node.isLeaf && (
+        <span
+          role="button"
+          tabIndex={-1}
+          aria-label={node.isOpen ? ctx.t("files.collapseFolder") : ctx.t("files.expandFolder")}
+          onClick={(event) => { event.stopPropagation(); node.toggle(); }}
+          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, cursor: "pointer" }}
+        >
+          <svg
+            width="10" height="10" viewBox="0 0 10 10" fill="none"
+            stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: node.isOpen ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
+          >
+            <polyline points="3 2 7 5 3 8" />
+          </svg>
+        </span>
+      )}
+      {node.isLeaf && <span style={{ width: 10, flexShrink: 0 }} />}
+      <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+        {data.isDir ? <FolderIcon size={14} open={node.isOpen} /> : getFileIcon(data.name, 14)}
+      </span>
+      <span
+        style={{
+          fontSize: 12,
+          color: "var(--text)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          flex: 1,
+        }}
+        title={data.fullPath}
+      >
+        {data.name}
+      </span>
+      {ctx.highlightedPaths.has(data.fullPath) && (
+        <span
+          title={ctx.t("files.newlyUploaded")}
+          aria-label={ctx.t("files.newlyUploaded")}
+          style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6" }} />
+        </span>
+      )}
+      {!hovered && node.isLeaf && gitStatus && <GitStatusBadge status={gitStatus} t={ctx.t} />}
+      {!hovered && containsGitChanges && (
+        <span
+          title={ctx.t("files.containsChangedFiles")}
+          aria-label={ctx.t("files.containsChangedFiles")}
+          style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#d6a84b" }} />
+        </span>
+      )}
+      {ctx.loadingPaths.has(data.fullPath) && (
+        <Spin style={{ display: "inline-flex", width: 10, height: 10 }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
+          </svg>
+        </Spin>
+      )}
+      {isEmptyOpenFolder(node) && (
+        <div style={{ position: "absolute", left: 8 + node.level * TREE_INDENT, top: TREE_ROW_HEIGHT, height: TREE_EMPTY_ROW_HEIGHT, display: "flex", alignItems: "center", fontSize: 11, color: "var(--text-dim)" }}>
+          {ctx.t("files.emptyNode")}
+        </div>
+      )}
+      {ctx.onAtMention && hovered && (
+        <Pressable
+          onClick={(e) => {
+            e.stopPropagation();
+            ctx.onAtMention?.(getRelativeFilePath(data.fullPath, ctx.cwd), data.isDir);
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          title={ctx.t("files.insertPath")}
+          style={{
+            position: "absolute",
+            right: !data.isDir ? ROW_ACTION_RIGHT_MENTION_FILE : ROW_ACTION_RIGHT_MENTION_DIR,
+            top: "50%",
+            transform: "translateY(-50%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
+            padding: "0 8px",
+            height: 20,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            color: "var(--accent)",
+            cursor: "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <MentionIcon />
+          {ctx.t("files.mention")}
+        </Pressable>
+      )}
+      {canPreviewImage && hovered && (
+        <Pressable
+          onClick={(e) => {
+            // Ohne Halt ruft der Klick auf den Knopf den Zeilen-Klick auf und
+            // oeffnet dieselbe Vorschau ein zweites Mal.
+            e.stopPropagation();
+            ctx.onOpenImage?.(data.fullPath, data.name);
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          title={ctx.t("files.openImageLarge")}
+          aria-label={ctx.t("files.openImageLarge")}
+          style={{
+            position: "absolute",
+            right: ROW_ACTION_RIGHT_IMAGE,
+            top: "50%",
+            transform: "translateY(-50%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+            width: 20,
+            height: 20,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            color: "var(--text-muted)",
+            cursor: "pointer",
+          }}
+        >
+          <ImageOpenIcon />
+        </Pressable>
+      )}
+      {hovered && node.isLeaf && (
+        <a
+          href={`/api/files/${encodeFilePathForApi(data.fullPath)}?type=download`}
+          download
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.preventDefault()}
+          title={ctx.t("files.download")}
+          style={{
+            position: "absolute",
+            right: ROW_ACTION_RIGHT_DOWNLOAD,
+            top: "50%",
+            transform: "translateY(-50%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
+            padding: "0 5px",
+            height: 20,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+            textDecoration: "none",
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </a>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Der Rahmen um eine Zeile: `react-window` setzt Position und Hoehe, wir
+ * setzen Einrueckung, Hintergrund und die Klicks darauf.
+ *
+ * Der Klick ersetzt `node.handleClick` aus Arborists Standardzeile. Der
+ * Unterschied ist der Auswahlvertrag dieses Explorers: ein einfacher Klick
+ * oeffnet oder navigiert und fasst die Toolbar-Auswahl gar nicht an, nur
+ * Strg/Cmd-Klick schaltet einen Eintrag. Arborists `handleClick` wuerde bei
+ * jedem Klick auswaehlen und damit nach jedem Datei-Klick die Werkzeuge der
+ * Toolbar einblenden.
+ */
+function ExplorerRow({
+  node,
+  innerRef,
+  attrs,
+  children,
+  ctx,
+}: RowRendererProps<FileNode> & { ctx: TreeRowContext }) {
+  const [hovered, setHovered] = useState(false);
+  const level = Math.max(0, node.level - 1);
+  return (
+    <div
+      {...attrs}
+      ref={innerRef}
+      onFocus={(e) => e.stopPropagation()}
+      onClick={(e) => ctx.onRowClick(node, e)}
+      onContextMenu={(e) => ctx.onRowContextMenu(node, e)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      data-selected={node.isSelected ? "true" : undefined}
+      style={{
+        ...attrs.style,
+        paddingLeft: 8 + level * TREE_INDENT,
+        paddingRight: 8,
+        boxSizing: "border-box",
+        display: "flex",
+        alignItems: "flex-start",
+        cursor: "pointer",
+        // Auswahl schlaegt Hover: eine markierte Zeile soll auch dann
+        // markiert bleiben, wenn der Zeiger sie gerade nicht beruehrt.
+        background: node.isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
+        borderRadius: 4,
+        userSelect: "none",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Der Baum.
+ *
+ * Gegenueber dem handgebauten `TreeNode` gibt es drei Aenderungen, die man
+ * kennen muss:
+ *
+ * - **Nur sichtbare Zeilen existieren im DOM.** Das ist der Grund fuer den
+ *   Umbau; dafuer braucht der Baum eine feste Pixelhoehe, die aus dem
+ *   Scrollcontainer gemessen wird.
+ * - **Der Wurzelknoten ist einOrdner.** Ein Drop auf oberster Ebene heisst
+ *   deshalb „in den gerade angezeigten Ordner", nicht „neben die Liste".
+ * - **Die Auswahl gehoert dem Explorer, nicht dem Baum.** Sie muss einen
+ *   Ordnerwechsel und den Aufruf durch die Toolbar ueberleben; Arborist
+ *   bekommt sie darum als Abbild gesetzt und nicht als Eigentum.
+ */
+function ExplorerTree({
+  data,
+  cwd,
+  currentPath,
+  resetKey,
+  initialOpenState,
+  loadingPaths,
+  highlightedPaths,
+  gitStatusByPath,
+  changedDirectoryPaths,
+  selection,
+  imagePreviewEnabled,
+  onToggleExpanded,
+  onNavigate,
+  onOpenFile,
+  onContextMenu,
+  onSelectionChange,
+  onDropMove,
+  onAtMention,
+  onOpenImage,
+  t,
+}: ExplorerTreeProps) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const treeRef = useRef<TreeApi<FileNode> | undefined>(undefined);
+  const [height, setHeight] = useState(TREE_MIN_HEIGHT);
+
+  // Zwei Werte, die die Callbacks brauchen, ohne dass sie bei jedem Werten
+  // eine neue Funktion erzeugen muessen. Beide werden waehrend des Renderns
+  // nachgefuehrt, nicht in einem Effekt: ein Effekt liefe zu spaet, und beide
+  // Callbacks feuern genau dann, wenn sich der Wert schon geaendert hat.
+  const currentPathRef = useRef(currentPath);
+  currentPathRef.current = currentPath;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  /**
+   * Als eigene Liste, weil die Auswahl als Karte aus der aufrufenden Instanz
+   * kommt: `[...selection.values()]` waere bei jedem Rendern ein neuer Wert,
+   * und der Abgleich mit dem Baum laeuft bei jeder Aenderung dieser Liste.
+   */
+  const selectedEntries = useMemo(() => [...selection.values()], [selection]);
+
+  /**
+   * Der verbleibende Platz fuer das virtualisierte Fenster. Gemessen wird
+   * gegen den oberen Rand des Baums, nicht gegen seine Hoehe — sonst stuende
+   * die Messung in einer Schleife: hoeherer Baum, tieferer Rand, weniger Platz.
+   * Beobachtet werden die Vorfahren bis zum Scrollcontainer, damit auch das
+   * Hoch- und Herunterklappen der Upload-Meldung ueber dem Baum die Hoehe
+   * wieder ausmisst.
+   */
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => {
+      const scroller = findScrollParent(el);
+      const own = el.getBoundingClientRect();
+      const available = scroller
+        ? scroller.clientHeight - (own.top - scroller.getBoundingClientRect().top + scroller.scrollTop) - TREE_BOTTOM_GAP
+        : window.innerHeight - own.top - TREE_BOTTOM_GAP;
+      setHeight(Math.max(TREE_MIN_HEIGHT, Math.floor(available)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    let node: HTMLElement | null = el;
+    for (let depth = 0; node && depth < 8; depth++) {
+      observer.observe(node);
+      node = node.parentElement;
     }
-  }, [loaded, node.fullPath]);
-
-  // Re-fetch children when the tree refreshes and the directory is open.
-  useEffect(() => {
-    if (open && loaded) {
-      loadChildren(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshToken]);
-
-  // Ein wiederhergestellter Zustand kann einen Ordner bereits als offen
-  // ausweisen, ohne dass seine Kinder je geladen wurden — die Zeile ist frisch
-  // gemountet, also ist `loaded` noch false und der Effekt oben greift nicht.
-  // Ohne diesen zweiten Effekt stuende das Chevron auf offen und der Ordner
-  // bliebe leer.
-  //
-  // Bewusst NUR beim Mount: der normale Weg zum Aufklappen ist der Chevron,
-  // der `loadChildren` selbst aufruft. Ein Effekt auf `[open]` wuerde denselben
-  // Ordner ein zweites Mal laden, weil `loaded` beim Rendern des Chevrons noch
-  // false ist. Ein Ordner, der beim Mount offen ist, kann dagegen nur aus
-  // `initialViewState` stammen.
-  useEffect(() => {
-    if (open && !loaded) loadChildren();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
   }, []);
 
-  const handleClick = useCallback((event: React.MouseEvent) => {
+  const handleRowClick = useCallback((node: NodeApi<FileNode>, event: React.MouseEvent) => {
     // Auswahl laeuft ueber Strg/Cmd-Klick, nicht ueber den einfachen Klick.
     // Ein Dateimanager lebt davon, dass ein Klick eine Datei oeffnet; nimmt man
     // das fuer die Auswahl, muss jeder Nutzer zweimal klicken, um etwas zu
@@ -1527,265 +1872,242 @@ function TreeNode({
     // gewohnte Mehrfachauswahl ohne weitere Klickpflege — ein Checkbox je
     // Zeile wuerde bei tiefen Baeumen die Namensspalte verschieben.
     if (event.ctrlKey || event.metaKey) {
-      onToggleSelected({ path: node.fullPath, name: node.name, isDir: node.isDir });
+      if (node.isSelected) node.deselect(); else node.selectMulti();
       return;
     }
-    if (node.isDir) {
-      // Click on a directory navigates into it (replaces the explorer root
-      // view). The chevron handles expand/collapse instead, so this matches
-      // a typical file-manager: row click = open, chevron = peek.
-      onNavigate?.(node.fullPath);
-    } else if (onOpenImage && isImagePath(node.name)) {
-      onOpenImage(node.fullPath, node.name);
+    // Der Tastaturcursor folgt dem Klick, damit die Pfeiltasten dort ansetzen,
+    // wo der Nutzer zuletzt war. Die Auswahl der Toolbar bleibt unberuehrt.
+    node.focus();
+    if (node.data.isDir) {
+      // Klick auf einen Ordner navigiert in ihn; das Chevron ist fuer
+      // Auf- und Zuklappen zustaendig. So verhielt sich die oberste Ebene
+      // vorher schon, und der Umbau macht es nicht unterschiedlich.
+      onNavigate(node.id);
+    } else if (onOpenImage && isImagePath(node.data.name)) {
+      onOpenImage(node.id, node.data.name);
     } else {
-      onOpenFile(node.fullPath, node.name);
+      onOpenFile(node.id, node.data.name);
     }
-  }, [node.fullPath, node.isDir, node.name, onNavigate, onOpenFile, onOpenImage, onToggleSelected]);
+  }, [onNavigate, onOpenFile, onOpenImage]);
 
-  const handleChevronClick = useCallback((event: React.MouseEvent) => {
-    event.stopPropagation();
-    const next = !open;
-    onToggleExpanded(node.fullPath, next);
-    if (next && !loaded) loadChildren();
-  }, [loaded, loadChildren, node.fullPath, open, onToggleExpanded]);
-
-  const handleContextMenu = useCallback((event: React.MouseEvent) => {
+  const handleRowContextMenu = useCallback((node: NodeApi<FileNode>, event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    onContextMenu(node.fullPath, node.name, node.isDir, event.clientX, event.clientY);
-  }, [node.fullPath, node.isDir, node.name, onContextMenu]);
+    onContextMenu(node.id, node.data.name, node.data.isDir, event.clientX, event.clientY);
+  }, [onContextMenu]);
 
-  return (
-    <div>
-      <div
-        onClick={handleClick}
-        onContextMenu={handleContextMenu}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        data-selected={selected ? "true" : undefined}
-        style={{
-          position: "relative",
+  /**
+   * Was der Baum meldet, wird mit der Auswahl des Explorers zusammengefuegt.
+   * Arborist kennt nur die sichtbaren Knoten; eine Auswahl, die vor einem
+   * Ordnerwechsel aufgenommen wurde, taucht in seiner Meldung nicht auf und
+   * darf durch sie nicht verschwinden. Die unsichtbaren Eintraege wandern
+   * darum unveraendert mit — genau wie vorher, als die Auswahl ein Zustand des
+   * Explorers war und der Baum sie gar nicht kannte.
+   */
+  const handleTreeSelect = useCallback((nodes: NodeApi<FileNode>[]) => {
+    const api = treeRef.current;
+    const visible = new Set((api?.visibleNodes ?? []).map((node) => node.id));
+    const next = new Map<string, SelectionEntry>();
+    for (const entry of selectionRef.current.values()) {
+      if (!visible.has(entry.path)) next.set(entry.path, entry);
+    }
+    for (const node of nodes) {
+      next.set(node.id, { path: node.id, name: node.data.name, isDir: node.data.isDir });
+    }
+    onSelectionChange([...next.values()]);
+  }, [onSelectionChange]);
+
+  /**
+   * Der Baum meldet jede Aenderung seiner offenen Aeste, und der Explorer
+   * haelt sie fuer `initialViewState` fest. Gelesen wird der Zustand aus
+   * Arborist, nicht der gewollte: `onToggle` feuert nach dem Umschalten, und
+   * ein zweites `setExpandedPaths` an der aufrufenden Seite koennte sonst der
+   * Auswertung des bereits gesetzten Zustands widersprechen.
+   */
+  const handleToggle = useCallback((id: string) => {
+    const node = treeRef.current?.get(id);
+    // Der Wurzelknoten traegt eine interne Kennung von Arborist und gehoert
+    // nicht in den gemeldeten Blick: dort wuerde sie als offener Pfad
+    // landen, im naechsten Fenster wieder als Startzustand ankommen und einen
+    // Ordner oeffnen, den der Nutzer nie aufklappen konnte.
+    if (!node || node.isRoot) return;
+    onToggleExpanded(id, node.isOpen);
+  }, [onToggleExpanded]);
+
+  /**
+   * Ablegen. `parentNode` ist bei einem Drop auf oberster Ebene der Wurzel-
+   * knoten, und der steht fuer den Ordner, den der Baum gerade zeigt.
+   * `canDrop` von Arborist hat Ordner-in-sich-schon vorher abgelehnt.
+   */
+  const handleMove = useCallback(({ dragNodes, parentNode }: {
+    dragIds: string[];
+    dragNodes: NodeApi<FileNode>[];
+    parentId: string | null;
+    parentNode: NodeApi<FileNode> | null;
+    index: number;
+  }) => {
+    const destination = parentNode && !parentNode.isRoot ? parentNode.data.fullPath : currentPathRef.current;
+    // Ein Eintrag, der schon im Ziel liegt, wird uebersprungen: `disableDrop`
+    // lehnt nur ab, wenn ALLE gezogenen Eintraege dort liegen, weil eine
+    // Mischeinspeisung weiterhin ein guter Zug ist. Ohne diese Filterung
+    // wuerde der Server fuer die uebrigen einen Fehler melden, den der Nutzer
+    // nicht ausgeloest hat.
+    const entries = dragNodes
+      .filter((node) => getFileDirectory(normalizeFilePathSlashes(node.data.fullPath)) !== normalizeFilePathSlashes(destination))
+      .map((node) => ({ path: node.id, name: node.data.name, isDir: node.data.isDir }));
+    if (entries.length === 0) return;
+    onDropMove(entries, destination);
+  }, [onDropMove]);
+
+  /**
+   * Ein Zug in den Ordner, in dem der Eintrag ohnehin liegt, waere eine
+   * Umbenennung ohne Wirkung und ein Fehler des Servers. Der Pfad wird
+   * darum abgelehnt, bevor ein Cursor verspricht, dass es klappt.
+   */
+  const disableDrop = useCallback(({ parentNode, dragNodes }: {
+    parentNode: NodeApi<FileNode>;
+    dragNodes: NodeApi<FileNode>[];
+    index: number;
+  }) => {
+    const destination = parentNode && !parentNode.isRoot ? parentNode.data.fullPath : currentPathRef.current;
+    return dragNodes.every((node) => (
+      getFileDirectory(normalizeFilePathSlashes(node.data.fullPath)) === normalizeFilePathSlashes(destination)
+    ));
+  }, []);
+
+  const rowHeight = useCallback((node: NodeApi<FileNode>) => (
+    isEmptyOpenFolder(node) ? TREE_ROW_HEIGHT + TREE_EMPTY_ROW_HEIGHT : TREE_ROW_HEIGHT
+  ), []);
+
+  const accessId = useCallback((node: FileNode) => node.fullPath, []);
+
+  /**
+   * Die Auswahl des Explorers als Abbild in den Baum. Verglichen wird, nicht
+   * blind gesetzt: `setSelection` meldet ueber `onSelect` zurueck, und ohne
+   * den Vergleich wuerde jede Meldung wieder eine Meldung ausloesen.
+   */
+  useEffect(() => {
+    const api = treeRef.current;
+    if (!api) return;
+    const desired = new Set(
+      selectedEntries.map((entry) => entry.path).filter((path) => api.get(path) !== null),
+    );
+    const current = api.selectedIds;
+    if (desired.size === current.size && [...desired].every((id) => current.has(id))) return;
+    if (desired.size === 0) { api.deselectAll(); return; }
+    const ids = [...desired];
+    api.setSelection({ ids, anchor: ids[0], mostRecent: ids[ids.length - 1] });
+  }, [selectedEntries, data]);
+
+  /**
+   * Was eine Zeile rendern muss, an einer Stelle zusammengefasst. Beide
+   * Renderer bekommen es als Prop, weil Arborist sie mit festen Props ruft
+   * und es nicht durchgereicht werden kann; ihr Name aendert sich darum nur,
+   * wenn sich einer dieser Werte aendert — und genau dann soll der Baum seine
+   * Knoten neu bauen.
+   */
+  const ctx = useMemo<TreeRowContext>(() => ({
+    cwd,
+    loadingPaths,
+    highlightedPaths,
+    gitStatusByPath,
+    changedDirectoryPaths,
+    imagePreviewEnabled,
+    onRowClick: handleRowClick,
+    onRowContextMenu: handleRowContextMenu,
+    onAtMention,
+    onOpenImage,
+    t,
+  }), [
+    cwd, loadingPaths, highlightedPaths, gitStatusByPath, changedDirectoryPaths,
+    imagePreviewEnabled, handleRowClick, handleRowContextMenu, onAtMention, onOpenImage, t,
+  ]);
+
+  const renderRow = useCallback((props: RowRendererProps<FileNode>) => (
+    <ExplorerRow {...props} ctx={ctx} />
+  ), [ctx]);
+
+  const renderNode = useCallback(({ node, dragHandle }: NodeRendererProps<FileNode>) => (
+    <FileTreeLabel node={node} dragHandle={dragHandle} ctx={ctx} />
+  ), [ctx]);
+
+  /** Die Linie, die beim Ziehen anzeigt, wohin der Eintrag fallen wuerde. */
+  const renderCursor = useCallback(({ top, left, indent }: CursorProps) => (
+    <div style={{ position: "absolute", pointerEvents: "none", top: top - 2, left, right: indent, display: "flex", alignItems: "center", zIndex: 1 }}>
+      <span style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 2px var(--accent)", flexShrink: 0 }} />
+      <span style={{ flex: 1, height: 2, borderRadius: 1, background: "var(--accent)" }} />
+    </div>
+  ), []);
+
+  /**
+   * Die mitlaufende Anzeige waehrend des Zugs. Arborists eigene Vorschau
+   * traegt Klassen aus fremdem CSS; sie wird hier durch eine ersetzt, die in
+   * den Farben des Panels bleibt und bei mehreren Eintraegen deren Zahl nennt.
+   */
+  const renderDragPreview = useCallback(({ offset, id, dragIds, isDragging }: DragPreviewProps) => {
+    if (!isDragging || !offset) return null;
+    const node = treeRef.current?.get(id);
+    const label = dragIds.length > 1
+      ? t("files.selectionCount", { count: dragIds.length })
+      : node?.data.name ?? "";
+    return (
+      <div style={{ position: "fixed", left: 0, top: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 100 }}>
+        <div style={{
+          position: "absolute",
+          transform: `translate(${offset.x + 10}px, ${offset.y + 10}px)`,
           display: "flex",
           alignItems: "center",
-          gap: 4,
-          paddingLeft: 8 + depth * 14,
-          paddingRight: 8,
-          height: 24,
-          cursor: "pointer",
-          // Auswahl schlaegt Hover: eine markierte Zeile soll auch dann
-          // markiert bleiben, wenn der Zeiger sie gerade nicht beruehrt.
-          background: selected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
+          height: 20,
+          padding: "0 8px",
           borderRadius: 4,
-          userSelect: "none",
-        }}
-      >
-        {node.isDir && (
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label={open ? t("files.collapseFolder") : t("files.expandFolder")}
-            onClick={handleChevronClick}
-            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, cursor: "pointer" }}
-          >
-            <svg
-              width="10" height="10" viewBox="0 0 10 10" fill="none"
-              stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-              style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
-            >
-            <polyline points="3 2 7 5 3 8" />
-          </svg>
-          </span>
-        )}
-        {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
-        <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
-          {node.isDir ? <FolderIcon size={14} open={open} /> : getFileIcon(node.name, 14)}
-        </span>
-        <span
-          style={{
-            fontSize: 12,
-            color: "var(--text)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-          }}
-          title={node.fullPath}
-        >
-          {node.name}
-        </span>
-        {highlighted && (
-          <span
-            title={t("files.newlyUploaded")}
-            aria-label={t("files.newlyUploaded")}
-            style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6" }} />
-          </span>
-        )}
-        {!hovered && !node.isDir && gitStatus && (
-          <GitStatusBadge status={gitStatus} t={t} />
-        )}
-        {!hovered && containsGitChanges && (
-          <span
-            title={t("files.containsChangedFiles")}
-            aria-label={t("files.containsChangedFiles")}
-            style={{
-              width: 14,
-              height: 14,
-              flexShrink: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#d6a84b" }} />
-          </span>
-        )}
-        {loading && (
-          <Spin style={{ display: "inline-flex", width: 10, height: 10 }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
-            </svg>
-          </Spin>
-        )}
-        {onAtMention && hovered && (
-          <Pressable
-            onClick={(e) => {
-              e.stopPropagation();
-              onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
-            }}
-            title={t("files.insertPath")}
-            style={{
-              position: "absolute",
-              right: !node.isDir ? ROW_ACTION_RIGHT_MENTION_FILE : ROW_ACTION_RIGHT_MENTION_DIR,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              padding: "0 8px",
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--accent)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-            }}
-          >
-            <MentionIcon />
-            {t("files.mention")}
-          </Pressable>
-        )}
-        {canPreviewImage && hovered && (
-          <Pressable
-            onClick={(e) => {
-              // Ohne Halt ruft der Klick auf den Knopf den Zeilen-Klick auf und
-              // oeffnet dieselbe Vorschau ein zweites Mal.
-              e.stopPropagation();
-              onOpenImage?.(node.fullPath, node.name);
-            }}
-            title={t("files.openImageLarge")}
-            aria-label={t("files.openImageLarge")}
-            style={{
-              position: "absolute",
-              right: ROW_ACTION_RIGHT_IMAGE,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 0,
-              width: 20,
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--text-muted)",
-              cursor: "pointer",
-            }}
-          >
-            <ImageOpenIcon />
-          </Pressable>
-        )}
-        {hovered && !node.isDir && (
-          <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
-            download
-            onClick={(e) => e.stopPropagation()}
-            title={t("files.download")}
-            style={{
-              position: "absolute",
-              right: ROW_ACTION_RIGHT_DOWNLOAD,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              padding: "0 5px",
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              textDecoration: "none",
-            }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-          </a>
-        )}
-      </div>
-      {node.isDir && open && (
-        <div>
-          {children.map((child) => (
-            <TreeNode
-              key={child.fullPath}
-              node={child}
-              depth={depth + 1}
-              cwd={cwd}
-              onOpenFile={onOpenFile}
-              onAtMention={onAtMention}
-              expandedPaths={expandedPaths}
-              onToggleExpanded={onToggleExpanded}
-              // `onNavigate` gehoert hierher, sonst bekommen die Zeilen unter
-              // einem aufgeklappten Ordner keinen Weg in den Ordner: `handleClick`
-              // ruft `onNavigate?.(...)`, und ohne Prop faellt das `?.` fuer jede
-              // Zeile ab Ebene 1 auf den Zweig "nichts tun". Genau das war der
-              // gemessene Fehler — die oberste Ebene navigierte, jede darunter
-              // nicht. Die Seitenleiste nimmt damit dasselbe Verhalten wie das
-              // Fenster, und zwar das, das sie auf der obersten Ebene schon hat.
-              onNavigate={onNavigate}
-              onContextMenu={onContextMenu}
-              refreshToken={refreshToken}
-              highlightedPaths={highlightedPaths}
-              gitStatusByPath={gitStatusByPath}
-              changedDirectoryPaths={changedDirectoryPaths}
-              selectedPaths={selectedPaths}
-              onToggleSelected={onToggleSelected}
-              onOpenImage={onOpenImage}
-              imageTarget={imageTarget}
-              t={t}
-            />
-          ))}
-          {children.length === 0 && loaded && (
-            <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
-              {t("files.emptyNode")}
-            </div>
-          )}
+          border: "1px solid var(--border)",
+          background: "var(--bg-panel)",
+          color: "var(--text)",
+          fontSize: 11,
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+        }}>
+          {label}
         </div>
-      )}
+      </div>
+    );
+  }, [t]);
+
+  // Rechter Klick auf die Flaeche des Baums: kein Systemmenue, das Menue
+  // gehoert zu einer Zeile. Aehnlich wie vorher am Wurzelelement des Panels.
+  const suppressContextMenu = useCallback((event: React.MouseEvent) => {
+    if (event.target === event.currentTarget) event.preventDefault();
+  }, []);
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", height }}>
+      <Tree<FileNode>
+        key={resetKey}
+        ref={treeRef}
+        data={data}
+        idAccessor={accessId}
+        childrenAccessor="children"
+        initialOpenState={initialOpenState}
+        height={height}
+        width="100%"
+        rowHeight={rowHeight}
+        indent={TREE_INDENT}
+        overscanCount={8}
+        aria-label={t("files.explorerWindowTitle")}
+        onToggle={handleToggle}
+        onSelect={handleTreeSelect}
+        onMove={handleMove}
+        disableDrop={disableDrop}
+        onContextMenu={suppressContextMenu}
+        renderRow={renderRow}
+        // Arborist ruft den Knoten-Renderer ueber `children` und hat kein
+        // `renderNode`; die Renderer sind `ElementType`-Werte und damit keine
+        // echten Kind-Elemente, die man zwischen die Tags schreiben koennte.
+        // eslint-disable-next-line react/no-children-prop
+        children={renderNode}
+        renderCursor={renderCursor}
+        renderDragPreview={renderDragPreview}
+      />
     </div>
   );
 }
@@ -2021,6 +2343,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 }, ref) {
   const { t } = useI18n();
   const [roots, setRoots] = useState<FileNode[]>([]);
+  /**
+   * Der Inhalt der Unterordner, nach Pfad. Der Baum von `react-arborist`
+   * bekommt seinen Datenbaum als einen Wert, aber das Dateisystem liefert ihn
+   * nur auf Anfrage: ein Ordner wird erst geholt, wenn jemand ihn aufklappt.
+   * Diese Map ist der Zwischenspeicher, aus dem der Baum bei jedem Rendern
+   * zusammengesetzt wird.
+   */
+  const [childrenByPath, setChildrenByPath] = useState<Map<string, FileNode[]>>(new Map());
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(initialViewState?.expandedPaths ?? new Set());
@@ -2077,7 +2408,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevCwdRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}`;
+  /**
+   * Laufende Ordner-Anfragen. Ein Ref und kein Zustand, weil er nur eine
+   * Frage beantwortet: „laeuft diese Anfrage schon?" — waehrenddessen soll
+   * weder der Klick auf das Chevron noch der Abgleich der offenen Aeste eine
+   * zweite an den Server schicken.
+   */
+  const loadingPathsRef = useRef<Set<string>>(new Set());
   const uploadBusy = uploadPhase !== "idle";
 
   /**
@@ -2099,9 +2436,125 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     gitFiles.map((status) => [normalizeFilePathSlashes(status.filePath), status]),
   ), [gitFiles]);
 
-  // Als Set, weil der Baum damit pro Zeile nur einen Lookup macht. Aus der
-  // Auswahl-Map abgeleitet, damit beide Zustandsformen nicht auseinanderlaufen.
-  const selectedPaths = useMemo(() => new Set(selection.keys()), [selection]);
+  /**
+   * Der Baum in der Form, die `react-arborist` liest.
+   *
+   * Der entscheidende Unterschied zur Datei ist `children`: bei einer Datei
+   * `undefined` (daraus macht Arborist einen Blattknoten), bei einem Ordner ein
+   * Array. Ein Ordner, dessen Inhalt noch nicht geholt wurde, bekommt ein
+   * leeres Array und ist damit trotzdem intern — er hat dann ein Chevron, aber
+   * keine Kinder. `loaded` sagt dem Renderer, dass das leere Array ein
+   * geprueftes Ergebnis ist und nicht bloss ein noch ausstehendes.
+   *
+   * Die Pfade aller Ordner fallen gleich mit heraus: `loadDirectory` braucht
+   * sie, um eine Anfrage an einen Ordner zu erkennen, ohne selbst eine Liste
+   * zu bauen oder auf den Namen zu raten.
+   */
+  const { treeData, directoryPaths } = useMemo(() => {
+    const directories = new Set<string>();
+    const build = (nodes: FileNode[]): FileNode[] => nodes.map((node) => {
+      if (!node.isDir) return node;
+      directories.add(node.fullPath);
+      const children = childrenByPath.get(node.fullPath);
+      return {
+        ...node,
+        loaded: children !== undefined,
+        children: children ? build(children) : [],
+      };
+    });
+    return { treeData: build(roots), directoryPaths: directories };
+  }, [roots, childrenByPath]);
+
+  const directoryPathsRef = useRef(directoryPaths);
+  directoryPathsRef.current = directoryPaths;
+
+  /**
+   * Holt den Inhalt eines Ordners. `null` ist ein Ergebnis: es gibt nichts
+   * nachzuladen, und der Aufrufer tut dann auch nichts. Fehler werden
+   * geschluckt, genau wie vorher in der Zeile — ein Ordner, den der Server
+   * nicht liefert, bleibt leer statt den ganzen Explorer zu melden.
+   */
+  const loadDirectory = useCallback((fullPath: string) => {
+    if (!directoryPathsRef.current.has(fullPath)) return;
+    if (loadingPathsRef.current.has(fullPath)) return;
+    loadingPathsRef.current.add(fullPath);
+    setLoadingPaths((previous) => new Set(previous).add(fullPath));
+    void fetchEntries(fullPath)
+      .then((entries) => { setChildrenByPath((previous) => new Map(previous).set(fullPath, entries)); })
+      .catch(() => { /* der Ordner bleibt leer, wie es die Zeile früher tat */ })
+      .finally(() => {
+        loadingPathsRef.current.delete(fullPath);
+        setLoadingPaths((previous) => {
+          const next = new Set(previous);
+          next.delete(fullPath);
+          return next;
+        });
+      });
+  }, []);
+
+/**
+   * Die offenen Ordner, aufgeteilt danach, ob ihr Inhalt schon da ist.
+   *
+   * Vorher las das jede Zeile fuer sich beim Mount. Das ging nicht mehr: der
+   * virtualisierte Baum holt keine Zeile fuer einen Ordner, den niemand
+   * ansieht, und der wiederhergestellte Blick aus `initialViewState` nennt
+   * offene Aeste, die es in diesem Durchlauf noch gar nicht gibt. Der
+   * Abgleich laeuft darum ueber den Datenbaum und nicht ueber das DOM.
+   *
+   * Beide Listen entstehen in einem Durchgang, weil sie dieselbe Frage an
+   * denselben Baum stellen: `toLoad` sind die offenen Ordner ohne Inhalt —
+   * etwa aus einem wiederhergestellten Blick oder nach einem fehlgeschlagenen
+   * Versuch —, `toReload` sind die mit Inhalt, die ein Refresh erneut holt.
+   */
+  const { toLoad, toReload } = useMemo(() => {
+    const load: string[] = [];
+    const reload: string[] = [];
+    const walk = (nodes: FileNode[]) => {
+      for (const node of nodes) {
+        if (node.isDir && node.children && expandedPaths.has(node.fullPath)) {
+          (childrenByPath.has(node.fullPath) ? reload : load).push(node.fullPath);
+        }
+        if (node.children) walk(node.children);
+      }
+    };
+    walk(treeData);
+    return { toLoad: load, toReload: reload };
+  }, [treeData, expandedPaths, childrenByPath]);
+
+  useEffect(() => {
+    for (const fullPath of toLoad) loadDirectory(fullPath);
+  }, [toLoad, loadDirectory]);
+
+  /**
+   * `toReload` steht in einem Ref, weil der Refresh-Takt der Ausloeser ist
+   * und nicht das Neuladen: als Effekt-Abhaengigkeit wuerde jede Antwort den
+   * naechsten Refresh ausloesen und der Refresh den naechsten Refresh.
+   */
+  const reloadOnRefreshRef = useRef(toReload);
+  reloadOnRefreshRef.current = toReload;
+
+  /**
+   * Die offenen Aeste fuer den Refresh. Auch sie stehen in einem Ref, weil das
+   * Auf- und Zuklappen keinen Refresh ausloesen soll: sonst wuerde ein
+   * Klick auf das Chevron allen anderen offenen Ordnern einen neuen
+   * Netzzugriff auf den Hals haengen.
+   */
+  const expandedPathsRef = useRef(expandedPaths);
+  expandedPathsRef.current = expandedPaths;
+
+  /**
+   * `initialOpenState` wird nur einmal gelesen: beim Anlegen der Baum-Instanz.
+   * Deshalb bekommt der Baum einen Schluessel, der Projektordner und
+   * angezeigten Ordner nennt — bei jedem Wechsel davon sind es andere Knoten,
+   * und die offenen Aeste des neuen Baums kommen aus dem Blick, den der
+   * Explorer fuehrt.
+   */
+  const treeResetKey = `${cwd}\u0000${currentPath}`;
+  const initialOpenState = useMemo(() => {
+    const open: Record<string, boolean> = {};
+    for (const fullPath of expandedPaths) open[fullPath] = true;
+    return open;
+  }, [expandedPaths]);
 
   const changedDirectoryPaths = useMemo(() => {
     const directories = new Set<string>();
@@ -2119,13 +2572,23 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     return directories;
   }, [cwd, gitFiles]);
 
+  /**
+   * Ein Ast wurde aufgeklappt oder zugeklappt.
+   *
+   * Das Aufklappen holt den Inhalt mit. Der Abgleich der offenen Ordner
+   * wuerde das ebenfalls tun, aber nur, wenn sich sein Ergebnis aendert — und
+   * das tut es bei einem Ordner, dessen Anfrage zuvor fehlgeschlagen ist,
+   * nicht. Der zweite Versuch gehoert darum hierher: er ist der Weg, auf dem
+   * das Chevron arbeitet.
+   */
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev);
       if (open) next.add(fullPath); else next.delete(fullPath);
       return next;
     });
-  }, []);
+    if (open) loadDirectory(fullPath);
+  }, [loadDirectory]);
 
   const handleNavigate = useCallback((fullPath: string) => {
     setCurrentPath(fullPath);
@@ -2221,11 +2684,24 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setMenuTarget(null);
   }, []);
 
-  const handleToggleSelected = useCallback((entry: SelectionEntry) => {
+  /**
+   * Die Auswahl, wie der Baum sie meldet.
+   *
+   * Der Baum kennt nur die Zeilen, die er gerade anzeigt, und meldet darum
+   * auch nur diese. Der Explorer aber muss eine Auswahl ueber einen
+   * Ordnerwechsel hinweg behalten — deshalb meldet der Baum nicht „das ist
+   * jetzt alles", sondern „so sieht es bei mir aus", und der Explorer
+   * entscheidet darueber, was davon uebernommen wird. Er vergleicht dabei
+   * auch mit dem bisherigen Stand: `react-arborist` meldet ueber `onSelect`
+   * zurueck, was er gerade bekommen hat, und ohne den Vergleich wuerde jede
+   * Meldung wieder eine Meldung ausloesen.
+   */
+  const applySelection = useCallback((entries: SelectionEntry[]) => {
     setSelection((previous) => {
-      const next = new Map(previous);
-      if (next.has(entry.path)) next.delete(entry.path); else next.set(entry.path, entry);
-      return next;
+      if (previous.size === entries.length && entries.every((entry) => previous.has(entry.path))) {
+        return previous;
+      }
+      return new Map(entries.map((entry) => [entry.path, entry]));
     });
   }, []);
 
@@ -2343,48 +2819,84 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   }, [currentPath, handleActionNotice, t]);
 
   /**
-   * Copy/Move aus der Toolbar. Die API kennt pro Anfrage genau eine Quelle,
-   * deshalb laeuft bei mehreren markierten Eintraegen eine Kette: der Dialog
-   * bleibt fuer alle offen und schliesst erst, wenn der letzte durch ist.
+   * Kopieren oder Verschieben, eine Quelle nach der anderen.
+   *
+   * Die API kennt pro Anfrage genau eine Quelle, deshalb laeuft bei mehreren
+   * Eintraegen eine Kette. Sie endet beim ersten Fehler: die Eintraege davor
+   * sind schon verschoben, ein weiterer Versuch wuerde den Nutzer nur eine
+   * halbe Aktion zeigen, die er nicht versteht.
+   *
+   * Der Weg ist derselbe fuer den Dialog der Toolbar und fuer das Ablegen im
+   * Baum. Beide nutzen dieselbe Route mit derselben Fehlerbehandlung — der
+   * Server entscheidet ueber Ziel existiert, Ordner in sich selbst und
+   * fehlende Berechtigung, und diese Antwort erreicht den Nutzer unveraendert.
+   */
+  const performTransfer = useCallback(async (
+    kind: "copy" | "move",
+    entries: SelectionEntry[],
+    destination: string,
+  ): Promise<boolean> => {
+    for (const entry of entries) {
+      let result: { ok: boolean; text: string };
+      try {
+        const res = await fetch(`/api/file-actions/${encodeFilePathForApi(entry.path)}?type=${kind}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ destination }),
+        });
+        const data = await res.json().catch(() => ({})) as { error?: string; reason?: string };
+        if (!res.ok) {
+          const message = data.error ?? data.reason ?? `HTTP ${res.status}`;
+          result = { ok: false, text: data.error && data.reason && data.reason !== data.error ? `${message} (${data.reason})` : message };
+        } else {
+          result = {
+            ok: true,
+            text: kind === "move" ? t("files.movedTo", { destination }) : t("files.copiedTo", { destination }),
+          };
+        }
+      } catch (cause) {
+        result = { ok: false, text: cause instanceof Error ? cause.message : String(cause) };
+      }
+      if (!result.ok) {
+        handleActionNotice({ kind: "error", text: result.text });
+        return false;
+      }
+      handleActionNotice({ kind: "success", text: result.text });
+    }
+    return true;
+  }, [handleActionNotice, t]);
+
+  /**
+   * Copy/Move aus der Toolbar. Der Dialog bleibt fuer alle Quellen offen und
+   * schliesst erst, wenn der letzte durch ist — auch dann, wenn einer
+   * fehlschlug, denn die uebrigen sind dann schon verschoben.
    */
   const handleToolbarTransferConfirm = useCallback((destination: string) => {
     const pending = [...selection.values()];
     if (pending.length === 0) { setToolbarTransfer(null); return; }
     const kind = toolbarTransfer ?? "copy";
     void (async () => {
-      for (const entry of pending) {
-        let result: { ok: boolean; text: string };
-        try {
-          const res = await fetch(`/api/file-actions/${encodeFilePathForApi(entry.path)}?type=${kind}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ destination }),
-          });
-          const data = await res.json().catch(() => ({})) as { error?: string; reason?: string };
-          if (!res.ok) {
-            const message = data.error ?? data.reason ?? `HTTP ${res.status}`;
-            result = { ok: false, text: data.error && data.reason && data.reason !== data.error ? `${message} (${data.reason})` : message };
-          } else {
-            result = {
-              ok: true,
-              text: kind === "move" ? t("files.movedTo", { destination }) : t("files.copiedTo", { destination }),
-            };
-          }
-        } catch (cause) {
-          result = { ok: false, text: cause instanceof Error ? cause.message : String(cause) };
-        }
-        if (!result.ok) {
-          setToolbarTransfer(null);
-          handleActionNotice({ kind: "error", text: result.text });
-          return;
-        }
-        handleActionNotice({ kind: "success", text: result.text });
-      }
+      const done = await performTransfer(kind, pending, destination);
       setToolbarTransfer(null);
+      if (!done) return;
       setSelection(new Map());
       setTreeRefreshKey((key) => key + 1);
     })();
-  }, [handleActionNotice, selection, t, toolbarTransfer]);
+  }, [performTransfer, selection, toolbarTransfer]);
+
+  /**
+   * Ablegen im Baum. Der Baum uebergibt die gezogenen Knoten und den
+   * Zielordner; verschoben wird mit derselben Kette wie aus der Toolbar, und
+   * die Auswahl geht leer, weil die verschobenen Eintraege an ihrem Ort nicht
+   * mehr existieren.
+   */
+  const handleDropMove = useCallback((entries: SelectionEntry[], destination: string) => {
+    void (async () => {
+      if (!await performTransfer("move", entries, destination)) return;
+      setSelection(new Map());
+      setTreeRefreshKey((key) => key + 1);
+    })();
+  }, [performTransfer]);
 
   // Der Zielordner wird einmal beim Start des Uploads als Wert uebernommen und
   // durch den ganzen Ablauf durchgereicht, statt in jedem Schritt neu aus dem
@@ -2507,6 +3019,43 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   }, [onRefresh]);
 
   useEffect(() => () => clearTimeout(refreshDoneTimerRef.current ?? undefined), []);
+
+  /**
+   * Ein Refresh macht auch die Unterordner ungueltig.
+   *
+   * Die Wurzel laedt der Effekt unten bei jedem `treeRefreshKey` neu. Die
+   * Unterordner liegen im Zwischenspeicher und waeren sonst eine Momentaufnahme
+   * aus dem Augenblick, in dem sie zuletzt aufgeklappt wurden — dieselbe
+   * Menge holt der Refresh hier erneut, ohne vorher zu leeren. Das Leeren
+   * waere zwar einfacher, liesse den Baum aber bei jedem Takt kollabieren und
+   * wieder aufbauen.
+   *
+   * Weggeraeumt wird nur, was zu niemandem gehoert: geschlossene Aeste. Ohne
+   * diesen Schritt wuerde der Zwischenspeicher ueber eine Sitzung hinweg jeden
+   * Ordner behalten, den der Nutzer einmal aufgesucht hat — vorher verschwand
+   * das mit dem Auseinbauen der Zeile von selbst.
+   */
+  useEffect(() => {
+    const reachable = new Set<string>();
+    for (const fullPath of expandedPathsRef.current) {
+      reachable.add(fullPath);
+      let directory = getFileDirectory(fullPath);
+      while (directory && !reachable.has(directory)) {
+        reachable.add(directory);
+        const parent = getFileDirectory(directory);
+        if (parent === directory) break;
+        directory = parent;
+      }
+    }
+    setChildrenByPath((previous) => {
+      const next = new Map<string, FileNode[]>();
+      for (const [fullPath, children] of previous) {
+        if (reachable.has(fullPath)) next.set(fullPath, children);
+      }
+      return next.size === previous.size ? previous : next;
+    });
+    for (const fullPath of reloadOnRefreshRef.current) loadDirectory(fullPath);
+  }, [treeRefreshKey, loadDirectory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2811,29 +3360,30 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 onNavigateForward={handleNavigateForward}
                 t={t}
               />
-              {roots.map((node) => (
-                <TreeNode
-                  key={node.fullPath}
-                  node={node}
-                  depth={0}
+              {roots.length > 0 && (
+                <ExplorerTree
+                  data={treeData}
                   cwd={cwd}
-                  onOpenFile={onOpenFile}
-                  onAtMention={onAtMention}
-                  expandedPaths={expandedPaths}
-                  onToggleExpanded={handleToggleExpanded}
-                  onNavigate={handleNavigate}
-                  onContextMenu={handleOpenContextMenu}
-                  refreshToken={refreshToken}
+                  currentPath={currentPath}
+                  resetKey={treeResetKey}
+                  initialOpenState={initialOpenState}
+                  loadingPaths={loadingPaths}
                   highlightedPaths={highlightedPaths}
                   gitStatusByPath={gitStatusByPath}
                   changedDirectoryPaths={changedDirectoryPaths}
-                  selectedPaths={selectedPaths}
-                  onToggleSelected={handleToggleSelected}
+                  selection={selection}
+                  imagePreviewEnabled={imageTarget === "preview"}
+                  onToggleExpanded={handleToggleExpanded}
+                  onNavigate={handleNavigate}
+                  onOpenFile={onOpenFile}
+                  onContextMenu={handleOpenContextMenu}
+                  onSelectionChange={applySelection}
+                  onDropMove={handleDropMove}
+                  onAtMention={onAtMention}
                   onOpenImage={openImagePreview}
-                  imageTarget={imageTarget}
                   t={t}
                 />
-              ))}
+              )}
             </>
           )}
           {!loading && !error && roots.length === 0 && (

@@ -23,7 +23,8 @@ import { parseFrontmatter } from "@/lib/frontmatter";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { FrontmatterCard } from "./FrontmatterCard";
-import { parseUnifiedPatch } from "@/lib/patch";
+import { parsePatchFiles } from "@pierre/diffs";
+import { FileDiff, Virtualizer, type FileDiffOptions } from "@pierre/diffs/react";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
 
@@ -231,61 +232,94 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
   );
 }
 
-type DiffLine = {
-  type: "unchanged" | "removed" | "added";
-  text: string;
-  oldLineNo: number | null;
-  newLineNo: number | null;
-};
-
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function diffLines(patch: string): DiffLine[] {
-  const files = parseUnifiedPatch(patch);
-  if (!files) return [];
-
-  return files.flatMap((file) => file.rows.flatMap((row): DiffLine[] => {
-    if (row.type === "hunk") return [];
-    if (row.left.type === "context" && row.right.type === "context") {
-      return [{
-        type: "unchanged",
-        text: row.right.text,
-        oldLineNo: row.left.lineNo,
-        newLineNo: row.right.lineNo,
-      }];
-    }
-
-    const lines: DiffLine[] = [];
-    if (row.left.type === "removed") {
-      lines.push({
-        type: "removed",
-        text: row.left.text,
-        oldLineNo: row.left.lineNo,
-        newLineNo: null,
-      });
-    }
-    if (row.right.type === "added") {
-      lines.push({
-        type: "added",
-        text: row.right.text,
-        oldLineNo: null,
-        newLineNo: row.right.lineNo,
-      });
-    }
-    return lines;
-  }));
+/**
+ * @pierre/diffs renders every file surface into an open shadow root, so app
+ * level CSS cannot reach it and the umbrella theme in globals.css is inert
+ * there. The `unsafeCSS` option is the library's escape hatch: it is injected
+ * into that shadow root inside `@layer unsafe`, which outranks the `theme` and
+ * `rendered` layers the library puts its own styles in. Because omp's palette
+ * is plain inherited custom properties (`--bg`, `--danger`, …), the shadow root
+ * resolves them against the host and follows light/dark switches with no
+ * re-render and no duplicated palette.
+ *
+ * Every name below is verified against the library's own stylesheet
+ * (`node_modules/@pierre/diffs/dist/style.js`): the `--*-override` variables are
+ * what its derived `--diffs-*-base` custom properties fall back to, so setting
+ * them wins over the colors the bundled Shiki theme would otherwise contribute.
+ */
+const DIFFS_UNSAFE_CSS = `
+:host {
+  display: block;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  --diffs-font-family: var(--font-mono);
+  --diffs-font-size: 13px;
+  --diffs-bg: var(--bg);
+  --diffs-fg: var(--text);
+  --diffs-fg-number: var(--text-dim);
+  --diffs-bg-context: var(--bg-panel);
+  --diffs-bg-context-gutter: var(--bg-panel);
+  --diffs-bg-separator: var(--bg-panel);
+  --diffs-addition-color-override: var(--success);
+  --diffs-deletion-color-override: var(--danger);
+  --diffs-modified-color-override: var(--accent);
+  --diffs-bg-selection-override: var(--bg-selected);
 }
+/* omp marks changed lines with a 3px bar on their leading edge. */
+[data-line][data-line-type=change-addition] {
+  box-shadow: inset 3px 0 0 var(--diffs-addition-base);
+}
+[data-line][data-line-type=change-deletion] {
+  box-shadow: inset 3px 0 0 var(--diffs-deletion-base);
+}
+`;
+
+/** Shiki themes carrying the diff foreground colors; omp's own palette is layered on top. */
+const DIFFS_SHIKI_THEMES = { dark: "dark-plus", light: "github-light" } as const;
+
+const DIFFS_BASE_OPTIONS: FileDiffOptions<undefined, undefined> = {
+  diffStyle: "unified",
+  diffIndicators: "classic",
+  // Word level highlighting inside a changed line pair.
+  lineDiffType: "word-alt",
+  // Collapsed context rows with an "expand" control, replacing the hand-rolled
+  // "… N unchanged lines …" dividers.
+  hunkSeparators: "line-info",
+  overflow: "scroll",
+  disableFileHeader: true,
+  theme: DIFFS_SHIKI_THEMES,
+  unsafeCSS: DIFFS_UNSAFE_CSS,
+};
 
 function DiffView({ patch }: { patch: string }) {
   const { t } = useI18n();
-  const diff = diffLines(patch);
+  const { isDark } = useTheme();
 
-  const hasChanges = diff.some((l) => l.type !== "unchanged");
-  if (!hasChanges) {
+  // `PatchDiff` would parse the same string but throws unless the patch holds
+  // exactly one file diff, so parse it ourselves and render one surface per file.
+  const fileDiffs = useMemo(() => {
+    try {
+      return parsePatchFiles(patch).flatMap((parsed) => parsed.files);
+    } catch {
+      return [];
+    }
+  }, [patch]);
+
+  // Stable across renders: a fresh options object would make the library tear
+  // down and rebuild the render cache on every commit.
+  const options = useMemo<FileDiffOptions<undefined, undefined>>(() => ({
+    ...DIFFS_BASE_OPTIONS,
+    themeType: isDark ? "dark" : "light",
+  }), [isDark]);
+
+  if (fileDiffs.length === 0) {
     return (
       <div style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
         {t("i18n.noChanges")}
@@ -293,125 +327,14 @@ function DiffView({ patch }: { patch: string }) {
     );
   }
 
-  // Render with context: show 3 lines around each change, collapse the rest
-  const CONTEXT = 3;
-  const changed = new Set(diff.flatMap((l, i) => (l.type !== "unchanged" ? [i] : [])));
-  const visible = new Set<number>();
-  for (const ci of changed) {
-    for (let j = Math.max(0, ci - CONTEXT); j <= Math.min(diff.length - 1, ci + CONTEXT); j++) {
-      visible.add(j);
-    }
-  }
-
-  const segments: Array<{ hidden: true; count: number } | { hidden: false; lines: DiffLine[] }> = [];
-  let i = 0;
-  while (i < diff.length) {
-    if (visible.has(i)) {
-      const block: DiffLine[] = [];
-      while (i < diff.length && visible.has(i)) {
-        block.push(diff[i]);
-        i++;
-      }
-      segments.push({ hidden: false, lines: block });
-    } else {
-      let count = 0;
-      while (i < diff.length && !visible.has(i)) {
-        count++;
-        i++;
-      }
-      segments.push({ hidden: true, count });
-    }
-  }
-
   return (
-    <div
-      className="file-diff-view"
-      style={{
-        width: "max-content",
-        minWidth: "100%",
-        ...FILE_CODE_STYLE,
-      }}
-    >
-      {segments.map((seg, si) => {
-        if (seg.hidden) {
-          const result = (
-            <div
-              key={si}
-              style={{
-                padding: "2px 16px",
-                color: "var(--text-dim)",
-                background: "var(--bg-panel)",
-                fontSize: 11,
-                borderTop: "1px solid var(--border)",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              ... {seg.count} unchanged lines ...
-            </div>
-          );
-          return result;
-        }
-        const lines = seg.lines.map((line, li) => {
-          const bg =
-            line.type === "added"
-              ? "rgba(0,200,80,0.12)"
-              : line.type === "removed"
-              ? "rgba(240,60,60,0.14)"
-              : "transparent";
-          const prefix =
-            line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
-          const prefixColor =
-            line.type === "added" ? "#4ade80" : line.type === "removed" ? "#f87171" : "var(--text-dim)";
-
-          return (
-            <div
-              key={li}
-              className="file-diff-line"
-              style={{
-                display: "flex",
-                minWidth: "100%",
-                background: bg,
-                borderLeft: line.type === "added"
-                  ? "3px solid #4ade80"
-                  : line.type === "removed"
-                  ? "3px solid #f87171"
-                  : "3px solid transparent",
-              }}
-            >
-              <span
-                style={FILE_LINE_NUMBER_STYLE}
-              >
-                {line.type === "removed" ? line.oldLineNo : line.newLineNo}
-              </span>
-              <span
-                style={{
-                  minWidth: 16,
-                  padding: "0 6px",
-                  color: prefixColor,
-                  userSelect: "none",
-                  flexShrink: 0,
-                  fontWeight: 600,
-                }}
-              >
-                {prefix}
-              </span>
-              <span
-                className="file-diff-line-content"
-                style={{
-                  flexShrink: 0,
-                  padding: "0 8px 0 0",
-                  whiteSpace: "pre",
-                  color: "var(--text)",
-                }}
-              >
-                {line.text || "\u00a0"}
-              </span>
-            </div>
-          );
-        });
-        return <div key={si}>{lines}</div>;
-      })}
-    </div>
+    // The Virtualizer owns the scroll container, which is what lets the library
+    // render only the visible window of a large file instead of all of it.
+    <Virtualizer style={{ height: "100%", overflow: "auto" }}>
+      {fileDiffs.map((fileDiff) => (
+        <FileDiff key={fileDiff.name} fileDiff={fileDiff} options={options} />
+      ))}
+    </Virtualizer>
   );
 }
 

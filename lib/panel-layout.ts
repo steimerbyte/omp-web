@@ -43,6 +43,43 @@ export const DESKTOP_CHAT_MIN_WIDTH = 420;
 export type PanelLayout = Record<string, number>;
 
 /**
+ * Width the starting layout is computed for when nothing better is known —
+ * the server has no viewport. It is corrected against the measured group
+ * before the first client paint (see `AppShell.tsx`), so this only decides
+ * what the pre-hydration frame looks like.
+ */
+const NOMINAL_LAYOUT_WIDTH = 1440;
+
+/**
+ * Starting layout: a sidebar of its declared pixel width, the file panel at
+ * its share, and the chat taking what is left.
+ *
+ * Percentages, not pixels — and that is the library's rule, not a preference.
+ * Its initial-layout builder (`dist/react-resizable-panels.js`, `co`) sums
+ * the `defaultSize` values and hands the rest to the panels that declared
+ * none, so `minSize={260}` as a default would mean "26 percent" and be
+ * normalized against 260 + 420 rather than against the shell. `minSize` and
+ * `maxSize` are different: those *are* measured against the shell, in pixels.
+ *
+ * The chat therefore gets the remainder rather than a width of its own, so
+ * the three shares always add up to exactly 100 — otherwise the library
+ * rescales the whole row.
+ */
+export function getDefaultPanelLayout(
+  viewportWidth: number,
+  filePanelOpen: boolean,
+): PanelLayout {
+  const width = viewportWidth > 0 ? viewportWidth : NOMINAL_LAYOUT_WIDTH;
+  const sidebar = (SIDEBAR_DEFAULT_WIDTH / width) * 100;
+  const file = filePanelOpen ? RIGHT_PANEL_DEFAULT_PERCENT : 0;
+  return {
+    [SIDEBAR_PANEL_ID]: Math.round(sidebar * 100) / 100,
+    [FILE_PANEL_ID]: file,
+    [CHAT_PANEL_ID]: Math.round((100 - sidebar - file) * 100) / 100,
+  };
+}
+
+/**
  * Reserve the chat column gets. Below the split breakpoint the file panel is
  * an overlay and takes no room from the chat, so the chat only has to survive
  * next to the sidebar.

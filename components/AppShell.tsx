@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Group,
@@ -46,16 +46,15 @@ import { getInitialNavigation } from "@/lib/initial-navigation";
 import { clearLastOpen, getLastOpenSession, setLastOpenSession } from "@/lib/workspace-memory";
 import {
   CHAT_PANEL_ID,
-  DESKTOP_CHAT_MIN_WIDTH,
   FILE_PANEL_ID,
   getChatMinWidth,
+  getDefaultPanelLayout,
   normalizePanelLayout,
   PANEL_LAYOUT_STORAGE_KEY,
   parsePanelLayout,
   RIGHT_PANEL_DEFAULT_PERCENT,
   RIGHT_PANEL_MAX_WIDTH,
   RIGHT_PANEL_MIN_WIDTH,
-  SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_PANEL_ID,
@@ -106,15 +105,14 @@ function useIsSplitViewport(): boolean {
  *
  * The library steps in percent (5% per press, which is a 96px jump on a wide
  * screen). The shell has always moved in 12px, 32px with shift, so the arrow
- * keys are claimed here and converted back: a pixel step against the total
- * width of the two panels the separator sits between. `preventDefault` is what
- * makes the library skip its own handling — its key handler bails out on an
+ * keys are claimed here and converted back. `preventDefault` is what makes the
+ * library skip its own handling — its key handler bails out on an
  * already-prevented event. Home, End and Enter are left to the library, which
  * answers them exactly (minimum, maximum, collapse/expand).
  */
 function separatorArrowKeys(
   panelRef: React.RefObject<PanelImperativeHandle | null>,
-  neighborRef: React.RefObject<PanelImperativeHandle | null>,
+  panelRefs: React.RefObject<PanelImperativeHandle | null>[],
   growthDirection: 1 | -1,
 ) {
   const growKey = growthDirection === 1 ? "ArrowRight" : "ArrowLeft";
@@ -123,17 +121,30 @@ function separatorArrowKeys(
     onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key !== growKey && event.key !== shrinkKey) return;
       const panel = panelRef.current;
-      const neighbor = neighborRef.current;
-      if (!panel || !neighbor) return;
+      if (!panel) return;
+      // `resize()` takes a percentage of the whole row, not of the two panels
+      // this separator sits between — with the file panel open the difference
+      // is the file panel's whole width.
+      const groupWidth = panelRefs.reduce(
+        (sum, ref) => sum + (ref.current?.getSize().inPixels ?? 0),
+        0,
+      );
+      if (groupWidth <= 0) return;
       const size = panel.getSize();
-      const total = size.inPixels + neighbor.getSize().inPixels;
-      if (total <= 0) return;
       const step = (event.shiftKey ? 32 : 12) * growthDirection * (event.key === growKey ? 1 : -1);
       event.preventDefault();
-      panel.resize(((size.inPixels + step) / total) * 100);
+      panel.resize(((size.inPixels + step) / groupWidth) * 100);
     },
   };
 }
+
+/**
+ * `useLayoutEffect` in the browser, `useEffect` on the server, where the real
+ * one only warns. The starting layout has to be corrected against the measured
+ * row before the first client paint — a corrected width that slides in over
+ * 0.2s is a worse artifact than the wrong frame it replaces.
+ */
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 export function AppShell() {
   const router = useRouter();
@@ -200,6 +211,16 @@ export function AppShell() {
   // `normalizePanelLayout`.
   const lastPanelSizeRef = useRef<PanelLayout>({});
   const [panelDragActive, setPanelDragActive] = useState(false);
+  const groupElementRef = useRef<HTMLDivElement | null>(null);
+  // Percentages, because that is what the library distributes (see
+  // `getDefaultPanelLayout`). The server has no viewport, so this first guess
+  // is computed for a nominal width and corrected against the measured row
+  // before the first client paint. It is a `useState`, not a `useMemo`: the
+  // library reads it exactly once, when it first lays the row out.
+  const [startingPanelLayout] = useState(() =>
+    getDefaultPanelLayout(typeof window === "undefined" ? 0 : window.innerWidth, false),
+  );
+  const [startingLayoutSettled, setStartingLayoutSettled] = useState(false);
 
   const handleSidebarPanelResize = useCallback((size: PanelSize) => {
     lastPanelSizeRef.current[SIDEBAR_PANEL_ID] = size.asPercentage;
@@ -238,12 +259,12 @@ export function AppShell() {
   }, []);
 
   const sidebarSeparatorKeys = useMemo(
-    () => separatorArrowKeys(sidebarPanelRef, chatPanelRef, 1),
-    [sidebarPanelRef, chatPanelRef],
+    () => separatorArrowKeys(sidebarPanelRef, [sidebarPanelRef, chatPanelRef, filePanelRef], 1),
+    [sidebarPanelRef, chatPanelRef, filePanelRef],
   );
   const fileSeparatorKeys = useMemo(
-    () => separatorArrowKeys(filePanelRef, chatPanelRef, -1),
-    [filePanelRef, chatPanelRef],
+    () => separatorArrowKeys(filePanelRef, [sidebarPanelRef, chatPanelRef, filePanelRef], -1),
+    [sidebarPanelRef, chatPanelRef, filePanelRef],
   );
 
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
@@ -271,10 +292,12 @@ export function AppShell() {
     }
   }, []);
 
-  // Restore after hydration rather than during the first render: a layout read
-  // from storage would otherwise disagree with what the server rendered. Until
-  // this runs the panels show their defaults, exactly as before the migration.
-  useEffect(() => {
+  // The row now has a measured width: restore the remembered layout, or compute
+  // the starting one against the real viewport. A layout effect, so the
+  // corrected widths are in place before the browser paints anything — with the
+  // ordinary `useEffect` the row would first show the nominal guess and then
+  // slide to the right one.
+  useIsoLayoutEffect(() => {
     let stored: PanelLayout | null = null;
     try {
       stored = parsePanelLayout(window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY));
@@ -282,7 +305,10 @@ export function AppShell() {
       stored = null;
     }
     lastPanelSizeRef.current = stored ?? {};
-    if (stored) groupRef.current?.setLayout(stored);
+    groupRef.current?.setLayout(
+      stored ?? getDefaultPanelLayout(groupElementRef.current?.clientWidth ?? window.innerWidth, false),
+    );
+    setStartingLayoutSettled(true);
   }, [groupRef]);
 
   // Open and close by collapsing the panel rather than by unmounting it: the
@@ -305,10 +331,30 @@ export function AppShell() {
     // library would answer with the panel's 300px minimum. The remembered
     // percentage is applied directly instead, falling back to the size the
     // panel declares as its own default.
-    if (panel.isCollapsed()) {
+    if (!panel.isCollapsed()) return;
+    // Capped so the chat keeps its reserve. Without the cap a 1024px window
+    // asks for 42% (430px) on top of a 260px sidebar and a 420px chat minimum,
+    // and the library answers an over-full row rather than taking the
+    // difference out of one of them — the sidebar would silently shrink. At
+    // 1160px and up the cap is already above 42% and does nothing.
+    const groupWidth = groupElementRef.current?.clientWidth ?? 0;
+    if (groupWidth <= 0) {
       panel.resize(lastPanelSizeRef.current[FILE_PANEL_ID] ?? RIGHT_PANEL_DEFAULT_PERCENT);
+      return;
     }
-  }, [filePanelRef, rightPanelOpen]);
+    const sidebarShare =
+      ((sidebarPanelRef.current?.getSize().inPixels ?? 0) / groupWidth) * 100;
+    const chatReserve = (getChatMinWidth(isSplitViewport) / groupWidth) * 100;
+    panel.resize(
+      Math.max(
+        0,
+        Math.min(
+          lastPanelSizeRef.current[FILE_PANEL_ID] ?? RIGHT_PANEL_DEFAULT_PERCENT,
+          100 - sidebarShare - chatReserve,
+        ),
+      ),
+    );
+  }, [filePanelRef, groupElementRef, isSplitViewport, rightPanelOpen, sidebarPanelRef]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
@@ -1050,9 +1096,11 @@ export function AppShell() {
       <Group
         id="app-shell-split"
         groupRef={groupRef}
+        elementRef={groupElementRef}
+        defaultLayout={startingPanelLayout}
         orientation="horizontal"
         onLayoutChanged={handleLayoutChanged}
-        className={`app-shell-split${panelDragActive ? " is-dragging" : ""}`}
+        className={`app-shell-split${panelDragActive ? " is-dragging" : ""}${startingLayoutSettled ? " is-ready" : ""}`}
         style={{ flex: 1, minWidth: 0 }}
       >
         {/* Left sidebar */}
@@ -1094,7 +1142,7 @@ export function AppShell() {
           onResize={handleSidebarPanelResize}
           collapsedSize={0}
           collapsible
-          defaultSize={SIDEBAR_DEFAULT_WIDTH}
+          defaultSize={`${startingPanelLayout[SIDEBAR_PANEL_ID]}%`}
           minSize={SIDEBAR_MIN_WIDTH}
           maxSize={SIDEBAR_MAX_WIDTH}
         >
@@ -1128,7 +1176,7 @@ export function AppShell() {
           id={CHAT_PANEL_ID}
           panelRef={chatPanelRef}
           style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}
-          defaultSize={DESKTOP_CHAT_MIN_WIDTH}
+          defaultSize={`${startingPanelLayout[CHAT_PANEL_ID]}%`}
           minSize={getChatMinWidth(isSplitViewport)}
         >
         {/* Top bar with sidebar toggle */}
@@ -1931,7 +1979,7 @@ export function AppShell() {
           onResize={handleFilePanelResize}
           collapsedSize={0}
           collapsible
-          defaultSize={rightPanelOpen ? `${RIGHT_PANEL_DEFAULT_PERCENT}%` : 0}
+          defaultSize={`${startingPanelLayout[FILE_PANEL_ID]}%`}
           minSize={RIGHT_PANEL_MIN_WIDTH}
           maxSize={RIGHT_PANEL_MAX_WIDTH}
           disabled={!isSplitViewport}

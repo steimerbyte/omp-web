@@ -1330,8 +1330,11 @@ span.linenumber {
 .app-shell-split [data-panel] {
   transition: flex-grow 0.2s ease;
 }
-/* While a separator is held, the panels must follow the pointer, not a
-   0.2s-long version of it. */
+/* Before the starting layout has been measured against the real row, and while
+   a separator is held: the panels must be where they are, not slide there —
+   a width that animates into place on load is a worse artifact than the wrong
+   frame it replaces. */
+.app-shell-split:not(.is-ready) [data-panel],
 .app-shell-split.is-dragging [data-panel] {
   transition: none !important;
 }
