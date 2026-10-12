@@ -2407,6 +2407,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [actionNotice, setActionNotice] = useState<FileActionNotice | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevCwdRef = useRef<string | null>(null);
+  /**
+   * Der Pfad, fuer den die zuletzt gestartete Listenabfrage lief. Eine Antwort
+   * wird nur dann verworfen, wenn sie zu einem Pfad gehoert, den die Ansicht
+   * inzwischen verlassen hat — nicht dann, wenn ein Refresh-Takt den Effekt
+   * erneut gestartet hat. Siehe den Ladeeffekt weiter unten.
+   */
+  const listPathRef = useRef<string>("");
   const uploadInputRef = useRef<HTMLInputElement>(null);
   /**
    * Laufende Ordner-Anfragen. Ein Ref und kein Zustand, weil er nur eine
@@ -3097,12 +3104,20 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
     setLoading(firstRun || cwdChanged);
     setError(null);
-    let cancelled = false;
+    // Wichtig ist hier, WAS eine Antwort verwirft — nicht, ob der Effekt
+    // noch einmal lief. Ein Refresh-Takt (`treeRefreshKey`) und ein Klick auf
+    // den Refresh-Knopf (`refreshKey`) starten dieselbe Abfrage erneut, ohne
+    // den Pfad zu wechseln. Ein `cancelled`-Flag pro Effektlauf hat jede
+    // laufende Antwort verworfen, sobald der naechste Takt kam; ist die
+    // Antwort langsamer als der Takt (gemessen: 8,2 s gegen 5 s), verwirft der
+    // Effekt ausnahmslos jede Antwort und `roots` bleibt leer, obwohl die API
+    // eine gefuellte Liste liefert. Verworfen wird deshalb nur, was zu einem
+    // Pfad gehoert, den die Ansicht inzwischen verlassen hat.
+    listPathRef.current = currentPath;
     fetchEntries(currentPath)
-      .then((entries) => { if (!cancelled) setRoots(entries); })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .then((entries) => { if (listPathRef.current === currentPath) setRoots(entries); })
+      .catch((e) => { if (listPathRef.current === currentPath) setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (listPathRef.current === currentPath) setLoading(false); });
   }, [cwd, currentPath, refreshKey, treeRefreshKey]);
 
   // Auto-refresh the listing every 5 seconds. Bumping treeRefreshKey
