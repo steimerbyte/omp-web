@@ -174,6 +174,12 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
       if (Math.abs(delta) < DRAG_THRESHOLD_PX) return;
       state.active = true;
       swallowClickRef.current = true;
+      // Ab hier ist es ein Zug und kein Klick. Eine Textmarkierung, die beim
+      // `pointerdown` entstanden ist oder schon vorher stand, wird geloescht —
+      // sie waechst sonst ueber die Leiste mit und bleibt stehen, wenn der Tab
+      // fallen gelassen wurde. `select-none` verhindert nur den *Anfang*; was
+      // bereits markiert ist, muss weg.
+      window.getSelection?.()?.removeAllRanges?.();
     }
 
     const fromIndex = tabs.findIndex((tab) => tab.id === state.id);
@@ -249,7 +255,14 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
             <div
               key={tab.id}
               data-active={isActive ? "" : undefined}
-              className={TAB_CLASS + (onReorder ? " touch-none " : " ") + (dragging ? "opacity-85" : "transition-transform duration-150")}
+              // `select-none` gehoert an den Griff, nicht an die Kachel selbst:
+              // nur wenn `onReorder` gesetzt ist, wird ueberhaupt gezogen. Ohne den
+              // Zusatz startet `pointerdown` auf dem Beschriftungstext eine
+              // Textmarkierung, und `pointermove` verlaengert sie ueber die ganze
+              // Leiste — der Nutzer zieht seinen Tab und markiert dabei die
+              // Tabnamen daneben. `touch-none` allein unterbindet nur die
+              // Touch-Geste, nicht die Maus.
+              className={TAB_CLASS + (onReorder ? " touch-none select-none " : " ") + (dragging ? "opacity-85" : "transition-transform duration-150")}
               ref={(element) => {
                 if (element) tabRefs.current.set(tab.id, element);
                 else tabRefs.current.delete(tab.id);
@@ -267,7 +280,14 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
               onPointerUp={endDrag}
               onPointerCancel={endDrag}
               onMouseDown={(event) => {
-                if (event.button === 1) event.preventDefault();
+                // `event.button === 0` ist der Fall, um den es hier geht: ohne
+                // `preventDefault()` beginnt der Browser auf dem Text unter dem
+                // Zeiger eine Markierung, bevor `select-none` überhaupt eine
+                // Rolle spielen kann. `select-none` allein genuegt nicht, wenn
+                // die Markierung schon begonnen hat — sie verhindert nur den
+                // Anfang. Die mittlere Taste bleibt unberuehrt, sie wird ja
+                // weiter unten ausgewertet.
+                if (event.button === 1 || (onReorder && event.button === 0)) event.preventDefault();
               }}
               onAuxClick={(event) => {
                 if (event.button !== 1) return;
