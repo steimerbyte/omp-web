@@ -314,6 +314,15 @@ TypeScript half type-checks against — keep the two in sync.
   paths. They still go through the host allow-list and cross-site checks, and
   the recovery code is printed on the server's stdout, never returned in the
   response.
+- **Passing `proxy.ts` is not being an admin.** The proxy answers three
+  questions — host allow-list, cross-site, valid credentials — and releases
+  *every* valid account. A tenant passes it exactly like the operator. Every
+  route that changes something host-wide (`/api/web-access`, `/api/web-access/users`,
+  global skill writes) calls `requireAdmin()` from `lib/request-identity.ts`,
+  next to `isAdminIdentity`; that function is not copied into routes. A route
+  that writes and does not call one is a hole, the same way `isWritePathAllowed`
+  is — and on 12.10.2026 a comment claiming the proxy had already covered it
+  is exactly what let `bob` turn the password lock off and walk in.
 
 ### Completion sound
 - `hooks/useAudio.ts` stores the toggle in `localStorage` as `omp-sound-enabled` and reuses one `AudioContext`.

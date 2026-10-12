@@ -7,17 +7,36 @@ import {
   setWebUsername,
   validatePassword,
 } from "@/bin/web-auth-store.js";
+import { requireAdmin } from "@/lib/request-identity";
 import { hasJsonContentType } from "@/lib/request-security";
 import type { WebAccessStatus } from "@/lib/api-types";
 
 /**
  * The password lock, as the settings panel drives it.
  *
- * Every request here has already passed `proxy.ts` — the host allow-list, the
- * cross-site rejection, and (once the lock is on) Basic Auth — so the route
- * itself only has to police the payload. Recovery is deliberately *not* here:
- * it is the one endpoint that answers without credentials, and it lives in
- * `./recovery`.
+ * **`proxy.ts` authorises nobody here, it only identifies everyone.** The proxy
+ * answers three questions — is this host on the allow-list, is this a browser
+ * cross-site call, and are the credentials valid — and it lets through *every
+ * valid account*. "Authenticated" is not "administrator": on a multi-account
+ * install a tenant named `bob` passes the proxy exactly like the operator does.
+ * So the route checks the identity itself, in GET and in PUT, before it reads a
+ * body or touches the store.
+ *
+ * That check was missing here, and it was missing *because of* a comment that said
+ * the opposite: it argued from the proxy's pass to the route's own silence — the
+ * proxy had vetted every request, so here only the payload was left to police.
+ * That argument is what has to die, not the missing line below it.
+ *
+ * Measured on 12.10.2026: the account `bob` sent `PUT {"action":"disable"}` and
+ * got `200`, after which `policy.mode` was `open` and `GET /api/settings`,
+ * `/api/models`, `/api/file-index` answered `200` without any credential.
+ *
+ * The guard lives in `lib/request-identity.ts` next to `isAdminIdentity`, not here.
+ * A copy of it in this route would have been the third reason for the next route to
+ * grow a fourth.
+ *
+ * Recovery is deliberately *not* here: it is the one endpoint in this family that
+ * answers without credentials, and it lives in `./recovery`.
  */
 
 export const dynamic = "force-dynamic";
@@ -30,11 +49,23 @@ function statusResponse(status: WebAccessStatus) {
   return NextResponse.json(status, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  // Same guard as PUT, one line, same handler family. `getWebAuthStatus()`
+  // carries `username` and the absolute path of the credential file — neither is
+  // a credential, so this is not an independent finding; it is there because the
+  // status belongs to the host's lock, not to a tenant.
+  const denied = requireAdmin(request);
+  if (denied) return denied;
+
   return statusResponse(getWebAuthStatus());
 }
 
 export async function PUT(req: Request) {
+  // Before the content-type check, before `req.json()`, before anything: a
+  // tenant must not be able to change what the whole host asks for at login.
+  const denied = requireAdmin(req);
+  if (denied) return denied;
+
   if (!hasJsonContentType(req)) {
     return NextResponse.json({ error: "Expected a JSON body" }, { status: 415 });
   }

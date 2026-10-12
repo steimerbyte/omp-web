@@ -56,6 +56,40 @@ export function isAdminIdentity(identity: WebIdentity | null): boolean {
 }
 
 /**
+ * Der Admin-Guard fuer die Routen, die etwas aendern, das dem ganzen Host
+ * gilt: Konten anlegen, Skills global schreiben, den Passwort-Store lesen und
+ * beschreiben.
+ *
+ * **Warum das hier steht und nicht in der Route.** `isAdminIdentity` beantwortet
+ * die Frage "ist diese Identitaet ein Admin"; dieses `requireAdmin` ist dieselbe
+ * Frage in der Form, in der eine Route sie braucht — Antwort *oder* 403. Es war
+ * vorher eine lokale Funktion in `app/api/web-access/users/route.ts` und wurde
+ * beim Schreiben von `/api/web-access/route.ts` ein zweites Mal nicht
+ * geschrieben, sondern diese Luecke mit einem Kommentar ueberbrueckt: "Every
+ * request here has already passed proxy.ts". Das ist die eigentliche Ursache des
+ * Einbruchs. Eine Guard-Kopie pro Route ist eine Kopie einer Frage, die nicht
+ * route-lokal ist, und die naechste Route erbt dann wieder eine Begruendung
+ * statt einer Pruefung.
+ *
+ * **`null` heisst hier "durchgelassen", nicht "niemand angemeldet".** Eine fehlende
+ * Identitaet wird wie ein Nicht-Admin behandelt: 403, kein Default-Benutzer, kein
+ * Fallback auf Admin.
+ *
+ * Die Antwort ist ein nackter `Response` und kein `NextResponse`: `lib/` haelt
+ * sonst keine Next-Imports (`lib/request-security.ts` ist derselbe Fall), und ein
+ * Route-Handler darf eine Standard-`Response` zurueckgeben. `Cache-Control:
+ * no-store` gehoert dazu, weil die Ablehnung nicht in einem Cache eines
+ * Zwischenproxies landen darf.
+ */
+export function requireAdmin(request: Request): Response | null {
+  if (isAdminIdentity(getRequestIdentity(request.headers))) return null;
+  return Response.json(
+    { error: "Administrator access is required." },
+    { status: 403, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/**
  * Das Konto-Wurzelverzeichnis einer Identitaet.
  *
  * Fuer einen Admin ist das `/`, fuer alle anderen genau `/home/$username`.

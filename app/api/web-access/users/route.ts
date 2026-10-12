@@ -9,7 +9,7 @@ import {
   validatePassword,
 } from "@/bin/web-auth-store.js";
 import { hasJsonContentType } from "@/lib/request-security";
-import { getRequestIdentity, isAdminIdentity } from "@/lib/request-identity";
+import { requireAdmin } from "@/lib/request-identity";
 
 /**
  * Kontenverwaltung, ausschliesslich fuer Admins.
@@ -46,20 +46,6 @@ const ACCOUNT_ACTIONS: Record<string, AccountAction> = {
   "set-password": "set-password",
   "set-enabled": "set-enabled",
 };
-
-/**
- * `null` heisst hier **nicht angemeldet** und wird wie ein Nicht-Admin behandelt:
- * 403, nicht irgendein Default-Benutzer. Ein Request ohne den Header kam entweder
- * aus einem Client, der `proxy.ts` umgangen hat, oder aus einer Route ausserhalb
- * des Matchers — beides ist kein Grund, grosszuegiger zu werden.
- */
-function requireAdmin(request: Request): NextResponse | null {
-  if (isAdminIdentity(getRequestIdentity(request.headers))) return null;
-  return NextResponse.json(
-    { error: "Administrator access is required." },
-    { status: 403, headers: NO_STORE },
-  );
-}
 
 export async function GET(request: Request) {
   const denied = requireAdmin(request);
