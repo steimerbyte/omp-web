@@ -29,7 +29,7 @@ win.matchMedia = () => ({ addEventListener() {}, removeEventListener() {}, addLi
 win.scrollTo = () => {};
 
 globalThis.window = new Proxy(win, {
-  get(target, prop, receiver) {
+  get(target, prop) {
     if (prop === "navigator") return fakeNavigator;
     const value = Reflect.get(target, prop, target);
     return typeof value === "function" ? value.bind(target) : value;
