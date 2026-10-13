@@ -107,7 +107,7 @@ export default function LoginPage() {
   return (
     <AnimationProvider>
       <main className={styles.page}>
-        <Reveal className={`${styles.card} ${styles.idleLoop}`}>
+        <Reveal className={`${styles.card} ${styles.scanline}`}>
         <div className={styles.brand}>
           <OmpWordmark markSize={20} />
         </div>

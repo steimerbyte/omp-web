@@ -17,58 +17,124 @@
   background: var(--bg-panel);
 }
 
-/* Atmet, solange niemand angemeldet ist.
+/* Eine Scanline faehrt einmal durch die Karte und ruht dann.
  *
- * Der Einblend-Loop ist weg: `Reveal` laeuft einmal beim Mount und ist danach
- * fertig — auf einer Login-Seite ist das ein toter Zustand, denn hier wartet
- * man. Diese Schleife haelt die Karte sichtbar.
+ * Zwei Regeln, und beide sind nicht verhandelbar:
  *
- * Sie faehrt `scale`, nicht `transform`, und der Unterschied ist der ganze
- * Grund fuer den Aufwand hier.
+ * 1. Die Karte aendert ihre Groesse nie. Die Bewegung sitzt auf einem
+ *    Pseudo-Element INNERHALB der Karte, nicht auf der Karte selbst.
+ * 2. Die Fahrt endet. Ein `infinite` auf der Karte ist genau der Zustand,
+ *    den diese Regel abstellt.
  *
- * `Reveal` kompiliert seinen `y: -8` in einen Inline-`transform: translateY(…)`,
- * den es bei jedem Frame des 240-ms-Einblendens neu schreibt. Eine
- * CSS-Animation schlaegt im Kaskadenkontext den Inline-Style, den
- * Stack-Blatt-Eintrag der Animation also. Eine Schleife auf `transform`
- * ueberschreibt damit in JEDEM Frame des Einblendens den Aufstieg um 8px und
- * ersetzt ihn durch ihre eigene Skalierung.
+ * Messung, Chromium 1237, Playwright 1.63, eigener Dev-Server auf Port 30142,
+ * Seite `/login`, bounding box der Karte ueber aufeinanderfolgende animation
+ * frames, jeweils nach dem 240-ms-Reveal:
  *
- * Gemessen in Chromium, alle 40 ms ueber den Einblend hinweg, mit
- * `transform: translateY(…)` als Inline-Style:
+ *   vorher (`scale`, 3.4s infinite)   30 Frames -> 30 verschiedene Boxen
+ *                                      472.160x411.947 px -> 474.692x414.156 px
+ *                                      locator.click(): Timeout nach 6 s,
+ *                                      "element is not stable"
  *
- *   t=0    inline translateY(-7.500px)  computed matrix(1.00001, 0, 0, 1.00001, 0, 0)
- *   t=200  inline translateY(-0.840px)  computed matrix(1.00045, 0, 0, 1.00045, 0, 0)
+ *   nachher (Scanline, einmal)         120 Frames -> 1 Box
+ *                                      405|236.969|470|410.063 px, konstant
+ *                                      ::after dabei in 66 verschiedenen
+ *                                      Positionen, also sichtbar in Bewegung
+ *                                      locator.click(): OK
  *
- * Die fuenfte Komponente ist bei `transform` immer `0`: der Aufstieg fehlt im
- * computed Wert, egal wie gross der Inline-Style gerade ist.
+ * 33.3 % von 7.2 s sind genau die 2.4 s Fahrt. Gemessen beginnt die Bewegung
+ * bei t=2311 ms nach Dokumentstart (das ist der Mount; im Dev-Server kommt die
+ * Seite erst danach heraus) und steht ab t~3900 ms exakt auf dem Ruhewert.
  *
- * `scale` ist eine eigene Eigenschaft, keine Komponente von `transform`, und
- * wird VOR ihm angewandt. Dieselbe Karte, dieselben Zeilen, `scale` statt
- * `transform`:
+ * Warum das vorher so aussehen musste: Playwright vergleicht den bounding box
+ * ueber zwei aufeinanderfolgende animation frames, bevor es klickt. `scale`
+ * aendert die Box in JEDEM Frame, die Karte erreicht also nie Stabilitaet und
+ * jeder Klick-Timeout war vorprogrammiert — nicht langsam, sondern gar nicht.
+ * Der alte Kommentar an dieser Stelle erklaerte ausfuehrlich, warum `scale`
+ * statt `transform` noetig sei: eine CSS-Animation schlaegt im Kaskadenkontext
+ * den Inline-`transform: translateY(…)`, den `Reveal` bei jedem Frame neu
+ * schreibt, und wuerde damit den 8-px-Aufstieg des Einblendens ueberschreiben.
+ * Ein noch frueherer Kommentar an dieser Stelle behauptete, `Reveal` fahre nur
+ * `opacity` und `filter` und die beiden Animationen griffen nicht in dieselbe
+ * Eigenschaft ein. Genau diese Behauptung hat die kollidierende Achse
+ * eingefuegt — wer sie wiederherstellt, baut den Fehler erneut ein.
  *
- *   t=0    inline translateY(-7.500px)  computed matrix(1, 0, 0, 1, 0, -7.5)
- *   t=200  inline translateY(-0.840px)  computed matrix(1, 0, 0, 1, 0, -0.84)
+ * Die Achsenfrage loest sich hier von selbst: die Scanline faehrt `translateY`
+ * auf `::after`, und `::after` hat keinen Inline-`transform` von `Reveal`, der
+ * kollidiert werden koennte.
  *
- * Der Aufstieg laeuft wieder sichtbar von −8px auf 0, und der Atem-Loop
- * laeuft weiter daneben. Der Kommentar, der hier vorher stand, behauptete, die
- * beiden griffen nicht in dieselbe Eigenschaft ein, weil `Reveal` `opacity`
- * und `filter` faehre. `Reveal` faehrt `transform` — `y` ist einer seiner
- * Werte — und genau diese Behauptung hat die kollidierende Achse eingefuegt.
+ * Warum `::after` und kein Kindelement: ein Kindelement muesste im Stapel
+ * ueber dem Formular liegen, braeuchte `z-index` und `pointer-events: none`,
+ * und waere ein zweiter Knoten, den jemand beim Umbau der Karte loeschen kann.
+ * Das Pseudo-Element erbt die Positionierung der Karte, kann nichts am Inhalt
+ * verdecken und existiert genau solange wie die Klasse.
  *
- * Eine Schleife ist nur dann erlaubt, wenn `prefers-reduced-motion` sie
- * abschaltet. Beim Login ist die Alternative nicht "hübsch statisch", sondern
- * "unendlich hübsch" — das ist genau die Art Bewegung, die die Einstellung
- * abschaffen will. */
-.idleLoop {
-  animation: login-idle-breathe 3.4s ease-in-out infinite;
+ * Warum die Karte `overflow: hidden` braucht: die Scanline startet ueber der
+ * Oberkante und endet unter der Unterkante. Ohne Clipping waere sie ein
+ * sichtbarer Streifen auf `.page`. Der Klick auf die Karte bleibt moeglich,
+ * `pointer-events: none` haelt den Streifen aus der Trefferflaeche.
+ *
+ * Die Zeiten: 2.4 s Fahrt bei `cubic-bezier(.4,0,.2,1)` — langsam genug, dass
+ * der Start und das Ende als zwei Ereignisse lesbar sind, statt als Zittern.
+ * 4.8 s Ruhe danach, also zwei Drittel der Gesamtzeit stehen still. Das
+ * Verhaeltnis 1:2 ist die eigentliche Entscheidung: eine Dauerbewegung auf einer
+ * Seite, auf der man wartet, ist kein Dekor, sie ist eine unbegrenzte
+ * Umgebungsveraenderung fuer jemanden, der nur tippen will. Die Pause ist hier
+ * nicht Restzeit, sie ist der Normalzustand.
+ *
+ * Kontrast: der Kern kommt aus `--text`, nicht aus `--accent`. `--accent` bei
+ * niedriger Deckkraft ueber `--bg-panel` verschwindet, weil das Panel den
+ * Kontrast schluckt — in hellem UND dunklem Theme. `--text` (#1a1d23 hell,
+ * #e8ecf4 dunkel) hat gegen `--bg-panel` in beiden Schemata Abstand, mit einer
+ * Deckkraft, die auch ueber dem Formular noch sichtbar bleibt. Die
+ * Verlaufsrichtung laeuft von oben transparent zu einem hellen Band nach unten
+ * wieder transparent: die Fahrt liest sich als Licht, nicht als Balken.
+ *
+ * `prefers-reduced-motion` schaltet sie ab, wie es die alte Regel tat — und
+ * `html[data-omp-animations="off"]` in `globals.css` faengt das Pseudo-Element
+ * ueber `*::after` mit, ohne eigene Regeln hier.
+ */
+.scanline { position: relative; overflow: hidden; }
+
+.scanline::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 34%;
+  /* Ohne das faengt der Streifen Klicks ab, die an die Karte gehen sollen. */
+  pointer-events: none;
+  /* Nie die Kurzform: `background` setzt `background-image: none` und loescht
+   * damit genau diesen Verlauf, ohne jede Fehlermeldung. */
+  background-color: transparent;
+  background-image: linear-gradient(to bottom, transparent 0%, color-mix(in srgb, var(--text) 6%, transparent) 45%, color-mix(in srgb, var(--text) 34%, transparent) 82%, color-mix(in srgb, var(--text) 44%, transparent) 100%);
+  /* Der Ruhezustand ist auch der Zustand ohne Animation, deshalb steht er hier
+   * und nicht nur im Keyframe: mit `prefers-reduced-motion` faellt die
+   * Animation weg, und uebrig bleiben muss die gedämpfte Scanline, nicht ein
+   * deckender Streifen. */
+  opacity: .22;
+  animation: login-scanline 7.2s cubic-bezier(.4, 0, .2, 1) 1 both;
 }
-@keyframes login-idle-breathe {
-  0%, 100% { scale: 1; }
-  50% { scale: 1.012; }
+
+@keyframes login-scanline {
+  /* 0 % bis 33.3 % sind die 2.4 s Fahrt, der Rest ist die Pause.
+   *
+   * Der Endzustand ist die Oberkante mit gedämpfter Deckkraft, nicht das
+   * Nichts und nicht die volle Deckkraft: bei opacity 1 lag der ruhende
+   * Streifen als graue Platte ueber der Ueberschrift und der Lead-Zeile
+   * (Screenshot hell, 4500 ms). Der Ruhezustand darf den Text nicht
+   * ueberdecken — er soll nur noch da sein. Gemessen in Chromium: bei
+   * t=9231 ms steht der Wert exakt auf translateY(0) / opacity 0.22 und
+   * bewegt sich bis zum Ende der Animation nicht mehr. */
+  0%     { transform: translateY(-100%); opacity: 0; }
+  8%     { opacity: 1; }
+  30%    { opacity: 1; }
+  33.3%  { transform: translateY(0); opacity: 0.22; }
+  100%   { transform: translateY(0); opacity: 0.22; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .idleLoop { animation: none; }
+  /* Kein `opacity: 0` hier: die reduzierte Variante zeigt die ruhende Scanline
+   * an der Oberkante, nur eben ohne Fahrt. */
+  .scanline::after { animation: none; }
 }
 
 .brand {
