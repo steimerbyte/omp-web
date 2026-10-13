@@ -41,9 +41,15 @@
  *                                      Positionen, also sichtbar in Bewegung
  *                                      locator.click(): OK
  *
+ * Auch mitten im 240-ms-Reveal, dem einzigen verbleibenden bewegten Zeitraum:
+ * 154 Frames ab Dokumentstart -> 1 Box, und ein Klick direkt nach dem Mount
+ * geht in 81 ms durch (`inlineTransform: translateY(-8px)` beweist, dass er
+ * nicht erst nach dem Aufstieg abgeschickt wurde).
+ *
  * 33.3 % von 7.2 s sind genau die 2.4 s Fahrt. Gemessen beginnt die Bewegung
- * bei t=2311 ms nach Dokumentstart (das ist der Mount; im Dev-Server kommt die
- * Seite erst danach heraus) und steht ab t~3900 ms exakt auf dem Ruhewert.
+ * bei t=1014 ms nach Dokumentstart im dunklen Theme bzw. t=2079 ms im hellen
+ * (das ist der Mount; im Dev-Server kommt die Seite erst danach heraus) und
+ * steht ab t~3900 ms exakt auf dem Ruhewert.
  *
  * Warum das vorher so aussehen musste: Playwright vergleicht den bounding box
  * ueber zwei aufeinanderfolgende animation frames, bevor es klickt. `scale`
@@ -119,11 +125,28 @@
    *
    * Der Endzustand ist die Oberkante mit gedämpfter Deckkraft, nicht das
    * Nichts und nicht die volle Deckkraft: bei opacity 1 lag der ruhende
-   * Streifen als graue Platte ueber der Ueberschrift und der Lead-Zeile
-   * (Screenshot hell, 4500 ms). Der Ruhezustand darf den Text nicht
-   * ueberdecken — er soll nur noch da sein. Gemessen in Chromium: bei
-   * t=9231 ms steht der Wert exakt auf translateY(0) / opacity 0.22 und
-   * bewegt sich bis zum Ende der Animation nicht mehr. */
+   * Streifen als graue Platte ueber der Ueberschrift und der Lead-Zeile.
+   * Der Ruhezustand darf den Text nicht ueberdecken — er soll nur noch da
+   * sein.
+   *
+   * Die Deckkraftstufen am selben Server gegeneinander gemessen, Pixel der
+   * Karte bei y=25 % (Band) gegen y=62 % (nacktes Panel):
+   *
+   *   hell   opacity 1     Band rgb(188,188,190)  Abstand -67 zum Panel
+   *          opacity 0.3   Band rgb(229,229,229)  Abstand -26
+   *          opacity 0.22  Band rgb(234,234,235)  Abstand -21   <- gesetzt
+   *
+   *   dunkel opacity 1     Band rgb(73,77,82)     Abstand +52 zum Panel
+   *          opacity 0.3   Band rgb(32,35,40)     Abstand +11
+   *          opacity 0.22  Band rgb(27,30,34)     Abstand +6    <- gesetzt
+   *
+   * 0.22 ist die Stufe, bei der der Streifen in beiden Themes noch als Band
+   * ablesbar ist und den Text frei laesst; 0.3 lag im hellen Theme noch als
+   * geschlossene Flaeche ueber der Ueberschrift, 1 verdeckte den Text.
+   *
+   * Und der Ruhewert selbst IST gemessen: der Trace ueber 348 Frames endet bei
+   * t=9008 ms auf translateY(0) / opacity 0.22 und bewegt sich bis zum Ende
+   * der Animation nicht mehr. */
   0%     { transform: translateY(-100%); opacity: 0; }
   8%     { opacity: 1; }
   30%    { opacity: 1; }
