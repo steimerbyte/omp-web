@@ -151,10 +151,20 @@ function warnAboutExposure() {
 function startServer() {
   warnAboutExposure();
 
-  // `--bun` forces Bun's own runtime for next's CLI entry (it would otherwise
-  // hand shebang'd scripts to node). The omp SDK ships TypeScript sources and
-  // `bun:` builtins, so the API routes only resolve under Bun.
-  const child = spawn(bunPath, ["--bun", nextBin, "start", "-p", port, "-H", hostname], {
+  // next's CLI entry must run on Bun's runtime, and it is the ABSOLUTE PATH
+  // that guarantees that. Bun hands a shebang'd script to node unless it is
+  // told otherwise, and `--bun` is not that instruction: as of Bun 1.4.2 it is
+  // ignored when the command is a bare name resolved through node_modules/.bin,
+  // which is why `bun --bun next build` silently fell back to node and the build
+  // died with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING — @oh-my-pi/pi-coding-agent
+  // ships TypeScript sources only (every "exports" condition points at .ts) and
+  // its API routes therefore resolve under Bun and nowhere else.
+  //
+  // `scripts/run-next.mjs` applies the same rule for the package.json scripts:
+  // it is itself executed by Bun, so `process.execPath` is the Bun binary, and
+  // it invokes next by absolute path too. Keep both call sites on the path form;
+  // re-introducing `--bun` as the mechanism would re-open that failure.
+  const child = spawn(bunPath, [nextBin, "start", "-p", port, "-H", hostname], {
     cwd: pkgDir,
     stdio: ["inherit", "pipe", "inherit"],
     env: {
