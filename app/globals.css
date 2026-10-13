@@ -1264,7 +1264,7 @@ span.linenumber {
   width: 2px;
   pointer-events: none;
   background: transparent;
-  transition: background 0.12s ease;
+  transition: background-color 0.12s ease;
 }
 .panel-resize-handle:hover::after,
 .panel-resize-handle:focus-visible::after,
