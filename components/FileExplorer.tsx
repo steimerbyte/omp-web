@@ -910,7 +910,7 @@ function FileExplorerWindow({
       if (to < 0) return prev;
       return [...without.slice(0, to), prev[from], ...without.slice(to)];
     });
-  }, []);
+  }, [tabs]);
 
   useEffect(() => {
     setPortalTarget(document.body);
