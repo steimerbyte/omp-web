@@ -18,7 +18,12 @@ const lib = await jiti.import("@/lib/system-resources.ts");
  * describes.
  */
 function fakeMachine({ files = {}, devNodes = [], nvidiaSmi = null } = {}) {
+  // `spawned` records every spawn with its argv, so a test can assert *how* a
+  // vendor tool was invoked and not only that it was. Dropping the `args`
+  // parameter from `run` instead would hide the argv shape the stub has to match.
+  const spawned = [];
   return {
+    spawned,
     exists: (path) => path in files || devNodes.includes(path),
     readDir: (path) => {
       if (path !== "/sys/class/drm") return [];
@@ -34,6 +39,7 @@ function fakeMachine({ files = {}, devNodes = [], nvidiaSmi = null } = {}) {
       return files[path];
     },
     run: (command, args) => {
+      spawned.push({ command, args });
       if (command !== "nvidia-smi") return { status: 127, stdout: "" };
       return nvidiaSmi ?? { status: 127, stdout: "" };
     },
@@ -160,11 +166,12 @@ test("an AMD card on card1 is found without a card0 present", () => {
 });
 
 test("an NVIDIA card is read through nvidia-smi", () => {
-  const stats = lib.readGpuStats(fakeMachine({
+  const machine = fakeMachine({
     devNodes: ["/dev/nvidiactl", "/dev/nvidia0"],
     files: { "/sys/class/drm/card0/device/anything": "" },
     nvidiaSmi: { status: 0, stdout: "37, 812, 8159\n" },
-  }));
+  });
+  const stats = lib.readGpuStats(machine);
   assert.deepEqual(stats, {
     present: true,
     vendor: "nvidia",
@@ -173,6 +180,13 @@ test("an NVIDIA card is read through nvidia-smi", () => {
     memoryTotalBytes: 8159 * 1024 * 1024,
     source: "nvidia-smi",
   });
+  // The CSV shape is part of the contract: `--format=csv,noheader,nounits`
+  // without `nounits` would silently turn every MiB value into bytes and the
+  // parse above would report absurd figures rather than fail.
+  assert.deepEqual(machine.spawned, [{
+    command: "nvidia-smi",
+    args: ["--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+  }]);
 });
 
 test("an NVIDIA card whose query times out does not produce a number", () => {

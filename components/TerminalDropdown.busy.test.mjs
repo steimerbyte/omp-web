@@ -23,7 +23,7 @@ const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
 const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
 
 globalThis.window = new Proxy(dom.window, {
-  get(target, prop, receiver) {
+  get(target, prop) {
     if (prop === "navigator") return fakeNavigator;
     const value = Reflect.get(target, prop, target);
     return typeof value === "function" ? value.bind(target) : value;

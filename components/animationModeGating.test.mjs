@@ -50,7 +50,7 @@ const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-U
 // linkedom rebuilds `window.navigator` on each access and the i18n provider
 // reads `languages` while mounting.
 globalThis.window = new Proxy(dom.window, {
-  get(target, prop, receiver) {
+  get(target, prop) {
     if (prop === "navigator") return fakeNavigator;
     const value = Reflect.get(target, prop, target);
     return typeof value === "function" ? value.bind(target) : value;

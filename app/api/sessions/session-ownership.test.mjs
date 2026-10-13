@@ -50,15 +50,14 @@ const { SessionManager } = await jiti.import("@oh-my-pi/pi-coding-agent");
 const { invalidateSessionListCache } = await jiti.import("@/lib/session-reader");
 
 const ALICE = { host: "localhost", "x-omp-user": "alice" };
-const BOB = { host: "localhost", "x-omp-user": "bob" };
+
 const ADMIN = { host: "localhost", "x-omp-user": "pi", "x-omp-admin": "1" };
 const ANON = { host: "localhost" };
 
-const params = (...segments) => ({ params: Promise.resolve(Object.fromEntries(segments.map((s, i) => (i % 2 === 0 ? ["id", s] : ["entryId", s])))) });
 const idParams = (id) => ({ params: Promise.resolve({ id }) });
 const entryParams = (id, entryId) => ({ params: Promise.resolve({ id, entryId }) });
 
-function get(url, headers, routeParams) {
+function get(url, headers) {
   return new Request(`http://localhost${url}`, { headers });
 }
 

@@ -26,7 +26,7 @@ const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-U
 // linkedom baut `window.navigator` bei jedem Zugriff neu; die i18n-Schicht liest
 // `languages` beim Mounten. Deshalb der Proxy statt einer einfachen Zuweisung.
 globalThis.window = new Proxy(dom.window, {
-  get(target, prop, receiver) {
+  get(target, prop) {
     if (prop === "navigator") return fakeNavigator;
     const value = Reflect.get(target, prop, target);
     return typeof value === "function" ? value.bind(target) : value;

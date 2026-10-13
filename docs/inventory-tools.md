@@ -558,13 +558,13 @@ denen ein Hook **auf** eine Werkzeuggrenze wartet oder sie clientseitig vorwegni
   Kindelementen; ohne den Zähler flackert die Markierung.
 - **Ort**: `hooks/useDragDrop.ts:9-37`
 
-### useIsMobile / use-mobile
+### useIsMobile
 - **Kann**: Breakpoint bei 640 px, SSR-sicher.
 - **Tastatur**: keine.
 - **Darf nicht**: **Der Server-Snapshot ist `false`** (`useIsMobile.ts:24-26`) — auf dem Server und
   im ersten Client-Paint wird Desktop gerendert, danach wird synchronisiert. Wer den
   Server-Snapshot auf `true` setzt, erzeugt einen Hydration-Mismatch.
-- **Ort**: `hooks/useIsMobile.ts:3-31`, `hooks/use-mobile.ts`
+- **Ort**: `hooks/useIsMobile.ts:3-31`
 
 ### useViewportHeight
 - **Kann**: Hält die App-Höhe am visuellen Viewport, solange eine Tastatur offen ist.
