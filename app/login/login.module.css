@@ -19,12 +19,16 @@
 
 /* Eine Scanline faehrt einmal durch die Karte und ruht dann.
  *
- * Zwei Regeln, und beide sind nicht verhandelbar:
+ * Drei Regeln, und keine ist verhandelbar:
  *
  * 1. Die Karte aendert ihre Groesse nie. Die Bewegung sitzt auf einem
  *    Pseudo-Element INNERHALB der Karte, nicht auf der Karte selbst.
  * 2. Die Fahrt endet. Ein `infinite` auf der Karte ist genau der Zustand,
  *    den diese Regel abstellt.
+ * 3. Die Fahrt durchquert die Karte. Das Pseudo-Element ist so hoch wie die
+ *    Karte, damit `translateY(-100 %)` bis `0 %` eine ganze Kartenhoehe sind;
+ *    ein Band, das nur einen Bruchteil hoch ist, verschwindet oben und kommt
+ *    oben wieder.
  *
  * Messung, Chromium 1237, Playwright 1.63, eigener Dev-Server auf Port 30142,
  * Seite `/login`, bounding box der Karte ueber aufeinanderfolgende animation
@@ -75,7 +79,7 @@
  * verdecken und existiert genau solange wie die Klasse.
  *
  * Warum die Karte `overflow: hidden` braucht: die Scanline startet ueber der
- * Oberkante und endet unter der Unterkante. Ohne Clipping waere sie ein
+ * Oberkante und endet an der Unterkante. Ohne Clipping waere sie ein
  * sichtbarer Streifen auf `.page`. Der Klick auf die Karte bleibt moeglich,
  * `pointer-events: none` haelt den Streifen aus der Trefferflaeche.
  *
@@ -86,7 +90,9 @@
  * einmal falsch gelaufen. Vorher standen 2.4 s Fahrt 4.8 s Ruhe gegenueber,
  * ein Zyklus von 7.2 s, und `iteration-count: 1` lief ihn genau einmal. Auf
  * Produktion gemessen (Chromium, Karte 470x410, Pixelvergleich des Bandes gegen
- * den geparkten Zustand, hell und dunkel):
+ * den geparkten Zustand, hell und dunkel). Die Zahlen in dieser Tabelle
+ * gehoeren zu diesem alten Stand mit dem 34-%-Band; sie sagen nichts ueber
+ * die Strecke der heutigen Regel, die weiter unten gemessen steht:
  *
  *   animTime    0 .. 2400 ms   Fahrt, Peak-Deviation 396 (hell) / 366 (dunkel)
  *   animTime 2400 .. 7200 ms  Ruhe, Peak-Deviation 0 — bei 46 von 57 Frames
@@ -101,21 +107,55 @@
  * Jetzt: 2.4 s Fahrt, 0.8 s Ruhe (75/25, dasselbe Verhaeltnis wie
  * `@keyframes omp-shimmer-wash` in `globals.css`, damit die Seite nur eine
  * Taktung kennt), und `iteration-count: 3`. Drei Durchlaeufe in 9.6 s.
- * Nachgemessen an der echten Karte im Browser, Pixelvergleich des Bandes gegen
- * den geparkten Zustand, hell und dunkel gleichermassen:
  *
- *   animTime    0 .. 2400 ms   Fahrt   (Peak-Deviation 396 hell / 366 dunkel)
- *   animTime 2400 .. 3200 ms   Ruhe    (~1100 ms gemessen, 800 ms Soll)
- *   animTime 3200 .. 5600 ms   Fahrt
- *   animTime 5600 .. 6400 ms   Ruhe
- *   animTime 6400 .. 8800 ms   Fahrt
- *   animTime 8800 .. 9600 ms   Ruhe
- *   danach                    finished — die Karte steht still
+ * Und die Strecke: die Fahrt hat die ganze Karte zu nehmen, nicht einen
+ * Bruchteil von ihr. Das war der Fehler, den der Benutzer als "bricht in der
+ * Mitte ab und wiederholt sich bis zur Mitte" beschrieben hat, und er lag in
+ * der Geometrie, nicht in den Zeiten. `translateY(100 %)` rechnet immer gegen
+ * die EIGENE Hoehe des Pseudo-Elements; bei `height: 34 %` war die zurueck-
+ * gelegte Strecke darum exakt 34 % der Kartenhoehe. Das Band verliess die
+ * Karte oben und kam oben wieder, ohne sie je zu durchfahren.
  *
- * Von 103 abgetasteten Frames ueber 9.6 s sind 66 in Bewegung (64 %), und in
- * den ersten zwei Sekunden nach Seitenaufruf sind es 20 von 20 (hell) bzw.
- * 21 von 21 (dunkel) — dort bewegt sich ohne Unterbrechung etwas. Vorher
- * waren es 46 von 57 Frames ohne jede Bewegung.
+ * Nachgemessen an der echten Karte im Browser, `getComputedStyle(el,
+ * "::after").transform` je Frame, Karte 470 x 410.06 px, Chromium 1237,
+ * Playwright 1.63, Dev-Server auf Port 30161, Seite `/login`:
+ *
+ *                       vorher            nachher
+ *   Start   ty =       -138.72 px        -408.02 px
+ *   Ende    ty =          0.00 px           0.00 px
+ *   Strecke               138.72 px         408.02 px
+ *   in Anteilen der Karte   33.8 %            99.5 %
+ *
+ * Die 408.02 px sind die volle Innenhoehe der Karte (410.06 px abzueglich der
+ * zwei 1-px-Raender): `inset: 0` macht das Pseudo-Element so hoch wie die
+ * Karte, und `-100 %` bis `0 %` sind damit genau eine Kartenhoehe. Das Band
+ * liegt am Ende mit seiner Unterkante auf der Unterkante der Karte und am
+ * Anfang vollstaendig ueber ihrer Oberkante. Hell und dunkel liefern
+ * dieselben Zahlen — die Strecke haengt an der Geometrie, nicht am Theme.
+ *
+ * Und die Verteilung ueber die Zeit. Die Fahrt laeuft nicht gleichmaessig:
+ * `cubic-bezier(.4, 0, .2, 1)` steht in der Kurzform und gilt damit fuer den
+ * ganzen Durchlauf, nicht fuer jeden Keyframe-Abschnitt einzeln. Gemessen
+ * (nachher, hell; `ty` in px, dahinter der Anteil der Gesamtstrecke):
+ *
+ *   animTime        0 ms   ty -408.06   0 %    das Band liegt ueber der Karte
+ *                320 ms   ty -387.69    5 %
+ *                800 ms   ty -221.47   46 %
+ *               1280 ms   ty  -75.72   81 %
+ *               1760 ms   ty  -19.20   95 %
+ *               2240 ms   ty   -1.00   99 %
+ *               2400 ms   ty    0.00  100 %   Ruhe, 800 ms
+ *               3200 ms   ty -408.06    0 %   zweiter Durchlauf
+ *               9600 ms                  Ende — die Karte steht still
+ *
+ * Der Weg zwischen zwei Keyframes, die `transform` deklarieren, wird
+ * interpoliert; die Stops 8 % und 70 % deklarieren nur `opacity` und
+ * unterbrechen die Fahrt nicht. Wer die Zeitverteilung als Fehler sucht,
+ * findet hier keine: die Bewegung laeuft von animTime 0 bis rund 2400 und
+ * macht danach 800 ms nichts.
+ *
+ * Abgetastet ueber 9.6 s: je Zyklus 144 von 192 Frames mit veraenderter
+ * Position — die 75 % Fahrt, und in der Ruhe kein Zittern.
  *
  * Warum endet es ueberhaupt: `iteration-count: 3`, nicht `infinite`. Der
  * urspruengliche Auftrag war, dass die Karte stillsteht, und die Karte steht
@@ -130,25 +170,45 @@
  * sechs Stellen des Zyklus gemessen, Submit-Klick bei gefuellten Feldern:
  * 115 / 92 / 61 / 54 / 82 / 69 ms, alle sechs durch.
  *
+ * Und an der heutigen Regel nachgemessen, Chromium 1237, `/login` auf Port
+ * 30161, waehrend die Animation laeuft: 400 aufeinanderfolgende Frames
+ * ergeben genau EINE bounding box der Karte, `315|244.969|470|410.063`,
+ * hell wie dunkel, und `locator.click()` auf die Karte geht durch. Das Band
+ * stand dabei in rund 250 verschiedenen Positionen (zwei Laeufe: 250 hell,
+ * 145 dunkel — die Zahl haengt davon ab, wo der Abtastlauf den Zyklus
+ * erwischt; entscheidend ist, dass es viele sind und nicht eine).
+ *
  * Kontrast: der Kern kommt aus `--text`, nicht aus `--accent`. `--accent` bei
  * niedriger Deckkraft ueber `--bg-panel` verschwindet, weil das Panel den
  * Kontrast schluckt — in hellem UND dunklem Theme. `--text` (#1a1d23 hell,
  * #e8ecf4 dunkel) hat gegen `--bg-panel` in beiden Schemata Abstand, mit einer
- * Deckkraft, die auch ueber dem Formular noch sichtbar bleibt. Die
- * Verlaufsrichtung laeuft von oben transparent zu einem hellen Band nach unten
- * wieder transparent: die Fahrt liest sich als Licht, nicht als Balken.
+ * Deckkraft, die auch ueber dem Formular noch sichtbar bleibt. Der Verlauf
+ * laeuft von oben transparent in ein helles Band, dessen hellste Stelle an
+ * der Unterkante des Elements liegt; weil das Element nach unten faehrt, ist
+ * genau diese Kante die fuehrende, und die Fahrt liest sich als Licht, nicht
+ * als Balken.
  *
  * `prefers-reduced-motion` schaltet sie ab, wie es die alte Regel tat — und
  * `html[data-omp-animations="off"]` in `globals.css` faengt das Pseudo-Element
- * ueber `*::after` mit, ohne eigene Regeln hier.
+ * ueber `*::after` mit, ohne eigene Regeln hier. Beide nachgemessen:
+ * `prefers-reduced-motion: reduce` ergibt `animation-name: none` und das
+ * ruhende Band bei opacity 0.22; `data-omp-animations="off"` ergibt
+ * `animation-duration: 0.001s` und `animation-iteration-count: 1`, also
+ * dieselbe Endlage, nur im Bruchteil einer Sekunde erreicht. Das Attribut
+ * dabei NACH dem Mount setzen — `AnimationProvider` schreibt es beim Start
+ * selbst und loescht einen Wert, den ein Init-Script vorher gesetzt hat.
  */
 .scanline { position: relative; overflow: hidden; }
 
 .scanline::after {
   content: "";
   position: absolute;
-  inset: 0 0 auto 0;
-  height: 34%;
+  /* Volle Kartenhoehe, nicht ein Bruchteil davon. `translateY(100 %)` rechnet
+   * immer gegen die EIGENE Hoehe, und nur die eigene Hoehe kann der Keyframe
+   * kennen — mit `height: 34 %` zurueckgelegte Strecke war 34 % der Karte,
+   * der Streifen verliess die Karte nie. Das Band sitzt deshalb als Verlauf
+   * am unteren Ende dieses Elements und faehrt die volle Kartenhoehe. */
+  inset: 0;
   /* Ohne das faengt der Streifen Klicks ab, die an die Karte gehen sollen. */
   pointer-events: none;
   /* Nie die Kurzform: `background` setzt `background-image: none` und loescht
@@ -169,29 +229,40 @@
 @keyframes login-scanline {
   /* 0 % bis 75 % sind die 2.4 s Fahrt, die letzten 25 % die 0.8 s Pause.
    *
-   * Der Endzustand ist die Oberkante mit gedämpfter Deckkraft, nicht das
-   * Nichts und nicht die volle Deckkraft: bei opacity 1 lag der ruhende
-   * Streifen als graue Platte ueber der Ueberschrift und der Lead-Zeile.
-   * Der Ruhezustand darf den Text nicht ueberdecken — er soll nur noch da
-   * sein.
+   * `translateY(-100 %)` auf `::after` heisst: die Unterkante des Elements
+   * liegt auf der Oberkante der Karte, und weil das Element so hoch ist wie
+   * die Karte (`inset: 0`), liegt das ganze Band dariiber. `translateY(0)`
+   * legt die Unterkante auf die Unterkante der Karte, das Band liegt am Ende
+   * vollstaendig IN der Karte. Es gibt hier keine Kartenhoehe in Pixeln und
+   * keine Magic Number: der Keyframe kennt nur die eigene Hoehe, und die
+   * eigene Hoehe IST die Kartenhoehe.
    *
-   * Die Deckkraftstufen am selben Server gegeneinander gemessen, Pixel der
-   * Karte bei y=25 % (Band) gegen y=62 % (nacktes Panel):
+   * `translate` wird zwischen den Keyframes interpoliert, die es
+   * deklarieren — hier 0 % und 75 %. Die Stops 8 % und 70 % deklarieren nur
+   * `opacity` und unterbrechen die Fahrt nicht.
    *
-   *   hell   opacity 1     Band rgb(188,188,190)  Abstand -67 zum Panel
-   *          opacity 0.3   Band rgb(229,229,229)  Abstand -26
-   *          opacity 0.22  Band rgb(234,234,235)  Abstand -21   <- gesetzt
+   * Der Endzustand ist das ruhende Band am unteren Ende der Karte mit
+   * gedaempfter Deckkraft, nicht das Nichts und nicht die volle Deckkraft:
+   * bei opacity 1 lag es als graue Platte ueber dem Formular.
    *
-   *   dunkel opacity 1     Band rgb(73,77,82)     Abstand +52 zum Panel
-   *          opacity 0.3   Band rgb(32,35,40)     Abstand +11
-   *          opacity 0.22  Band rgb(27,30,34)     Abstand +6    <- gesetzt
+   * Die Deckkraftstufen gegeneinander gemessen, Pixel der ruhenden Karte an
+   * der hellsten Stelle des Bandes (y = 98 %) gegen dieselbe Stelle ohne
+   * Band, Karte 410.06 px, Chromium 1237, Dev-Server auf Port 30161:
    *
-   * 0.22 ist die Stufe, bei der der Streifen in beiden Themes noch als Band
-   * ablesbar ist und den Text frei laesst; 0.3 lag im hellen Theme noch als
-   * geschlossene Flaeche ueber der Ueberschrift, 1 verdeckte den Text.
+   *   hell   opacity 1     Band rgb(152,154,156)  Abstand -94 zum Panel
+   *          opacity 0.3   Band rgb(219,220,221)  Abstand -28
+   *          opacity 0.22  Band rgb(226,227,227)  Abstand -21   <- gesetzt
    *
-   * Und der Ruhewert selbst IST gemessen: auf Produktion endet jeder Durchlauf
-   * bei translateY(0) / opacity 0.22 und bewegt sich bis zum Ende nicht mehr.
+   *   dunkel opacity 1     Band rgb(108,112,117)  Abstand +94 zum Panel
+   *          opacity 0.3   Band rgb(43,46,51)     Abstand +28
+   *          opacity 0.22  Band rgb(35,38,42)     Abstand +20   <- gesetzt
+   *
+   * 0.22 ist die Stufe, bei der das ruhende Band in beiden Themes noch als
+   * Band ablesbar ist und den Text frei laesst; 0.3 lag im hellen Theme als
+   * geschlossene Flaeche ueber dem Formular, 1 verdeckte es.
+   *
+   * Und der Ruhewert selbst IST gemessen: jeder Durchlauf endet bei
+   * translateY(0) / opacity 0.22 und bewegt sich bis zum Ende nicht mehr.
    * Dort war dieser Wert das ganze Problem — er ist genau das, was in der
    * Ruhe als Nichts liest, siehe die Taktung oben. Er bleibt, weil er nach der
    * letzten Fahrt der Zustand der Karte ist, aber er traegt die Ruhe nicht
@@ -205,7 +276,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   /* Kein `opacity: 0` hier: die reduzierte Variante zeigt die ruhende Scanline
-   * an der Oberkante, nur eben ohne Fahrt. */
+   * am unteren Ende der Karte, nur eben ohne Fahrt. */
   .scanline::after { animation: none; }
 }
 

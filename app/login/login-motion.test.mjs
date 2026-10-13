@@ -152,6 +152,71 @@ test("Die Ruhe ist kuerzer als die Fahrt, und es sind mehr als ein Durchlauf", (
   assert.notEqual(count, "infinite");
 });
 
+test("Die Fahrt deckt die ganze Kartenhoehe, nicht einen Bruchteil davon", () => {
+  // Das ist der Fehler, den der Benutzer als "bricht in der Mitte ab und
+  // wiederholt sich bis zur Mitte" beschrieben hat, und kein Test deckte ihn
+  // ab: die anderen pruefen Timing und Deckkraft, aber keine einzige
+  // Pruefung sah nach der STRECKE.
+  //
+  // `translateY(100 %)` rechnet immer gegen die EIGENE Hoehe des
+  // Pseudo-Elements. Die Strecke in Kartenhoehen ist darum
+  //
+  //     (Weg der Keyframes in % der eigenen Hoehe / 100)
+  //   * (eigene Hoehe / Kartenhoehe)
+  //
+  // Mit `height: 34 %` und einem Weg von -100 % auf 0 % sind das 0.34
+  // Kartenhoehen: gemessen 138.7 px bei einer 410.06 px hohen Karte. Der
+  // Streifen verliess die Karte oben und kam oben wieder, ohne sie je zu
+  // durchfahren zu haben. Der Test liest beide Faktoren aus der CSS und
+  // rechnet selbst, statt eine Pixellzahl festzuschreiben.
+  const after = ruleBody(".scanline::after");
+
+  // Die eigene Hoehe als Anteil der Karte: entweder ausdruecklich als
+  // Prozent, oder — wenn die Regel ueber `inset: 0` die volle Kartenhoehe
+  // nimmt — als 1.
+  const percentHeight = /(?:^|[;\s])height:\s*([\d.]+)%/.exec(after);
+  const spansCard =
+    /(?:^|[;\s])inset:\s*0\s*(?:;|$)/.test(after) ||
+    /(?:^|[;\s])(?:bottom|block-size):\s*0\b/.test(after);
+  const ownHeight = percentHeight
+    ? Number(percentHeight[1]) / 100
+    : spansCard
+      ? 1
+      : null;
+  assert.ok(
+    ownHeight !== null,
+    "die Hoehe des Pseudo-Elements ist nicht ableitbar: weder `height: <n>%` noch eine Regel, die die volle Kartenhoehe nimmt",
+  );
+
+  const body = keyframeBody("login-scanline");
+  // `translateY(0)` steht ohne Einheit im Keyframe und ist 0 % wie 0 px
+  // gleichwertig — nur eine Längenangabe in px waere hier ein Fehler.
+  const offsets = [...body.matchAll(/translateY\(\s*(-?[\d.]+)(%?)\s*\)/g)].map((m) => {
+    assert.ok(
+      m[2] === "%" || Number(m[1]) === 0,
+      `translateY(${m[0]}) gibt die Strecke in px an; der Keyframe kann die Kartenhoehe nicht kennen`,
+    );
+    return Number(m[1]);
+  });
+  assert.ok(offsets.length >= 2, "die Keyframes fahren mit weniger als zwei Stopps");
+
+  // Der Start muss den Streifen vollstaendig ueber die Oberkante bringen:
+  // -100 % der eigenen Hoehe ist bei einem gleich hohen Element genau der
+  // Punkt, an dem die Unterkante genau auf der Oberkante liegt.
+  assert.equal(
+    Math.min(...offsets),
+    -100,
+    `das Pseudo-Element muss mit translateY(-100 %) starten, damit es oben vollstaendig hinausfaehrt (gefunden: ${Math.min(...offsets)} %)`,
+  );
+
+  const travel = ((Math.max(...offsets) - Math.min(...offsets)) / 100) * ownHeight;
+  assert.ok(
+    travel >= 1,
+    `die Fahrt legt ${travel.toFixed(2)} Kartenhoehen zurueck, sie muss mindestens 1 sein —` +
+      " ein Streifen, der nur einen Bruchteil der Karte hoch ist, verschwindet oben und kommt oben wieder",
+  );
+});
+
 test("Der Kommentar nennt die Kollision und nicht das Gegenteil", () => {
   // Der alte Kommentar behauptete, `Reveal` fahre nur `opacity` und `filter`
   // und die beidenAnimationen griffen nicht in dieselbe Eigenschaft ein. Genau
