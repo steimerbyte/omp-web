@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Enter } from "./motion/Enter";
 import { Pressable } from "./motion/Pressable";
+import { Shimmer } from "./motion/Shimmer";
 import { DURATION_FAST, PULSE_TRANSITION } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
 
@@ -176,6 +177,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
             role="menuitem"
             onClick={() => void handleNew()}
             disabled={busy || disabled}
+            aria-busy={busy || undefined}
             style={{
               display: "flex",
               alignItems: "center",
@@ -192,7 +194,18 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
             }}
           >
             <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-            <span style={{ flex: 1 }}>New terminal</span>
+            {/* The spawn is a server round trip that takes seconds — measured
+                5.8s warm and 55s on a cold dev server — and until it answers
+                there is no terminal id, no tab and no open panel. Dimming the
+                row alone left the click looking like it had done nothing at
+                all, which is what it looked like. The row now says what it is
+                doing, in the same wash every other loading surface in the app
+                uses. */}
+            {busy ? (
+              <Shimmer radius={4} style={{ flex: 1, padding: "1px 0" }}>Starting…</Shimmer>
+            ) : (
+              <span style={{ flex: 1 }}>New terminal</span>
+            )}
             {cwd && (
               <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {cwd}
