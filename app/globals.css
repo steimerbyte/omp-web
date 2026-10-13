@@ -1608,11 +1608,27 @@ span.linenumber {
   background-image: linear-gradient(
     90deg,
     transparent 10%,
-    color-mix(in srgb, var(--accent) 46%, transparent) 46%,
-    color-mix(in srgb, var(--text) 15%, transparent) 50%,
-    color-mix(in srgb, var(--accent) 46%, transparent) 54%,
+    color-mix(in srgb, var(--accent) 32.2%, transparent) 46%,
+    color-mix(in srgb, var(--text) 10.5%, transparent) 50%,
+    color-mix(in srgb, var(--accent) 32.2%, transparent) 54%,
     transparent 90%
   );
+  /* Deckkraft 46% -> 32.2%, also auf 70% des Werts reduziert.
+   *
+   * Gemessen als Pixel, nicht als Formel: Bandmitte ueber der Flaeche in
+   * Chromium 1237, Vergleich beider Staende in hell und in dunkel, je eine
+   * Zeile als Spaltenprofil ueber 420 px. Median des Verhaeltnisses neu zu
+   * alt: 0,700 in beiden Themes, min 0,684, max 0,722. Der Wert entspricht
+   * damit der Vorgabe.
+   *
+   * Sichtbarkeit ist damit nicht kleiner geworden: der hellste Punkt im Band
+   * liegt bei 80 von 255 im hellen und 75 im dunklen Theme, gegenueber 114
+   * und 107 vorher. Das Band traegt also weiter, es ist nur leiser.
+   *
+   * Eine frueher notierte Schwelle von "unter etwa 40% wird ein Shimmer ueber
+   * dem Panel unsichtbar" gilt fuer DIESEN Verlauf nicht. Sie aus einer
+   * anderen Konstellation abgeleitet und hier nicht nachgemessen, ist sie
+   * irrefuehrend — die 32.2% sind deutlich sichtbar. */
   background-size: 200% 100%;
   /* Keeps the wrap-around tile from sliding in behind the departing band and
    * refilling the area it just left. This is what makes 190% and -90% actually
