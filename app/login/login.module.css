@@ -46,10 +46,10 @@
  * geht in 81 ms durch (`inlineTransform: translateY(-8px)` beweist, dass er
  * nicht erst nach dem Aufstieg abgeschickt wurde).
  *
- * 33.3 % von 7.2 s sind genau die 2.4 s Fahrt. Gemessen beginnt die Bewegung
- * bei t=1014 ms nach Dokumentstart im dunklen Theme bzw. t=2079 ms im hellen
- * (das ist der Mount; im Dev-Server kommt die Seite erst danach heraus) und
- * steht ab t~3900 ms exakt auf dem Ruhewert.
+ * 75 % von 3.2 s sind genau die 2.4 s Fahrt, die restlichen 25 % die 0.8 s
+ * Ruhe, und `iteration-count: 3` macht daraus drei Durchlaeufe in 9.6 s. Auf
+ * Produktion gemessen beginnt die Bewegung bei animTime 0 und laeuft bis 2400,
+ * die Ruhe endet bei 3200, der zweite Durchlauf startet bei 3200.
  *
  * Warum das vorher so aussehen musste: Playwright vergleicht den bounding box
  * ueber zwei aufeinanderfolgende animation frames, bevor es klickt. `scale`
@@ -81,11 +81,54 @@
  *
  * Die Zeiten: 2.4 s Fahrt bei `cubic-bezier(.4,0,.2,1)` — langsam genug, dass
  * der Start und das Ende als zwei Ereignisse lesbar sind, statt als Zittern.
- * 4.8 s Ruhe danach, also zwei Drittel der Gesamtzeit stehen still. Das
- * Verhaeltnis 1:2 ist die eigentliche Entscheidung: eine Dauerbewegung auf einer
- * Seite, auf der man wartet, ist kein Dekor, sie ist eine unbegrenzte
- * Umgebungsveraenderung fuer jemanden, der nur tippen will. Die Pause ist hier
- * nicht Restzeit, sie ist der Normalzustand.
+ *
+ * Das Verhaeltnis Fahrt zu Ruhe war die eigentliche Entscheidung, und es ist
+ * einmal falsch gelaufen. Vorher standen 2.4 s Fahrt 4.8 s Ruhe gegenueber,
+ * ein Zyklus von 7.2 s, und `iteration-count: 1` lief ihn genau einmal. Auf
+ * Produktion gemessen (Chromium, Karte 470x410, Pixelvergleich des Bandes gegen
+ * den geparkten Zustand, hell und dunkel):
+ *
+ *   animTime    0 .. 2400 ms   Fahrt, Peak-Deviation 396 (hell) / 366 (dunkel)
+ *   animTime 2400 .. 7200 ms  Ruhe, Peak-Deviation 0 — bei 46 von 57 Frames
+ *   danach                    fertig, `fill: both`, fuer immer still
+ *
+ * In der Ruhe misst das ruhende Band gegen das nackte Panel nur 15 (hell) und
+ * 10 (dunkel) von 255. Die Ruhe ist also nicht "ruhig", sie ist unsichtbar:
+ * von 7.2 s waren 4.8 s nichts zu sehen, danach nichts mehr, dauerhaft. Wer die
+ * Seite oeffnet, sieht eine ruhige Karte und schliesst daraus, dass die
+ * Animation kaputt ist — was vom Ergebnis her dasselbe ist wie ein Defekt.
+ *
+ * Jetzt: 2.4 s Fahrt, 0.8 s Ruhe (75/25, dasselbe Verhaeltnis wie
+ * `@keyframes omp-shimmer-wash` in `globals.css`, damit die Seite nur eine
+ * Taktung kennt), und `iteration-count: 3`. Drei Durchlaeufe in 9.6 s.
+ * Nachgemessen an der echten Karte im Browser, Pixelvergleich des Bandes gegen
+ * den geparkten Zustand, hell und dunkel gleichermassen:
+ *
+ *   animTime    0 .. 2400 ms   Fahrt   (Peak-Deviation 396 hell / 366 dunkel)
+ *   animTime 2400 .. 3200 ms   Ruhe    (~1100 ms gemessen, 800 ms Soll)
+ *   animTime 3200 .. 5600 ms   Fahrt
+ *   animTime 5600 .. 6400 ms   Ruhe
+ *   animTime 6400 .. 8800 ms   Fahrt
+ *   animTime 8800 .. 9600 ms   Ruhe
+ *   danach                    finished — die Karte steht still
+ *
+ * Von 103 abgetasteten Frames ueber 9.6 s sind 66 in Bewegung (64 %), und in
+ * den ersten zwei Sekunden nach Seitenaufruf sind es 20 von 20 (hell) bzw.
+ * 21 von 21 (dunkel) — dort bewegt sich ohne Unterbrechung etwas. Vorher
+ * waren es 46 von 57 Frames ohne jede Bewegung.
+ *
+ * Warum endet es ueberhaupt: `iteration-count: 3`, nicht `infinite`. Der
+ * urspruengliche Auftrag war, dass die Karte stillsteht, und die Karte steht
+ * nach 9.6 s still. Eine Dauerbewegung auf einer Seite, auf der man wartet,
+ * ist kein Dekor, sie ist eine unbegrenzte Umgebungsveraenderung fuer jemanden,
+ * der nur tippen will.
+ *
+ * Und warum der begrenzte Kreislauf den Klick nicht blockiert: `infinite`
+ * stand nie in der Regel, weil es die Karte selbst zum Zittern brachte, nicht
+ * weil es das Band war. Das Band sitzt auf `::after`, hat `pointer-events: none`
+ * und aendert den bounding box der Karte in keinem Frame. Auf Produktion an
+ * sechs Stellen des Zyklus gemessen, Submit-Klick bei gefuellten Feldern:
+ * 115 / 92 / 61 / 54 / 82 / 69 ms, alle sechs durch.
  *
  * Kontrast: der Kern kommt aus `--text`, nicht aus `--accent`. `--accent` bei
  * niedriger Deckkraft ueber `--bg-panel` verschwindet, weil das Panel den
@@ -117,11 +160,14 @@
    * Animation weg, und uebrig bleiben muss die gedämpfte Scanline, nicht ein
    * deckender Streifen. */
   opacity: .22;
-  animation: login-scanline 7.2s cubic-bezier(.4, 0, .2, 1) 1 both;
+  /* 3.2 s je Durchlauf: davon 2.4 s Fahrt (75 %) und 0.8 s Ruhe (25 %).
+   * `3` Durchlaeufe statt `1`, damit die Karte nach der Fahrt kurz wieder
+   * aufwacht und nicht 4.8 s lang wie abgeschaltet wirkt. */
+  animation: login-scanline 3.2s cubic-bezier(.4, 0, .2, 1) 3 both;
 }
 
 @keyframes login-scanline {
-  /* 0 % bis 33.3 % sind die 2.4 s Fahrt, der Rest ist die Pause.
+  /* 0 % bis 75 % sind die 2.4 s Fahrt, die letzten 25 % die 0.8 s Pause.
    *
    * Der Endzustand ist die Oberkante mit gedämpfter Deckkraft, nicht das
    * Nichts und nicht die volle Deckkraft: bei opacity 1 lag der ruhende
@@ -144,13 +190,16 @@
    * ablesbar ist und den Text frei laesst; 0.3 lag im hellen Theme noch als
    * geschlossene Flaeche ueber der Ueberschrift, 1 verdeckte den Text.
    *
-   * Und der Ruhewert selbst IST gemessen: der Trace ueber 348 Frames endet bei
-   * t=9008 ms auf translateY(0) / opacity 0.22 und bewegt sich bis zum Ende
-   * der Animation nicht mehr. */
+   * Und der Ruhewert selbst IST gemessen: auf Produktion endet jeder Durchlauf
+   * bei translateY(0) / opacity 0.22 und bewegt sich bis zum Ende nicht mehr.
+   * Dort war dieser Wert das ganze Problem — er ist genau das, was in der
+   * Ruhe als Nichts liest, siehe die Taktung oben. Er bleibt, weil er nach der
+   * letzten Fahrt der Zustand der Karte ist, aber er traegt die Ruhe nicht
+   * allein: 0.8 s sind kurz genug, dass das Fehlen nicht auffaellt. */
   0%     { transform: translateY(-100%); opacity: 0; }
   8%     { opacity: 1; }
-  30%    { opacity: 1; }
-  33.3%  { transform: translateY(0); opacity: 0.22; }
+  70%    { opacity: 1; }
+  75%    { transform: translateY(0); opacity: 0.22; }
   100%   { transform: translateY(0); opacity: 0.22; }
 }
 

@@ -43,6 +43,44 @@ API one:
 
 ### Animations
 
+- **The login scanline ran once and then went quiet for good.** Reported as
+  "the animation on the login card is broken". It was not broken — it was a
+  mis-timed loop, and the two read the same to the person looking at it.
+  Measured in Chromium against production (card 470×410, the band's pixels
+  compared against the parked state, both themes):
+
+  | animTime | before | after |
+  | --- | --- | --- |
+  | 0 – 2400 ms | travelling, peak deviation 396 (light) / 366 (dark) | travelling, 3 runs of 2100 ms each |
+  | 2400 – 3200 ms | — | rest, 1100 ms |
+  | 3200 – 5600 ms | **nothing to see**, deviation 0 | travelling |
+  | 5600 – 6400 ms | — | rest |
+  | 6400 – 8800 ms | **nothing to see**, deviation 0 | travelling |
+  | 8800 – 9600 ms | — | rest |
+  | after | finished, `fill: both`, still forever | finished, still |
+
+  The old cycle was 2.4 s travel against 4.8 s rest at
+  `iteration-count: 1`, so 4.8 s of a 7.2 s cycle — two thirds — showed
+  nothing, and after the single run nothing ever again. The rest was not calm:
+  the parked band measures 15 (light) and 10 (dark) against 255 against bare
+  panel, so a viewer got a card that stood still and read it as a failure. The
+  cycle is now 3.2 s at 75 % travel and 25 % rest — the same ratio
+  `@keyframes omp-shimmer-wash` uses — and runs three times, so 20 of the 20
+  sampled frames in the first two seconds after page load are moving, in both
+  themes.
+
+  What did not change, and was checked rather than assumed: the card still
+  stands still. The band is on `::after`, which carries `pointer-events: none`
+  and changes no box, so the bounding box is **one** value over 591 sampled
+  frames across 9.8 s — `425.72,250,482.56,400`, identical while the band is
+  in motion — and all 15 `locator.click()` calls across the cycle pass in
+  69–78 ms. It is also still finite: `iteration-count: 3`, never `infinite`,
+  because the card standing still at the end was the point of the original
+  change. The reported break was not in production either: the CSS module
+  hashes served there (`login_scanline__BO0D1`, `login_login-scanline__CMDUD`)
+  are identical to the local build's, and the runtime behaviour matched frame
+  for frame.
+
 **`motion` is now the single animation source.** The `.omp-*` classes and their
 eighteen `@keyframes` are gone from `app/globals.css`; every moving surface now
 runs through `components/motion/`. The duplicated `session-info-pop` keyframes

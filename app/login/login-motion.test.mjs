@@ -108,6 +108,50 @@ test("Die Karte traegt die Scanline und den Einblend zugleich", () => {
   assert.match(page, /<Reveal className=\{`\$\{styles\.card\} \$\{styles\.scanline\}`\}>/);
 });
 
+test("Die Ruhe ist kuerzer als die Fahrt, und es sind mehr als ein Durchlauf", () => {
+  // Das ist die Regression, die gemeldet wurde. Vorher standen 2.4 s Fahrt
+  // 4.8 s Ruhe gegenueber, ein Lauf, und auf Produktion waren 46 von 57
+  // Frames im Pixelvergleich exakt der geparkte Zustand — von 7.2 s waren 4.8 s
+  // nichts zu sehen, danach nichts mehr. Der Benutzer hat das als "kaputt"
+  // gelesen, und das war auch die richtige Lesart.
+  //
+  // Der Test liest die Zahlen aus der CSS und rechnet selbst, statt einen
+  // festen Wert zu vergleichen: sonst koennte man `7.2s` wieder eintragen und
+  // die Assertion trotzdem passieren lassen, indem man nur die Prozentzahl
+  // anfasst.
+  const rule = ruleBody(".scanline::after");
+  const [, seconds, count] =
+    /animation:\s*login-scanline\s+([\d.]+)s[^;]*?\s(\d+)\s+both/.exec(rule) ?? [];
+  assert.ok(seconds, "`animation: login-scanline <dauer>s ... <zaehler> both` fehlt");
+  assert.ok(count, "die Laufzahl steht nicht in der Kurzform");
+
+  // Der Keyframe, an dem die Fahrt endet, ist der, der `translateY(0)` setzt.
+  const body = keyframeBody("login-scanline");
+  const stop = /(\d+(?:\.\d+)?)%\s*\{\s*transform:\s*translateY\(0\)/.exec(body);
+  assert.ok(stop, "es gibt keinen Keyframe, der die Fahrt bei translateY(0) beendet");
+
+  const travel = Number(stop[1]);
+  const rest = 100 - travel;
+  assert.ok(
+    travel > rest,
+    `die Fahrt (${travel} %) muss laenger sein als die Ruhe (${rest} %)` +
+      " — sonst ist die Karte laenger unsichtbar als sichtbar",
+  );
+  assert.ok(
+    travel >= 60,
+    `${travel} % Fahrt sind zu wenig; unter 60 % liest die Karte als abgeschaltet`,
+  );
+
+  // Und sie muss mehr als einmal laufen, sonst gibt es nach dem ersten
+  // Durchlauf nur noch den geparkten Zustand.
+  assert.ok(
+    Number(count) >= 2,
+    `ein einziger Durchlauf (${count}) endet in einem fuer immer stillen Zustand`,
+  );
+  // Nie endlos: die Karte soll am Ende stillstehen.
+  assert.notEqual(count, "infinite");
+});
+
 test("Der Kommentar nennt die Kollision und nicht das Gegenteil", () => {
   // Der alte Kommentar behauptete, `Reveal` fahre nur `opacity` und `filter`
   // und die beidenAnimationen griffen nicht in dieselbe Eigenschaft ein. Genau
