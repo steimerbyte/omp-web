@@ -24,7 +24,7 @@ import {
   normalizeFilePathSlashes,
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
-import { isImagePath } from "@/lib/file-types";
+import { isArchivePath, isImagePath } from "@/lib/file-types";
 import { FileActionToast, FileContextMenu, type FileActionNotice, type FileMenuTarget } from "./FileContextMenu";
 import { FileBrowserDialog } from "./FileBrowserDialog";
 import { FileImagePreview } from "./FileImagePreview";
@@ -255,6 +255,11 @@ interface PendingConflict {
  * plus Rahmen). Zwischen den 22-Pixel-Knoepfen bleiben damit 4 Pixel Luft, und
  * die Kante des 23-Pixel-Ankers liegt genau an der linken Kante des
  * Bildknopfes.
+ *
+ * Fuer Archivzeilen gilt die Tabelle nicht: ihr Download-Knopf ist kein
+ * Hover-Knopf, sondern steht im Fluss hinter dem Git-Kuerzel (siehe
+ * `downloadAlwaysVisible` in `FileTreeLabel`). Die absoluten Kanten werden
+ * dort nicht ausgewertet — sie wuerden ihn neben den Git-Status ziehen.
  *
  * Die Mention-Schaltflaeche traegt Text und ist je nach Sprache unterschiedlich
  * breit; sie steht deshalb ganz links. Ihre Breite kann so wachsen, wie es die
@@ -1540,6 +1545,18 @@ function FileTreeLabel({
    */
   const canPreviewImage = ctx.imagePreviewEnabled && !data.isDir && isImagePath(data.name);
 
+  /**
+   * Archive bekommen ihren Download-Knopf ohne Hover.
+   *
+   * Eine Zeile mit einem Bild laesst sich oeffnen, eine mit Text, eine mit
+   * PDF. Eine ZIP-Zeile nicht: der Viewer hat dafuer nichts, und der
+   * Rechtsklick-Menue fuehrt zum selben Download. Bleibt der Knopf an `hovered`
+   * gebunden, ist er auf einem Telefon unauffindbar — dort gibt es kein
+   * Darueberfahren, die Zeile wird getippt, und die Datei kommt nie an.
+   * Fuer Archivzeilen steht der Knopf deshalb immer.
+   */
+  const downloadAlwaysVisible = !data.isDir && isArchivePath(data.name);
+
   return (
     <div
       ref={dragHandle}
@@ -1685,24 +1702,31 @@ function FileTreeLabel({
           <ImageOpenIcon />
         </Pressable>
       )}
-      {hovered && node.isLeaf && (
+      {node.isLeaf && (hovered || downloadAlwaysVisible) && (
         <a
           href={`/api/files/${encodeFilePathForApi(data.fullPath)}?type=download`}
           download
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.preventDefault()}
           title={ctx.t("files.download")}
+          aria-label={ctx.t("files.download")}
           style={{
-            position: "absolute",
-            right: ROW_ACTION_RIGHT_DOWNLOAD,
-            top: "50%",
-            transform: "translateY(-50%)",
+            // Der Knopf einer Archivzeile steht im Fluss, nicht absolut: er ist
+            // dann neben dem Git-Kuerzel zu sehen, statt es zu ueberdecken.
+            // Die Zeile gibt ihren Platz ueber `flex: 1` am Dateinamen ab, also
+            // sitzt der Knopf auch so am rechten Rand.
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: 4,
             padding: "0 5px",
             height: 20,
+            marginLeft: 4,
+            flexShrink: 0,
+            position: downloadAlwaysVisible ? "static" : "absolute",
+            right: ROW_ACTION_RIGHT_DOWNLOAD,
+            top: "50%",
+            transform: downloadAlwaysVisible ? "none" : "translateY(-50%)",
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 4,

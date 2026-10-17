@@ -88,18 +88,6 @@ function resolveUsernameFromEnv(env: NodeJS.ProcessEnv): string {
   return DEFAULT_WEB_AUTH_USERNAME;
 }
 
-/**
- * Constant form of `getExpectedUsername()` for callers that need a value at
- * module scope (settings UI copy, `proxy.ts` headers, tests). The whole repo
- * imports this name as a constant, so the export stays a string and just
- * snapshots whatever the resolver said at module load.
- *
- * NB: `OMP_WEB_AUTH_USERNAME` is a module-load snapshot. Runtime checks
- * (every request through `proxy.ts` and `lib/web-auth-session.ts`) call
- * `getExpectedUsername()` instead, so a settings-panel change takes effect on
- * the next request even though this constant is frozen.
- */
-export const OMP_WEB_AUTH_USERNAME = getExpectedUsername();
 
 /**
  * Outcome of checking one request's credentials.
@@ -149,20 +137,6 @@ export function parseBasicCredentials(
     username: credentials.slice(0, separator),
     password: credentials.slice(separator + 1),
   };
-}
-
-export function isValidBasicAuthorization(
-  authorization: string | null,
-  password = process.env.OMP_WEB_PASSWORD,
-): boolean {
-  if (!isWebPasswordEnabled(password)) return false;
-
-  const credentials = parseBasicCredentials(authorization);
-  if (!credentials) return false;
-
-  const usernameMatches = secretsEqual(credentials.username, OMP_WEB_AUTH_USERNAME);
-  const passwordMatches = secretsEqual(credentials.password, password);
-  return usernameMatches && passwordMatches;
 }
 
 /**

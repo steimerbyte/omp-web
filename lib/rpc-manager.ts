@@ -33,6 +33,7 @@ import { resolveSessionSystemPrompts } from "./session-system-prompt";
 import { readDefaultModelRole } from "./model-roles";
 import { getOmpRuntime, getSettingsForCwd } from "./omp-runtime";
 import { PRESET_FULL } from "./tool-presets";
+import { makePresentFilesTool } from "./present-files-tool";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import type { SlashCommandInfo } from "./omp-types";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./omp-types";
@@ -1899,7 +1900,21 @@ export async function startRpcSession(
         ...(initial.model ? { model: initial.model } : {}),
         ...(initial.thinkingLevel ? { thinkingLevel: initial.thinkingLevel } : {}),
         ...(initial.scopedModels.length > 0 ? { scopedModels: initial.scopedModels } : {}),
-        ...(toolsOption !== undefined ? { toolNames: toolsOption, restrictToolNames: true } : {}),
+        // `present_files` is a core capability of this UI, not an opt-in: the
+        // card component is wired in `components/MessageView.tsx`, so a session
+        // without the tool cannot show anything. Registered natively (same
+        // `customTools` slot `pi-web-ui` uses for its own copy) instead of via a
+        // discovered `.omp/extensions` file, so it cannot be dropped by project
+        // trust gating or by a session started before the extension existed.
+        customTools: [makePresentFilesTool()],
+        // `restrictToolNames` drops `customTools` entirely unless this is set —
+        // the SDK filters `options.customTools` to `[]` when a session is
+        // restricted and this is not true (see `allowRestrictedCustomTools` in
+        // sdk.ts). Without it the "all tools off" preset would un-register
+        // `present_files` instead of merely deactivating it.
+        ...(toolsOption !== undefined
+          ? { toolNames: toolsOption, restrictToolNames: true, allowRestrictedCustomTools: true }
+          : {}),
         ...(untrusted ?? {}),
       };
       // omp's own applier, so a prompt file goes through the same templates the

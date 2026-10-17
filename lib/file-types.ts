@@ -34,6 +34,32 @@ export const DOCUMENT_EXT_TO_MIME: Record<DocumentPreviewKind, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
+/**
+ * Archive, die der Browser nicht anzeigen kann.
+ *
+ * Anders als ein Bild, ein PDF oder ein Text hat keine dieser Endungen eine
+ * Vorschau. Ein Klick auf die Zeile laeuft bei ihnen in einen Viewer, der
+ * entweder gar nichts anzeigt oder den Browser dazu bringt, die Datei zu
+ * entpacken — beides ist fuer ein Archiv der falsche Weg. Der Explorer
+ * braucht fuer sie deshalb einen Download-Knopf, der ohne Hover dasteht: auf
+ * einem Telefon loest es keinen Hover aus, dort ist ein Knopf, der erst beim
+ * Darueberfahren erscheint, unauffindbar.
+ */
+export const ARCHIVE_EXTENSIONS: Record<string, true> = {
+  zip: true,
+  tar: true,
+  gz: true,
+  tgz: true,
+  bz2: true,
+  xz: true,
+  "7z": true,
+  rar: true,
+};
+
+export function isArchivePath(filePath: string): boolean {
+  return ARCHIVE_EXTENSIONS[getFileExt(filePath)] === true;
+}
+
 function getBaseName(filePath: string): string {
   return filePath.replace(/\\/g, "/").split("/").pop() ?? "";
 }

@@ -40,6 +40,15 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
 });
 
+// `OMP_WEB_HOME_ROOT` decides where `getUserHome()` looks, so the fixture
+// paths below (`/home/alice/...`) only match when it is `/home`. The live
+// service sets it to `/home/pi/accounts`, and an inherited value from the
+// developer's shell moved every account home with it — alice's own session
+// then stopped belonging to alice and the "Besitzer sieht seine Session"
+// counter-test below failed with a 404 for a reason that has nothing to do
+// with the guard it is there to protect.
+process.env.OMP_WEB_HOME_ROOT = "/home";
+
 const detailRoute = await jiti.import("./[id]/route.ts");
 const stateRoute = await jiti.import("./[id]/state/route.ts");
 const contextRoute = await jiti.import("./[id]/context/route.ts");

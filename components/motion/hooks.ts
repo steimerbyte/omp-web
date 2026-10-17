@@ -119,6 +119,22 @@ export function useAnimationMode(): AnimationMode {
  * `background-repeat: no-repeat` in the rule, and the reasoning is on the
  * keyframes.
  */
+/**
+ * The swept band's background. Three constants, no dependency, so it is built
+ * once here rather than per render.
+ *
+ * It used to be a local `const` inside `useSweepProps` and read from the memo
+ * below without being listed in its dependencies — which
+ * `react-hooks/exhaustive-deps` flagged, and correctly: a fresh object on
+ * every render is precisely the case a memo cannot see through. Hoisting it
+ * makes the dependency list true rather than merely unchanged.
+ */
+const SWEEP_STYLE: WashStyle = {
+  backgroundImage: washImage(70),
+  backgroundSize: "220% 100%",
+  backgroundRepeat: "no-repeat",
+};
+
 export function useShimmerProps(): ShimmerProps {
   const mode = useAnimationPreference();
 
@@ -193,12 +209,6 @@ export function useSweepProps(): SweepKeys & { style: WashStyle } {
   // paints 78% of the element at peak 0.6894 even under `no-repeat`. That is
   // why the run's endpoints have to be outside the painted window and not
   // merely "somewhere off to the side"; see the travel range below.
-  const style: WashStyle = {
-    backgroundImage: washImage(70),
-    backgroundSize: "220% 100%",
-    backgroundRepeat: "no-repeat",
-  };
-
   // The travel. It has to start and end on positions that paint nothing, and
   // `background-position: P%` moves the tile by P% x (container - image), so a
   // pixel at x sits at tile coordinate (x - P) / 2.2 in element widths. The
@@ -217,18 +227,14 @@ export function useSweepProps(): SweepKeys & { style: WashStyle } {
   //
   // It is also the range `@keyframes omp-shimmer-wash` already travels, so the
   // one-shot and the endless wash now run the same arc.
-  //
-  // The keyframes are built inside the memo, not above it: motion treats a new
-  // `animate` object as a new animation and replays the sweep, so a range
-  // rebuilt per render would keep a re-rendering panel from ever finishing.
   return useMemo(
     () =>
       mode === "off"
-        ? { animate: {}, transition: {}, style: { ...style, backgroundImage: "none" } }
+        ? { animate: {}, transition: {}, style: { ...SWEEP_STYLE, backgroundImage: "none" } }
         : {
             animate: { backgroundPosition: ["190% 0%", "-90% 0%"] },
             transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" as const } },
-            style,
+            style: SWEEP_STYLE,
           },
     [mode],
   );

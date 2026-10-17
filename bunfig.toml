@@ -1,0 +1,26 @@
+# Bun test configuration.
+#
+# `NODE_ENV=test` matters for more than a nicer default: `bun test` otherwise
+# runs the test process with `NODE_ENV=production`, React resolves to its
+# production build through the default export condition, and `act` — the only
+# way these component tests can flush a render — is not exported there. The
+# suite then failed 33 tests with "act is not a function" for a reason that had
+# nothing to do with the code under test. The same is set in `package.json` so
+# `bun run test` and a bare `bun test` behave alike; this file is what a bare
+# `bun test` in a subdirectory picks up.
+[test]
+env = { NODE_ENV = "test" }
+
+# Observers and frames that linkedom does not implement.
+#
+# React's `act` and Radix's focus/portal code read these off the global *when
+# their module is first evaluated*. A test file that mounts a component and a
+# sibling test file that only imports it can therefore disagree about whether
+# the global exists yet: the one that imports first wins, and the other fails
+# with "MutationObserver is not defined" depending on the alphabetical order of
+# the file names. Installing them here, before any test module is evaluated,
+# removes the ordering dependency entirely.
+#
+# `DialogFocus.test.mjs` keeps its own copies — they are part of what it asserts
+# against — but it no longer depends on running first.
+preload = ["./test/setup-dom-globals.mjs"]

@@ -1426,6 +1426,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, refreshContextUsage, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
+  // The ref *object* is stable for the caller's lifetime; `.current` is not,
+  // and it changes while ChatInput mounts, unmounts and swaps its handle. The
+  // reads below are late-bound through the ref on purpose, so the memo must not
+  // be rebuilt when the handle behind it changes — and the compiler inferred
+  // `opts.chatInputRef?.current` as the dependency precisely because that is
+  // the value the body touches. Naming the ref in a local makes the dependency
+  // a plain variable the compiler can match, and keeps the late binding.
+  const chatInputRef = opts.chatInputRef;
+
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
@@ -1529,7 +1538,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // any attached images) into the input instead of losing it. Mirrors the
       // shell-command recovery in executeBash; restoreSubmission avoids
       // clobbering anything typed since.
-      opts.chatInputRef?.current?.restoreSubmission?.(
+      chatInputRef?.current?.restoreSubmission?.(
         message,
         images?.map(({ data, mimeType }) => ({ data, mimeType })),
         session?.id ?? sentSessionId ?? undefined,
@@ -1539,7 +1548,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, opts.chatInputRef]);
+  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, chatInputRef]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;

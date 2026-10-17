@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, useMemo, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages } from "@/hooks/useAgentSession";
 import type { ModelRoleAssignment, SkillsResponse } from "@/lib/api-types";
 import type { ContextUsage, SlashCommandInfo } from "@/lib/omp-types";
@@ -140,6 +140,16 @@ export function filterModelOptions(options: ModelOption[], query: string): Model
   ));
 }
 
+
+/**
+ * The "no dormancy info" case, shared so it has one identity.
+ *
+ * A fresh `{}` per render made the `useMemo` in `ChatInput` see a changed
+ * dependency on every render, which defeated the whole memo chain below it and
+ * is what the React Compiler reported as "This dependency may be modified
+ * later". Frozen because nothing writes dormancy into it.
+ */
+const EMPTY_SKILL_DORMANCY: Record<string, boolean> = Object.freeze({});
 const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
   auto: "chat.thinkingAuto", off: "chat.thinkingOff", minimal: "chat.thinkingMinimal", low: "chat.thinkingLow",
@@ -207,10 +217,27 @@ function isDormantSkillCommand(command: SlashCommandPaletteItem, dormancy: Recor
   return dormancy[command.name.slice("skill:".length)] === true;
 }
 
+/** One entry of the palette, with the index it will be selected at. */
+export interface SlashCommandLayoutItem {
+  command: SlashCommandPaletteItem;
+  index: number;
+}
+
+/** Commands of one source, in selection order. */
+export interface SlashCommandGroup {
+  source: SlashCommandSource;
+  items: SlashCommandLayoutItem[];
+}
+
+export interface SlashCommandLayout {
+  commands: SlashCommandPaletteItem[];
+  groups: SlashCommandGroup[];
+}
+
 export function buildSlashCommandLayout(
   commands: SlashCommandPaletteItem[],
   dormancy: Record<string, boolean>,
-) {
+): SlashCommandLayout {
   let index = 0;
   const groups = SLASH_SOURCES
     .map((source) => {
@@ -282,6 +309,28 @@ export function getUserMessageDraftImages(message: UserMessage): ChatDraftImage[
     const image = { data, mimeType };
     return isBase64ImageWithinLimits(image) ? [image] : [];
   });
+}
+
+/**
+ * Turn one dropped or pasted file into an attachable image, or `null`.
+ *
+ * Shrink before the send, not after: a full-resolution photo is several MB of
+ * base64, and a handful of them overflows the request body the transport
+ * accepts. Downscaling here keeps the attachment instead of silently dropping
+ * it once it no longer fits.
+ *
+ * A free function rather than an inline arrow because the React Compiler can
+ * only reason about a body it can see end to end — see the note on
+ * `processImageFiles`.
+ */
+async function prepareAttachment(file: File): Promise<AttachedImage | null> {
+  const scaled = await downscaleImageFile(file);
+  if (scaled.size > MAX_ATTACHED_IMAGE_BYTES) return null;
+  return {
+    data: await readFileAsBase64(scaled),
+    mimeType: scaled.type,
+    previewUrl: URL.createObjectURL(scaled),
+  };
 }
 
 function revokeImagePreview(image: AttachedImage): void {
@@ -444,9 +493,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     cwd: string;
     values: Record<string, boolean>;
   } | null>(null);
-  const skillDormancy = cwd && skillDormancyState?.cwd === cwd
-    ? skillDormancyState.values
-    : {};
+  // The `{}` fallback is a fresh object on every render, which made the
+  // `useMemo` below see a changed dependency on every render and defeat the
+  // whole chain. A shared frozen empty record is the same value by identity.
+  const skillDormancy = useMemo(
+    () => (cwd && skillDormancyState?.cwd === cwd ? skillDormancyState.values : EMPTY_SKILL_DORMANCY),
+    [cwd, skillDormancyState],
+  );
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -668,44 +721,46 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
   }));
 
-  const processImageFiles = useCallback(async (files: File[]) => {
-    const remaining = Math.max(
-      0,
-      MAX_ATTACHED_IMAGES - attachedImagesRef.current.length - pendingImageCountRef.current,
-    );
-    const imageFiles = files
-      .filter((f) => f.type.startsWith("image/"))
-      .slice(0, remaining);
-    if (!imageFiles.length) return;
-    pendingImageCountRef.current += imageFiles.length;
-    try {
-      const newImages = await Promise.all(
-        imageFiles.map(async (file) => {
-          // Shrink before the send, not after: a full-resolution photo is
-          // several MB of base64, and a handful of them overflows the request
-          // body the transport accepts. Downscaling here keeps the attachment
-          // instead of silently dropping it once it no longer fits.
-          const scaled = await downscaleImageFile(file);
-          if (scaled.size > MAX_ATTACHED_IMAGE_BYTES) return null;
-          return {
-            data: await readFileAsBase64(scaled),
-            mimeType: scaled.type,
-            previewUrl: URL.createObjectURL(scaled),
-          };
-        })
+  // Created once and never rebuilt. `handleDrop` and the paste handler both
+  // list `processImageFiles` as a dependency, so a new function per render would
+  // rebuild those on every keystroke.
+  //
+  // A `useCallback` was the original form and the React Compiler rejected it
+  // with "memoized in source but not in compilation output" — it cannot
+  // preserve a memo over a body that commits state (`setAttachedImages`) and
+  // writes two refs, and it then skips optimizing this whole component. Every
+  // value the body touches is a ref or a setter, all stable for the lifetime of
+  // the component, so building the closure once at mount reads exactly the same
+  // state at call time. That is the same late binding the refs express, stated
+  // once instead of per render.
+  const processImageFilesRef = useRef<((files: File[]) => Promise<void>) | null>(null);
+  if (processImageFilesRef.current === null) {
+    processImageFilesRef.current = async (files: File[]) => {
+      const remaining = Math.max(
+        0,
+        MAX_ATTACHED_IMAGES - attachedImagesRef.current.length - pendingImageCountRef.current,
       );
-      const usable = newImages.filter((image): image is AttachedImage => image !== null);
-      setAttachedImages((prev) => {
-        const accepted = usable.slice(0, Math.max(0, MAX_ATTACHED_IMAGES - prev.length));
-        usable.slice(accepted.length).forEach(revokeImagePreview);
-        const next = [...prev, ...accepted];
-        attachedImagesRef.current = next;
-        return next;
-      });
-    } finally {
-      pendingImageCountRef.current -= imageFiles.length;
-    }
-  }, []);
+      const imageFiles = files
+        .filter((f) => f.type.startsWith("image/"))
+        .slice(0, remaining);
+      if (!imageFiles.length) return;
+      pendingImageCountRef.current += imageFiles.length;
+      try {
+        const prepared = await Promise.all(imageFiles.map(prepareAttachment));
+        const usable = prepared.filter((image): image is AttachedImage => image !== null);
+        setAttachedImages((prev) => {
+          const accepted = usable.slice(0, Math.max(0, MAX_ATTACHED_IMAGES - prev.length));
+          usable.slice(accepted.length).forEach(revokeImagePreview);
+          const next = [...prev, ...accepted];
+          attachedImagesRef.current = next;
+          return next;
+        });
+      } finally {
+        pendingImageCountRef.current -= imageFiles.length;
+      }
+    };
+  }
+  const processImageFiles = processImageFilesRef.current;
 
   const removeImage = useCallback((index: number) => {
     setAttachedImages((prev) => {
@@ -808,7 +863,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ? value.slice(1).toLowerCase()
     : null;
 
-  const filteredSlashCommands = (() => {
+  // Memoized for the same reason as the layout below: this filtered and sorted
+  // list is rebuilt on every render, including every keystroke, and it is the
+  // input to the memo that follows.
+  const filteredSlashCommands = useMemo(() => {
     if (slashQuery === null) return [];
     const commands = [...(isStreaming ? [] : BUILTIN_SLASH_COMMANDS), ...(slashCommands ?? [])];
     const seenNames = new Set<string>();
@@ -830,12 +888,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         seenNames.add(normalizedName);
         return true;
       });
-  })();
-
+  }, [isStreaming, slashCommands, slashQuery, t]);
+  // Memoized, because it is a pure function of two inputs and its result was
+  // being rebuilt on every render: `displayedSlashCommands` is a brand-new
+  // array each time, so every `useCallback` downstream listed a dependency
+  // that had already changed before the render ended — which is what made the
+  // React Compiler report "This dependency may be modified later" and skip
+  // optimizing `getNextSlashIndex`, `handleKeyDown` and this component
+  // entirely. Same inputs now yield the same object, which is also fewer
+  // allocations on every keystroke in the composer.
   const {
     commands: displayedSlashCommands,
     groups: groupedSlashCommands,
-  } = buildSlashCommandLayout(filteredSlashCommands, skillDormancy);
+  } = useMemo(
+    () => buildSlashCommandLayout(filteredSlashCommands, skillDormancy),
+    [filteredSlashCommands, skillDormancy],
+  );
 
   const slashCommandCountLabel = filteredSlashCommands.length === 1
     ? t(slashQuery ? "chat.match" : "chat.command")

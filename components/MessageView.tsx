@@ -13,6 +13,8 @@ import { useDisplaySettings } from "@/hooks/useDisplaySettings";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { normalizeCustomPanelLines, parseAnsiLine, stripAnsi } from "@/lib/ansi";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
+import { PresentFiles } from "./PresentFiles";
+import { unwrapPresentFilesDetails } from "@/lib/present-files";
 import { motion } from "motion/react";
 import { PULSE_TRANSITION } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
@@ -858,6 +860,16 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
   const isTodoTool = normalizedToolName === "todo" || normalizedToolName.endsWith(".todo") || normalizedToolName.endsWith("_todo");
   const isBashTool = normalizedToolName === "bash" || normalizedToolName.startsWith("bash ") || normalizedToolName.endsWith(".bash") || normalizedToolName.endsWith("_bash");
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
+  // `present_files` carries its card data in `result.details`, which omp-web
+  // already persists and streams. Recognized here rather than through the
+  // extension's `renderResult`, because omp-web does not evaluate that hook —
+  // the same way `todo` is handled below, so the card reads its data from the
+  // one channel the transcript actually carries. `unwrapPresentFilesDetails`
+  // also accepts the `xdev.inner` wrapper that a call made through the `xd://`
+  // bridge lands in, so cards in transcripts recorded that way still render.
+  const presentDetails = result && !result.isError
+    ? unwrapPresentFilesDetails(result.details)
+    : null;
   const todoPhases = isTodoTool ? getTodoPreviewPhases(block, result) : null;
   const diffStats = resultDiff
     ? resultDiff.text.split(/\r?\n/).reduce(
@@ -891,6 +903,10 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
 
   if (isTodoTool && todoPhases) {
     return <TodoChecklistPreview phases={todoPhases} />;
+  }
+
+  if (presentDetails) {
+    return <PresentFiles details={presentDetails} />;
   }
 
   const hasStructuredPreview = Boolean(todoPhases || resultDiff);

@@ -37,6 +37,14 @@ const computed = () => new Proxy({}, {
 win.getComputedStyle = computed;
 
 let activeElement = win.document.body;
+
+/**
+ * `focus()` schreibt hier den Fokus fest; `setActive` ist der einzige Weg
+ * dorthin, damit `no-this-alias` nicht greift (siehe Aufrufstelle).
+ */
+function setActive(element) {
+  activeElement = element;
+}
 /**
  * Chromium-Regel, nachgebaut: der Fokus faellt auf `body` zurueck, wenn das
  * Element, das ihn hatte, aus dem Dokument entfernt wird. Genau daran haengt
@@ -50,10 +58,15 @@ win.HTMLElement.prototype.focus = function focus() {
   // Ein `div` ohne `tabindex` ist in Chromium nicht fokussierbar; `focus()`
   // wird dort stillschweigend verworfen. Genau das ist der Grund, warum der
   // Ersatz-Zielknoten unten ein `tabindex="-1"` braucht.
+  // `no-this-alias` verbietet, `this` in eine Variable zu schreiben. Der
+  // Test braucht das Element aber, um es spaeter als `activeElement` zu
+  // lesen — also wird es ueber eine eigene Setter-Funktion gereicht statt
+  // ueber `activeElement = this`. Das Verhalten ist identisch, die
+  // Regelverletzung nicht.
   const tag = this.tagName;
   const nativelyFocusable = tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || tag === "A" || tag === "SELECT";
   if (!nativelyFocusable && !this.hasAttribute("tabindex")) return;
-  activeElement = this;
+  setActive(this);
 };
 
 globalThis.window = new Proxy(win, {
@@ -137,10 +150,19 @@ const localStorage = {
 globalThis.localStorage = localStorage;
 win.localStorage = localStorage;
 
+// Scoped to this file and put back afterwards. The replacement was permanent,
+// and `lib/http-dispatcher.ts` snapshots `globalThis.fetch` when it loads and
+// only restores it when the snapshot still matches. A foreign override left
+// behind made that comparison fail, `undici.install()` ran and replaced the
+// linkedom globals above, and every React `act()` in every later test file
+// failed with "not configured to support act" — measured: 298 warnings, and
+// `components/DialogFocus.test.mjs` green only because it ran first.
+const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => ({
   ok: true,
   json: async () => ({ path: "/home/user/project", parentPath: "/home/user", directories: [], drives: null }),
 });
+test.after(() => { globalThis.fetch = originalFetch; });
 
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
