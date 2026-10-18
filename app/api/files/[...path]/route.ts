@@ -8,7 +8,7 @@ import {
 } from "@/lib/file-access";
 import { getRequestIdentity, type WebIdentity } from "@/lib/request-identity";
 import { isWritePathAllowed } from "@/lib/write-access";
-import { filePathFromSegments } from "@/lib/file-paths";
+import { filePathFromSegments, getFileDirectory } from "@/lib/file-paths";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   IMAGE_PREVIEW_MAX_BYTES,
@@ -689,7 +689,27 @@ export async function GET(
         return a.name.localeCompare(b.name);
       });
 
-    return NextResponse.json({ entries, path: filePath });
+    // Der Elternpfad wird nur genannt, wenn man ihn auch wirklich betreten
+    // darf. `getFileDirectory()` rechnet rein lexikalisch: fuer ein Konto mit
+    // Home `<home-root>/alice` lieferte es `<home-root>`, und das liegt
+    // ausserhalb jeder Allowlist. `FileBrowserDialog` aktiviert den
+    // Aufwaerts-Knopf allein danach, ob es einen Elternpfad gibt — der Knopf
+    // fuehrte also fuer jeden Mandanten beim ersten Klick in `403 Access
+    // denied`. Dasselbe Muster wie in `/api/cwd/browse` (5569d3a): die
+    // Allowlist-Pruefung gehoert auf den Server, `null` heisst fuer die
+    // Oberflaeche "kein Weg nach oben". Fuer einen Mandanten mit Home
+    // `<root>/alice` und cwd `<root>/alice/projects/demo` ist `<root>/alice`
+    // in der Allowlist (`getAdditionalAllowedRoots` nimmt die Home jedes
+    // Kontos auf) — der Knopf bleibt also erhalten, wo er fuehrt.
+    const candidateParent = getFileDirectory(filePath);
+    const parentPath = candidateParent
+      && candidateParent !== ""
+      && candidateParent !== filePath
+      && isExistingFilePathAllowed(candidateParent, allowedRoots)
+      ? candidateParent
+      : null;
+
+    return NextResponse.json({ entries, path: filePath, parentPath });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
