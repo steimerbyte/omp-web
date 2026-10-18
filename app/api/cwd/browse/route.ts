@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const candidate = getBrowseStartDirectory(requested);
+    const candidate = getBrowseStartDirectory(requested, identity);
 
     let resolved: string;
     try {

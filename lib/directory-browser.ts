@@ -1,6 +1,7 @@
 import { readdir, realpath, stat } from "fs/promises";
 import { homedir } from "os";
 import path from "path";
+import { getUserHome, type WebIdentity } from "./request-identity";
 
 export interface BrowsableDirectory {
   name: string;
@@ -14,8 +15,25 @@ export function shouldShowWindowsDrivePicker(
   return platform === "win32" && !directory;
 }
 
-export function getBrowseStartDirectory(directory?: string): string {
-  return directory || homedir();
+/**
+ * Where the picker opens when the caller named no directory.
+ *
+ * A function of the *identity*, never of `homedir()` alone. The process runs as
+ * one account, so `homedir()` is the service account's home — and for a tenant
+ * that path is in nobody's allowlist: `/api/cwd/browse` answers `403` for it,
+ * so the picker used to open straight into "Access denied" and the only way out
+ * was typing a path by hand. An admin keeps `homedir()`, which for him *is* his
+ * own home; that is the same split `getAllowedFileRoots` makes when it scans
+ * for `~/omp-cwd-*`.
+ *
+ * Without an identity there is nothing to derive from, so the old `homedir()`
+ * stands — that path only reaches callers that have not established an identity
+ * yet, and `/api/cwd/browse` refuses those before they get here.
+ */
+export function getBrowseStartDirectory(directory?: string, identity?: WebIdentity | null): string {
+  if (directory) return directory;
+  if (identity && !identity.isAdmin) return getUserHome(identity);
+  return homedir();
 }
 
 export function getWindowsDriveCandidates(): BrowsableDirectory[] {
