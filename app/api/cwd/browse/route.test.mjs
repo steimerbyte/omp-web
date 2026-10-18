@@ -84,6 +84,20 @@ test("zwei Mandanten starten in ihrem eigenen Home, nicht in einem gemeinsamen",
   assert.deepEqual(bobBody.directories.map((entry) => entry.name), ["projects"]);
 });
 
+test("ein Tilde-Pfad zeigt auf das Home des Kontos, nicht auf das des Dienstkontos", async () => {
+  const home = seedTenantHome("alice");
+  mkdirSync(join(home, "projects", "tilde"), { recursive: true });
+
+  // Das Eingabefeld des DirectoryPickers wirbt ausdruecklich mit "~": ohne
+  // Identitaet loest normalizeDirectory() die Tilde mit os.homedir() auf, also
+  // mit der Home des Dienstkontos, und die Allowlist verweigert.
+  const res = await browse("?path=~/projects/tilde", "alice");
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.path, join(home, "projects", "tilde"));
+});
+
 test("ein explizit genannter Pfad gewinnt weiterhin gegen das Home der Identitaet", async () => {
   const home = seedTenantHome("alice");
   const project = join(home, "projects", "demo");

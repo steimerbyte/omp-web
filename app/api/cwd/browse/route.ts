@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
     let resolved: string;
     try {
-      resolved = await resolveDirectory(candidate);
+      resolved = await resolveDirectory(candidate, identity);
     } catch {
       return NextResponse.json({ error: "Directory does not exist" }, { status: 404 });
     }

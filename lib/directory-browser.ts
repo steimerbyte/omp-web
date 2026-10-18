@@ -56,11 +56,25 @@ export async function listWindowsDrives(): Promise<BrowsableDirectory[]> {
   return candidates.filter((drive): drive is BrowsableDirectory => drive !== null);
 }
 
-export function normalizeDirectory(directory: string): string {
-  if (directory === "~") return homedir();
+/**
+ * The home that `~` means for this request.
+ *
+ * The picker advertises `~/project` in its own placeholder, so somebody is going
+ * to type it. Resolving that `~` with `os.homedir()` answers with the service
+ * account's home — a path in nobody's allowlist, so every tenant who uses the
+ * advertised shorthand gets `403`. An admin's `~` *is* `homedir()`, which is why
+ * this only ever failed for the accounts it was written for.
+ */
+function identityHome(identity?: WebIdentity | null): string {
+  if (identity && !identity.isAdmin) return getUserHome(identity);
+  return homedir();
+}
+
+export function normalizeDirectory(directory: string, identity?: WebIdentity | null): string {
+  if (directory === "~") return identityHome(identity);
   if (/^~[\\/]/.test(directory)) {
     const suffix = directory.slice(2).replace(/[\\/]+/g, path.sep);
-    return path.resolve(homedir(), suffix);
+    return path.resolve(identityHome(identity), suffix);
   }
 
   const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(directory)
@@ -81,8 +95,8 @@ export function getParentDirectory(directory: string): string | null {
   return parent === normalized ? null : parent;
 }
 
-export async function resolveDirectory(directory: string): Promise<string> {
-  return realpath(normalizeDirectory(directory));
+export async function resolveDirectory(directory: string, identity?: WebIdentity | null): Promise<string> {
+  return realpath(normalizeDirectory(directory, identity));
 }
 
 export async function listDirectories(directory: string): Promise<BrowsableDirectory[]> {
