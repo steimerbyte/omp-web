@@ -26,6 +26,7 @@ import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
   validateUploadFileNames,
+  writeUploadedFileAtomicSync,
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 
@@ -233,17 +234,14 @@ export async function POST(
         continue;
       }
 
-      if (conflictSet.has(file.name)) {
-        try {
-          fs.unlinkSync(destination);
-        } catch (error) {
-          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-          continue;
-        }
-      }
-
+      // The target is replaced, never deleted and then rewritten. `rename` over
+      // an existing path is atomic, so the file is either the old one or the new
+      // one — never absent. Deleting first would lose the old content outright
+      // whenever the write then fails (ENOSPC, EROFS, or the `wx` collision
+      // below), and the response can only report the failure, not the data.
+      const replacing = conflictSet.has(file.name);
       try {
-        fs.writeFileSync(destination, bytes, { flag: "wx" });
+        writeUploadedFileAtomicSync(destination, bytes, replacing);
         uploaded.push(file.name);
       } catch (error) {
         errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
