@@ -399,12 +399,18 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   `getAllowedFileRoots` ohnehin eine leere Menge; der frühe Return steht da, damit
   das später nicht versehentlich falsch wird.
 - **Darf nicht**: Pfade außerhalb der Root-Menge. Es gibt eine bewusste
-  **Ausnahme**: mit `?sessionId=` darf eine Datei gelesen werden, die von dieser
-  Session referenziert wird, auch außerhalb der Roots — aber nur für Nicht-`list`-
-  Typen und nur wenn der Pfad wirklich referenziert ist. Diese Ausnahme darf
-  **nicht** auf `list` ausgedehnt werden. Zweite Prüfung: `isExistingFilePathAllowed`
-  nach `realpath`, damit ein Symlink in einer erlaubten Root nicht nach draußen
-  zeigt.
+  **Ausnahme** an der *lexikalischen* Allowlist: mit `?sessionId=` darf eine Datei
+  gelesen werden, die von dieser Session als strukturiertes Werkzeug-Pfadfeld
+  referenziert wird, auch wenn sie lexikalisch außerhalb der Root-Menge liegt. Sie
+  gilt nur für Nicht-`list`-Typen. Das ist **keine** Ausnahme von der
+  Mandantengrenze: `isExistingFilePathAllowed` nach `realpath` läuft seit `9c974b4`
+  für jeden Pfad, auch über den Durchlass, sodass ein Pfad außerhalb der Roots der
+  *anrufenden* Identität auch mit korrekter Sessionreferenz abgelehnt wird. Der
+  Durchlass existiert für den Fall, dass eine Root selbst über einen Symlink
+  erreicht wird und ein Werkzeug in `details.resolvedPath` den aufgelösten Pfad
+  meldet — siehe `docs/inventory-tools.md`, Abschnitt GET /api/files, Punkt (c).
+  Er darf **nicht** auf `list` ausgedehnt werden, und die Referenz ist an einen
+  Katalog benannter Pfadfelder gebunden, nicht an Fließtext.
 - **Ort**: `app/api/files/[...path]/route.ts:432-523`, `lib/file-access.ts:38-90`
 
 ### Datei hochladen — `POST` `/api/files/**`

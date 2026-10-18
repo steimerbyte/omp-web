@@ -512,22 +512,35 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Die realpath-Pruefung laeuft **immer**, auch ueber den Durchlass.
+    // Die realpath-Pruefung laeuft **immer**, auch ueber den Durchlass. Ohne das
+    // `!allowedBySessionReference &&` waere eine Sessionreferenz ein vollstaendiger
+    // Bypass der Mandantengrenze fuer `/etc/passwd`, `.ssh/id_*` und alles
+    // andere, was der Prozess lesen kann.
     //
-    // Sie ist der einzige Test, der symbolische Links und `..` nach dem
-    // Aufloesen sieht; die erste Pruefung ist lexikalisch. Sie war vorher an
-    // `!allowedBySessionReference` gekoppelt, und damit genau in dem Fall
-    // ausgefallen, der am weitesten greift — eine Sessionreferenz war ein
-    // vollstaendiger Bypass der Mandantengrenze fuer `/etc/passwd`, `.ssh/id_*`
-    // und alles andere, was der Prozess lesen kann.
+    // ### Wozu der Durchlass dann noch da ist
     //
-    // Der Durchlass ersetzt also nur die *erste* Pruefung: er holt einen Pfad
-    // durch die lexikalische Allowlist, die nach realpath aufgeloeste Grenze
-    // gilt weiter. Fuer einen Admin ist das folgenlos, denn seine Wurzelmenge
-    // enthaelt `/` (siehe `getAdditionalAllowedRoots`), und `isPathWithinRoots`
-    // beantwortet damit weiterhin `true`. Fuer einen Mandanten heisst es: der
-    // Durchlass kann nur noch Pfade freischalten, die nach realpath in seinen
-    // eigenen Roots liegen.
+    // Er ueberspringt die **lexikalische** Allowlist, nicht die Mandantengrenze.
+    // Das ist noetig, weil die beiden Pruefungen nicht dasselbe sehen:
+    // `isFilePathAllowed` vergleicht Zeichenketten, `isExistingFilePathAllowed`
+    // loest vorher `realpath` auf. Die beiden laufen genau dann auseinander,
+    // wenn eine Root selbst ueber einen Symlink erreicht wird — ein Konto, dessen
+    // Home auf ein anderes Verzeichnis zeigt, oder eine Session, deren `cwd` ein
+    // Symlink ist. Dann steht in der Root-Menge der Symlink-Pfad, und ein
+    // Werkzeug meldet in `details.resolvedPath` den **aufgeloesten** Pfad
+    // (`lib/session-file-references-core.ts`, `TOOL_RESULT_PATH_FIELDS.write`).
+    // Der zeigt auf dieselbe Datei, liegt aber lexikalisch ausserhalb jeder Root.
+    // Ohne den Durchlass koennte der Agent die Datei, die er gerade selbst
+    // geschrieben hat, nicht mehr lesen — 403 auf seine eigene Arbeit.
+    //
+    // Das ist der **ganze** Zweck, und es ist ein schmaler: ein Pfad, der nach
+    // `realpath` nicht in den Roots der anrufenden Identitaet liegt, wird auch
+    // mit korrekter Sessionreferenz abgelehnt. Der Durchlass ist damit keine
+    // Schreibberechtigung — `PUT` haengt an derselben realpath-Pruefung
+    // (`lib/write-access.ts`) und kennt keinen Durchlass.
+    //
+    // Fuer einen Admin ist alles folgenlos, denn seine Wurzelmenge enthaelt `/`
+    // (siehe `getAdditionalAllowedRoots`), und `isPathWithinRoots` beantwortet
+    // damit fuer jeden absoluten Pfad `true`.
     if (!isExistingFilePathAllowed(filePath, allowedRoots)) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
