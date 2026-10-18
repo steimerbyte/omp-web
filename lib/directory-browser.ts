@@ -1,6 +1,7 @@
 import { readdir, realpath, stat } from "fs/promises";
 import { homedir } from "os";
 import path from "path";
+import { getUserHome, type WebIdentity } from "./request-identity";
 
 export interface BrowsableDirectory {
   name: string;
@@ -14,8 +15,25 @@ export function shouldShowWindowsDrivePicker(
   return platform === "win32" && !directory;
 }
 
-export function getBrowseStartDirectory(directory?: string): string {
-  return directory || homedir();
+/**
+ * Where the picker opens when the caller named no directory.
+ *
+ * A function of the *identity*, never of `homedir()` alone. The process runs as
+ * one account, so `homedir()` is the service account's home — and for a tenant
+ * that path is in nobody's allowlist: `/api/cwd/browse` answers `403` for it,
+ * so the picker used to open straight into "Access denied" and the only way out
+ * was typing a path by hand. An admin keeps `homedir()`, which for him *is* his
+ * own home; that is the same split `getAllowedFileRoots` makes when it scans
+ * for `~/omp-cwd-*`.
+ *
+ * Without an identity there is nothing to derive from, so the old `homedir()`
+ * stands — that path only reaches callers that have not established an identity
+ * yet, and `/api/cwd/browse` refuses those before they get here.
+ */
+export function getBrowseStartDirectory(directory?: string, identity?: WebIdentity | null): string {
+  if (directory) return directory;
+  if (identity && !identity.isAdmin) return getUserHome(identity);
+  return homedir();
 }
 
 export function getWindowsDriveCandidates(): BrowsableDirectory[] {
@@ -38,11 +56,25 @@ export async function listWindowsDrives(): Promise<BrowsableDirectory[]> {
   return candidates.filter((drive): drive is BrowsableDirectory => drive !== null);
 }
 
-export function normalizeDirectory(directory: string): string {
-  if (directory === "~") return homedir();
+/**
+ * The home that `~` means for this request.
+ *
+ * The picker advertises `~/project` in its own placeholder, so somebody is going
+ * to type it. Resolving that `~` with `os.homedir()` answers with the service
+ * account's home — a path in nobody's allowlist, so every tenant who uses the
+ * advertised shorthand gets `403`. An admin's `~` *is* `homedir()`, which is why
+ * this only ever failed for the accounts it was written for.
+ */
+function identityHome(identity?: WebIdentity | null): string {
+  if (identity && !identity.isAdmin) return getUserHome(identity);
+  return homedir();
+}
+
+export function normalizeDirectory(directory: string, identity?: WebIdentity | null): string {
+  if (directory === "~") return identityHome(identity);
   if (/^~[\\/]/.test(directory)) {
     const suffix = directory.slice(2).replace(/[\\/]+/g, path.sep);
-    return path.resolve(homedir(), suffix);
+    return path.resolve(identityHome(identity), suffix);
   }
 
   const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(directory)
@@ -63,8 +95,8 @@ export function getParentDirectory(directory: string): string | null {
   return parent === normalized ? null : parent;
 }
 
-export async function resolveDirectory(directory: string): Promise<string> {
-  return realpath(normalizeDirectory(directory));
+export async function resolveDirectory(directory: string, identity?: WebIdentity | null): Promise<string> {
+  return realpath(normalizeDirectory(directory, identity));
 }
 
 export async function listDirectories(directory: string): Promise<BrowsableDirectory[]> {

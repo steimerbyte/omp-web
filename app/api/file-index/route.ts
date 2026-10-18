@@ -10,7 +10,9 @@ import {
   isWindowsAbsolutePath,
 } from "@/lib/file-access";
 import { getRequestIdentity } from "@/lib/request-identity";
+import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { buildEntriesFromFiles, filterFileEntries, type FileIndexEntry } from "@/lib/file-fuzzy";
+import { isPathWithinRoots } from "@/lib/path-security";
 import { isApiRequestAllowed } from "@/lib/request-security";
 
 const execFileAsync = promisify(execFile);
@@ -79,12 +81,43 @@ async function listWithGit(cwd: string): Promise<FileListing | null> {
   }
 }
 
+/** The resolved path, or `null` when it cannot be resolved. Never throws. */
+function realpathOrNull(candidate: string): string | null {
+  try {
+    return fs.realpathSync(candidate);
+  } catch {
+    return null;
+  }
+}
+
 function listWithWalk(cwd: string): FileListing {
   const files: string[] = [];
-  // BFS so shallow files win when the cap truncates the listing.
-  const queue: Array<{ abs: string; rel: string; depth: number }> = [{ abs: cwd, rel: "", depth: 0 }];
+  const rootReal = realpathOrNull(cwd);
+  // `real` travels with each queued directory so the visited set can be filled
+  // without a `realpath` syscall per directory: the real path of a plain child
+  // of a directory whose own real path is known is that path plus the name.
+  const queue: Array<{ abs: string; rel: string; depth: number; real: string | null }> = [
+    { abs: cwd, rel: "", depth: 0, real: rootReal },
+  ];
+  // Symbolic links are listed and — when they point at a directory inside the
+  // tree — descended into. Both conditions are needed:
+  //
+  // - Without following them at all, `d.isFile()` and `d.isDirectory()` are
+  //   false for a link, so every symlink fell through the loop and vanished.
+  //   `git ls-files` *does* list them, so the two listing paths disagreed on
+  //   the same folder: `link.ts` and a symlinked `src/` were @-mentionable in
+  //   a git repo and not in a plain directory. `resolveDirentIsDirectory` is
+  //   the same stat fallback /api/files uses for its listing.
+  // - Only inside the tree, and only once per real directory. A link to /etc
+  //   would put foreign files into the @ menu, and every one of them is
+  //   refused by the allowlist when it is opened; a link that resolves to a
+  //   directory that is already in the walk — an ancestor, or `src/self` —
+  //   would be re-expanded under a second, third, fourth name.
+  const visited = new Set<string>();
+  if (rootReal) visited.add(rootReal);
+
   while (queue.length > 0) {
-    const { abs, rel, depth } = queue.shift()!;
+    const { abs, rel, depth, real } = queue.shift()!;
     let dirents: fs.Dirent[];
     try {
       dirents = fs.readdirSync(abs, { withFileTypes: true });
@@ -94,15 +127,34 @@ function listWithWalk(cwd: string): FileListing {
     for (const d of dirents) {
       if (IGNORED_NAMES.has(d.name) || IGNORED_SUFFIXES.some((s) => d.name.endsWith(s))) continue;
       const childRel = rel ? `${rel}/${d.name}` : d.name;
+      const childAbs = path.join(abs, d.name);
       if (d.isDirectory()) {
         if (depth + 1 <= MAX_WALK_DEPTH) {
-          queue.push({ abs: path.join(abs, d.name), rel: childRel, depth: depth + 1 });
+          const childReal = real ? path.join(real, d.name) : realpathOrNull(childAbs);
+          if (childReal) visited.add(childReal);
+          queue.push({ abs: childAbs, rel: childRel, depth: depth + 1, real: childReal });
         }
       } else if (d.isFile()) {
         if (files.length >= WALK_HARD_CAP) {
           return { files, hardTruncated: true };
         }
         files.push(childRel);
+      } else if (d.isSymbolicLink()) {
+        if (depth + 1 > MAX_WALK_DEPTH) continue;
+        const isDir = resolveDirentIsDirectory(d, childAbs);
+        if (isDir === null) continue; // broken link, or gone between readdir and stat
+        if (!isDir) {
+          if (files.length >= WALK_HARD_CAP) {
+            return { files, hardTruncated: true };
+          }
+          files.push(childRel);
+          continue;
+        }
+        const realChild = realpathOrNull(childAbs);
+        if (!realChild || visited.has(realChild)) continue;
+        if (rootReal && !isPathWithinRoots(realChild, new Set([rootReal]))) continue;
+        visited.add(realChild);
+        queue.push({ abs: childAbs, rel: childRel, depth: depth + 1, real: realChild });
       }
     }
   }

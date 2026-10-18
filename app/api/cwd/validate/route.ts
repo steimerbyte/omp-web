@@ -23,7 +23,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Path is required" }, { status: 400 });
     }
 
-    const normalizedCwd = normalizeDirectory(cwd);
+    const normalizedCwd = normalizeDirectory(cwd, identity);
     let canonicalCwd: string;
     try {
       const stat = statSync(normalizedCwd);

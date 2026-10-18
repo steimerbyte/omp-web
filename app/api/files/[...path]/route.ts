@@ -20,6 +20,13 @@ import {
   getImageMime,
 } from "@/lib/file-types";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
+// Die Binär-Erkennung, die die present_files-Karte schon benutzt. Eine Datei
+// ohne (oder mit unbekannter) Endung entscheidet sich nur über ihren Inhalt —
+// und genau diesen Inhalt liest diese Route. Vorher lag hier nur die
+// Endungstabelle, wodurch jedes `*.wasm`, `*.so`, `*.bin` als Quelltext
+// durchging.
+import { headLooksLikeText } from "@/lib/present-files-probe";
+import { PRESENT_SNIFF_BYTES } from "@/lib/present-files";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import {
@@ -72,6 +79,39 @@ function getLanguage(filePath: string): string {
 
 function parseFileRequestType(value: string): FileRequestType | null {
   return FILE_REQUEST_TYPE_SET.has(value) ? (value as FileRequestType) : null;
+}
+
+/**
+ * Read the sniff window from the head of `filePath`.
+ *
+ * `null` when the file cannot be opened at all. That is *not* binary: the caller
+ * must not answer "no preview" for a file it simply could not read, and the
+ * `read` branch already holds the bytes anyway, so it sniffs those.
+ */
+function readSniffHead(filePath: string): Buffer | null {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(filePath, "r");
+    const buffer = Buffer.alloc(PRESENT_SNIFF_BYTES);
+    const bytesRead = fs.readSync(fd, buffer, 0, PRESENT_SNIFF_BYTES, 0);
+    return buffer.subarray(0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* already gone */ }
+    }
+  }
+}
+
+/**
+ * Is this file binary rather than text?
+ *
+ * An empty file is text: `headLooksLikeText` has no sample to judge and answers
+ * `false`, which for a zero-byte file would be the wrong answer.
+ */
+function looksBinary(bytes: Buffer | null): boolean {
+  return bytes !== null && bytes.length > 0 && !headLooksLikeText(bytes);
 }
 
 /**
@@ -495,7 +535,19 @@ export async function GET(
       if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
         return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
       }
-      const content = fs.readFileSync(filePath, "utf-8");
+      // One read, two answers: the bytes decide whether this is text at all,
+      // and they are the bytes the viewer gets. `readFileSync(path, "utf-8")`
+      // turned every unknown-extension binary into a string of NUL bytes and
+      // U+FFFD, which the viewer then rendered as source code and happily
+      // offered to edit.
+      const bytes = fs.readFileSync(filePath);
+      if (looksBinary(bytes)) {
+        return NextResponse.json(
+          { error: "Binary file cannot be displayed", binary: true, size: stat.size },
+          { status: 415 },
+        );
+      }
+      const content = bytes.toString("utf-8");
       const language = getLanguage(filePath);
       return NextResponse.json({ content, language, size: stat.size });
     }
@@ -518,7 +570,13 @@ export async function GET(
       return NextResponse.json({
         size: stat.size,
         language: getLanguage(filePath),
-        mime: imageMime || audioMime || documentMime || "text/plain",
+        // The Properties dialog prints this string verbatim, and "text/plain"
+        // for a compiled binary is the same wrong answer `read` used to give —
+        // the file has no extension table entry, so only the content can say.
+        mime: imageMime
+          || audioMime
+          || documentMime
+          || (looksBinary(readSniffHead(filePath)) ? "application/octet-stream" : "text/plain"),
         previewKind: documentPreviewKind(filePath),
       });
     }
