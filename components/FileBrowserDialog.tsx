@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import styles from "./FileBrowserDialog.module.css";
 import { Pressable } from "./motion/Pressable";
 import { FolderIcon, getFileIcon } from "./FileIcons";
-import { encodeFilePathForApi, getFileDirectory, joinFilePath, normalizeFilePathSlashes } from "@/lib/file-paths";
+import { encodeFilePathForApi, joinFilePath, normalizeFilePathSlashes } from "@/lib/file-paths";
 import { isImagePath } from "@/lib/file-types";
 import { useI18n } from "@/hooks/useI18n";
 import { ModalBackdrop, ModalPanel } from "./motion/Enter";
@@ -76,11 +76,18 @@ const THUMBNAIL_ROOT_MARGIN = "240px";
 const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 /**
- * Verzeichnislisting fuer die Zielordner-Auswahl. Dieselbe Route wie der
- * Explorer, damit die Auswahl dieselben Pfadgrenzen sieht und ein 403 der
- * Schreib-API nicht erst nach dem Bestaetigen auffaellt.
+ * Verzeichnislisting fuer die Zielordner-Auswahl plus der Elternpfad, den die
+ * Route betreten duerfte. Dieselbe Route wie der Explorer, damit die Auswahl
+ * dieselben Pfadgrenzen sieht und ein 403 der Schreib-API nicht erst nach dem
+ * Bestaetigen auffaellt.
+ *
+ * `parentPath` kommt vom Server und ist dort schon gegen die Allowlist
+ * geprueft. Die Komponente rechnet ihn nicht selbst: `getFileDirectory()` ist
+ * lexikalisch, also lieferte es fuer ein Konto mit Home `<root>/alice` den
+ * Pfad `<root>`, den kein Mandant betreten darf — der erste Klick auf "eine
+ * Ebene hoeher" endete in `403 Access denied`.
  */
-async function fetchDirectory(dirPath: string): Promise<DirectoryEntry[]> {
+async function fetchDirectory(dirPath: string): Promise<{ entries: DirectoryEntry[]; parentPath: string | null }> {
   const response = await fetch(`/api/files/${encodeFilePathForApi(dirPath)}?type=list`);
   if (!response.ok) {
     let message = `Failed to load files (HTTP ${response.status})`;
@@ -92,8 +99,8 @@ async function fetchDirectory(dirPath: string): Promise<DirectoryEntry[]> {
     }
     throw new Error(message);
   }
-  const data = await response.json() as { entries?: DirectoryEntry[] };
-  return data.entries ?? [];
+  const data = await response.json() as { entries?: DirectoryEntry[]; parentPath?: string | null };
+  return { entries: data.entries ?? [], parentPath: data.parentPath ?? null };
 }
 
 /** Trailing Slashes entfernen, damit "/" der einzige Pfad ohne Slash bleibt. */
@@ -317,6 +324,9 @@ export function FileBrowserDialog({
   const { t } = useI18n();
   const [currentPath, setCurrentPath] = useState(() => trimTrailingSlash(initialPath));
   const [entries, setEntries] = useState<DirectoryEntry[]>([]);
+  // Vom Server gegen die Allowlist geprueft; `null` heisst "hier gibt es kein
+  // Weg nach oben".
+  const [parentPath, setParentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -366,11 +376,13 @@ export function FileBrowserDialog({
     void fetchDirectory(target)
       .then((next) => {
         if (requestIdRef.current !== requestId) return;
-        setEntries(next);
+        setEntries(next.entries);
+        setParentPath(next.parentPath);
       })
       .catch((cause: unknown) => {
         if (requestIdRef.current !== requestId) return;
         setEntries([]);
+        setParentPath(null);
         setLoadError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
@@ -430,7 +442,10 @@ export function FileBrowserDialog({
 
   if (!open) return null;
 
-  const parentPath = currentPath === "/" ? null : getFileDirectory(currentPath);
+  // Der Aufwaerts-Knopf folgt dem Server: nur ein Elternpfad, den man
+  // betreten darf, wird angeboten. Rechnet die Komponente den Pfad selbst
+  // (`getFileDirectory`), zeigte sie fuer jeden Mandanten einen Knopf, dessen
+  // erster Klick in "Access denied" endete.
   const canGoUp = parentPath !== null && parentPath !== "" && parentPath !== currentPath;
   // Ein nicht geladenes Verzeichnis ist kein bestaetigbares Ziel: die
   // Meldung darf nur ausgeblendet, nicht weggedrueckt werden.

@@ -111,6 +111,44 @@ test("ein Link nach ausserhalb zieht keine fremden Dateien in den Index", async 
   rmSync(outside, { recursive: true, force: true });
 });
 
+test("eine verlinkte Datei nach ausserhalb bleibt draussen, eine innerhalb nicht", async () => {
+  const outside = mkdtempSync(join(tmpdir(), "omp-web-outside-"));
+  writeFileSync(join(outside, "secret.txt"), "top secret\n");
+
+  const root = project((dir) => {
+    writeFileSync(join(dir, "own.txt"), "own\n");
+    // Ziel ausserhalb der Wurzel: der Link darf nicht im Index stehen.
+    symlinkSync(join(outside, "secret.txt"), join(dir, "escape.txt"));
+    // Ziel innerhalb der Wurzel: bleibt drin, das ist der Normalfall aus 90a4bb9.
+    symlinkSync(join(dir, "own.txt"), join(dir, "alias.txt"));
+  });
+
+  const body = await (await index(root)).json();
+
+  // Dieselbe Begruendung wie beim verlinkten Ordner in 90a4bb9, nur bisher
+  // nicht umgesetzt: ein Link auf eine fremde Datei verraten, dass es sie gibt,
+  // und laesst sich dann nicht oeffnen. Der Ordnerzweig hatte die Wurzelgrenze,
+  // der Dateizweig nicht.
+  assert.deepEqual(body.files.sort(), ["alias.txt", "own.txt"]);
+  rmSync(root, { recursive: true, force: true });
+  rmSync(outside, { recursive: true, force: true });
+});
+
+test("die @-Suche findet eine verlinkte Datei ausserhalb der Wurzel nicht", async () => {
+  const outside = mkdtempSync(join(tmpdir(), "omp-web-outside-"));
+  writeFileSync(join(outside, "secret.txt"), "top secret\n");
+
+  const root = project((dir) => {
+    symlinkSync(join(outside, "secret.txt"), join(dir, "escape.txt"));
+  });
+
+  const body = await (await index(root, "escape")).json();
+
+  assert.deepEqual(body.matches, []);
+  rmSync(root, { recursive: true, force: true });
+  rmSync(outside, { recursive: true, force: true });
+});
+
 test("ein Link zurueck in den Vorfahren erzeugt weder Schleife noch Duplikate", async () => {
   const root = project((dir) => {
     mkdirSync(join(dir, "src"));

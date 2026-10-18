@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
@@ -48,6 +48,20 @@ function validate(cwd, username) {
   }));
 }
 
+/** Wie `validate`, aber mit dem Admin-Kopf — `getUserHome(admin)` ist `/`. */
+function validateAsAdmin(cwd) {
+  return validateRoute.POST(new Request("http://localhost:30141/api/cwd/validate", {
+    method: "POST",
+    headers: {
+      host: "localhost:30141",
+      "content-type": "application/json",
+      "x-omp-user": "admin",
+      "x-omp-admin": "1",
+    },
+    body: JSON.stringify({ cwd }),
+  }));
+}
+
 test.after(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 
 test("'~/projects/app' validiert gegen das Home des angemeldeten Kontos", async () => {
@@ -86,4 +100,18 @@ test("die Tilde eines Mandanten erreicht nicht das Home eines anderen", async ()
   assert.equal(res.status, 200);
   assert.equal(body.cwd, join(HOME_ROOT, "alice"));
   assert.notEqual(body.cwd, bobHome);
+});
+
+test("'~' des Admins bleibt die Home des Prozesses, nicht das Wurzelverzeichnis", async () => {
+  const res = await validateAsAdmin("~");
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.success, true);
+  // Alle drei Mandantentests liefen ueber "alice". Der Admin-Zweig von
+  // `identityHome()` ist damit ungesehen geblieben: faellt er weg, zeigt die
+  // Tilde des Admins auf `/` — er darf dort zwar alles, startet aber im
+  // Wurzelverzeichnis statt in dem Verzeichnis, das er vor scan-fixes hatte.
+  assert.equal(body.cwd, realpathSync(homedir()));
+  assert.notEqual(body.cwd, "/");
 });

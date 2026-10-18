@@ -144,6 +144,16 @@ function listWithWalk(cwd: string): FileListing {
         const isDir = resolveDirentIsDirectory(d, childAbs);
         if (isDir === null) continue; // broken link, or gone between readdir and stat
         if (!isDir) {
+          // Dieselbe Grenze wie im Ordnerzweig unten: ein Link zeigt nur dann in
+          // den Index, wenn sein Ziel innerhalb der Wurzel liegt. Ein Link auf
+          // /etc/passwd wuerde die Datei sonst im @-Menue und in der Suche
+          // anzeigen, obwohl das Oeffnen an der Allowlist scheitert — der
+          // Eintrag verraten Existenz und Verzeichnis fremder Dateien und ist
+          // keiner zu bedienen. Innerhalb der Wurzel bleibt ein verlinkter
+          // Inhalt natuerlich drin.
+          const fileReal = realpathOrNull(childAbs);
+          if (!fileReal) continue;
+          if (rootReal && !isPathWithinRoots(fileReal, new Set([rootReal]))) continue;
           if (files.length >= WALK_HARD_CAP) {
             return { files, hardTruncated: true };
           }
