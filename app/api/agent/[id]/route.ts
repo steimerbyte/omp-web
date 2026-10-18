@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { requireSessionAccess } from "../../sessions/session-guard";
 
 /**
  * Request-body ceiling this route accepts, matching
@@ -27,6 +28,31 @@ export async function POST(
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
+
+  const { id } = await params;
+
+  // Die Berechtigung steht **vor** `hasJsonContentType` und der Body-Grenze,
+  // nicht danach. Zwei Argumente dagegen, und beide tragen nicht:
+  //
+  // 1. Die beiden spaeteren Pruefungen lesen den Body nicht. Die
+  //    Groessenpruefung liest nur `content-length` aus den Headern, und
+  //    `hasJsonContentType` liest `content-type`. "Die Route verarbeitet einen
+  //    fremden Body" trifft also nicht zu — es entsteht kein Lese- oder
+  //    Pufferaufwand, den ein Angreifer gegen einen Mandanten ausnutzen
+  //    koennte. Der 30-MB-Deckel bleibt ueber `proxy.ts` ohnehin eine
+  //    transportermassige Grenze, unabhaengig von der Reihenfolge hier.
+  // 2. Umgekehrt liefern 415 und 413 einem Aufrufer ohne Berechtigung Antworten
+  //    ueber eine Ressource, die ihm nicht gehoert. Sie sind Fehler *ueber*
+  //    seinen Body, verkleidet als Fehler *ueber die Session*. Die
+  //    Berechtigungsfrage ist die einzige, deren Antwort nichts ueber den
+  //    Aufrufer hinaus preisgeben darf, also ist sie die erste.
+  //
+  // Der Origin-Check bleibt davor: der beantwortet "darf dieser Request die API
+  // ueberhaupt ansprechen", und das ist eine Eigenschaft des Requests selbst,
+  // nicht der Ressource.
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
+
   if (!hasJsonContentType(req)) {
     return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
   }
@@ -46,7 +72,6 @@ export async function POST(
     }, { status: 413 });
   }
 
-  const { id } = await params;
   let commandType: string | undefined;
   let promptAccepted = false;
 
@@ -89,10 +114,16 @@ export async function POST(
 
 // GET /api/agent/[id] - Get current agent state
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+
+  // Gleiche Regel wie POST, gleiche Begruendung: vor `getRpcSession`. Ein Guard
+  // hinter dem `getRpcSession` waere nutzlos — das Aufhaengen der fremden
+  // Session haette den Schaden schon getan.
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
 
   try {
     const session = getRpcSession(id);

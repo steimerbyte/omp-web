@@ -1,6 +1,7 @@
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession, type AgentEvent } from "@/lib/rpc-manager";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { requireSessionAccess } from "../../../sessions/session-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +23,18 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
   if (!isApiRequestAllowed(req)) {
     return new Response("Untrusted API request", { status: 403 });
   }
+  const { id } = await params;
+
+  // Der Event-Stream ist das schlimmste Ziel dieser Luecke: er liefert den
+  // laufenden Dialog einer fremden Session mit. Der Guard steht vor
+  // `getRpcSession` und vor `startRpcSession` — beides haengt die fremde Session
+  // erst an diesen Prozess, und das ist der Schaden, den ein spaeterer Guard
+  // nicht mehr rueckgaengig macht.
+  const denied = await requireSessionAccess(req, id);
+  if (denied) return denied;
 
 
   // Fast path: already-running session
