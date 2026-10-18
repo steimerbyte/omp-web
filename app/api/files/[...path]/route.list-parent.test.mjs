@@ -85,3 +85,27 @@ test("eine Stufe tiefer in der Home bleibt navigierbar", async () => {
   // der Knopf. Genau dieser Fall waere mit einer zu strengen Regel kaputt.
   assert.equal(body.parentPath, join(HOME, "projects"));
 });
+
+test("die Liste nennt jede betretbare Krume und hoert vor der Home auf", async () => {
+  const res = await list(join(HOME, "projects", "demo"));
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  // Die Brotkrumen von `FileBrowserDialog` werden zu Knoepfen, sobald sie
+  // hier stehen. Reichen wuerde nur der Elternpfad, wuerde der Dialog weiter
+  // jede Krume ueber der Home klickbar rendern — und der erste Klick endete in
+  // "Access denied". Reihenfolge: vom naechsten Vorfahren aus.
+  assert.deepEqual(body.ancestors, [join(HOME, "projects"), HOME]);
+  // `HOME_ROOT` ist die Wurzel des Mandanten und liegt ausserhalb seiner
+  // Allowlist; es darf in keiner Form als Ziel auftauchen.
+  assert.equal(body.ancestors.includes(HOME_ROOT), false);
+});
+
+test("in der Home des Kontos ist die Kette der betretbaren Krume leer", async () => {
+  const res = await list(HOME);
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(body.ancestors, []);
+  assert.equal(body.parentPath, null);
+});
