@@ -123,16 +123,30 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
   (`FileViewer.tsx:957-973`) — das ist Darstellung, siehe `inventory-ui.md`.
 - **Darf nicht**: (a) **Der Pfad kommt aus der URL, also ist er vom Aufrufer gewählt.** Alles
   Weitere leitet sich aus der Identität allein ab — nie aus dem Pfad, `sessionId` oder
-  `expectedMtimeMs` (`route.ts:656-660`). (b) Es gibt **zwei** Prüfungen, und die zweite ist nicht
+  `expectedMtimeMs` (`route.ts:686-691`). (b) Es gibt **zwei** Prüfungen, und die zweite ist nicht
   überflüssig: erst `isFilePathAllowed` (rein lexikalisch, `:456`), dann nach `statSync` noch
-  `isExistingFilePathAllowed` (realpath, `:472-475`). Die erste kann ein Symlink passieren, die
-  zweite nicht. (c) `allowedBySessionReference` (`:458-461`) gilt **nur** für Nicht-`list` und
-  hebt die realpath-Prüfung nicht auf, sondern überspringt sie bewusst: eine Datei, die eine
-  Session referenziert, ist für diese lesbar. Das ist ein bewusster Durchlass, kein Loch, weil die
-  Referenz selbst geprüft ist. (d) Eine fehlende Identität wird **zweimal** abgelehnt, einmal
-  explizit und einmal implizit über die leere Root-Menge — „the explicit early return is there to
-  make that impossible to get wrong by accident later" (`:447-453`).
-- **Ort**: `app/api/files/[...path]/route.ts:432-640` (GET), `:40-46` (Typen), `:456-475` (Prüfungen)
+  `isExistingFilePathAllowed` (realpath, `:504`). Die erste kann einen Symlink passieren, die
+  zweite nicht. (c) `allowedBySessionReference` (`:460-463`) gilt **nur** für Nicht-`list` und
+  hebt die realpath-Prüfung **nicht** auf: `isExistingFilePathAllowed` läuft seit `9c974b4` für
+  **jeden** Pfad, auch über den Durchlass. Der Durchlass überspringt damit nur die *lexikalische*
+  Allowlist. **Wozu er überhaupt nötig ist:** die beiden Prüfungen sehen nicht dasselbe, und sie
+  laufen genau dann auseinander, wenn eine Root selbst über einen Symlink erreicht wird — ein Konto
+  mit symlink-gebundenem Home, oder eine Session, deren `cwd` ein Symlink ist. Dann steht in der
+  Root-Menge der Symlink-Pfad, während ein Werkzeug in `details.resolvedPath` den *aufgelösten*
+  Pfad meldet (`TOOL_RESULT_PATH_FIELDS.write` in `lib/session-file-references-core.ts:118`).
+  Der zeigt auf dieselbe Datei, liegt aber lexikalisch außerhalb jeder Root; ohne den Durchlass
+  bekäme der Agent beim Lesen der gerade selbst geschriebenen Datei ein 403. **Was er nicht ist:**
+  keine Ausnahme von der Mandantengrenze. Ein Pfad, der nach `realpath` nicht in den Roots der
+  *anrufenden* Identität liegt, wird auch mit korrekter Sessionreferenz abgelehnt — `/etc/passwd`
+  aus der Session einer Mandantin bleibt 403. Und er ist keine Schreibberechtigung: `PUT` hängt an
+  derselben realpath-Prüfung (`route.ts:695`) und kennt keinen Durchlass. Die Referenz selbst ist
+  an einen **Katalog benannter Werkzeug-Pfadfelder** gebunden
+  (`lib/session-file-references-core.ts:90` und `:116`), **ohne Default-Zweig**: Fließtext,
+  `thinking` und Tool-Ausgabe zählen nicht als Referenz, weil eine gelesene Logdatei sonst jeden
+  Pfad aus ihrem Inhalt sessionreferenziert hätte. (d) Eine fehlende Identität wird **zweimal**
+  abgelehnt, einmal explizit und einmal implizit über die leere Root-Menge — „the explicit early
+  return is there to make that impossible to get wrong by accident later" (`:450-453`).
+- **Ort**: `app/api/files/[...path]/route.ts:432-672` (GET), `:40-42` (Typen), `:456-506` (Prüfungen)
 
 ### PUT /api/files — der Editor-Speicher
 - **Kann**: Schreibt den Inhalt einer Datei zurück, mit Optimistic-Concurrency über
