@@ -76,18 +76,23 @@ const THUMBNAIL_ROOT_MARGIN = "240px";
 const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 /**
- * Verzeichnislisting fuer die Zielordner-Auswahl plus der Elternpfad, den die
+ * Verzeichnislisting fuer die Zielordner-Auswahl plus die Vorfahren, die die
  * Route betreten duerfte. Dieselbe Route wie der Explorer, damit die Auswahl
  * dieselben Pfadgrenzen sieht und ein 403 der Schreib-API nicht erst nach dem
  * Bestaetigen auffaellt.
  *
- * `parentPath` kommt vom Server und ist dort schon gegen die Allowlist
- * geprueft. Die Komponente rechnet ihn nicht selbst: `getFileDirectory()` ist
- * lexikalisch, also lieferte es fuer ein Konto mit Home `<root>/alice` den
+ * `parentPath` und `ancestors` kommen vom Server und sind dort schon gegen die
+ * Allowlist geprueft. Die Komponente rechnet sie nicht selbst: `getFileDirectory()`
+ * ist lexikalisch, also lieferte es fuer ein Konto mit Home `<root>/alice` den
  * Pfad `<root>`, den kein Mandant betreten darf — der erste Klick auf "eine
- * Ebene hoeher" endete in `403 Access denied`.
+ * Ebene hoeher" endete in `403 Access denied`, und dieselbe Rechnung liess jede
+ * Brotkrume ueber der Home klickbar, auch wenn sie niemand betreten darf.
  */
-async function fetchDirectory(dirPath: string): Promise<{ entries: DirectoryEntry[]; parentPath: string | null }> {
+async function fetchDirectory(dirPath: string): Promise<{
+  entries: DirectoryEntry[];
+  parentPath: string | null;
+  ancestors: string[];
+}> {
   const response = await fetch(`/api/files/${encodeFilePathForApi(dirPath)}?type=list`);
   if (!response.ok) {
     let message = `Failed to load files (HTTP ${response.status})`;
@@ -99,8 +104,16 @@ async function fetchDirectory(dirPath: string): Promise<{ entries: DirectoryEntr
     }
     throw new Error(message);
   }
-  const data = await response.json() as { entries?: DirectoryEntry[]; parentPath?: string | null };
-  return { entries: data.entries ?? [], parentPath: data.parentPath ?? null };
+  const data = await response.json() as {
+    entries?: DirectoryEntry[];
+    parentPath?: string | null;
+    ancestors?: string[];
+  };
+  return {
+    entries: data.entries ?? [],
+    parentPath: data.parentPath ?? null,
+    ancestors: data.ancestors ?? [],
+  };
 }
 
 /** Trailing Slashes entfernen, damit "/" der einzige Pfad ohne Slash bleibt. */
@@ -327,6 +340,9 @@ export function FileBrowserDialog({
   // Vom Server gegen die Allowlist geprueft; `null` heisst "hier gibt es kein
   // Weg nach oben".
   const [parentPath, setParentPath] = useState<string | null>(null);
+  // Die betretbaren Vorfahren, vom naechsten aus. Nur sie werden zu klickbaren
+  // Brotkrumen; die uebrigen bleiben als Kontext sichtbar.
+  const [ancestors, setAncestors] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -367,7 +383,6 @@ export function FileBrowserDialog({
     // duerfen sich nicht gegenseitig die Antworten ueberschreiben.
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setCurrentPath(target);
     setActiveIndex(-1);
     setLoadError(null);
     setDismissedError(null);
@@ -376,13 +391,20 @@ export function FileBrowserDialog({
     void fetchDirectory(target)
       .then((next) => {
         if (requestIdRef.current !== requestId) return;
+        // Erst nach der Antwort wird der Pfad uebernommen. Vorher stand hier
+        // `setCurrentPath(target)`: ein abgelehnter Sprung zeigte danach den
+        // verbotenen Pfad als aktuellen an, mit eigener Krume-Leiste — ein
+        // Fehlzustand, den der Nutzer fuer den gelungenen Klick halten musste.
+        setCurrentPath(target);
         setEntries(next.entries);
         setParentPath(next.parentPath);
+        setAncestors(next.ancestors);
       })
       .catch((cause: unknown) => {
         if (requestIdRef.current !== requestId) return;
         setEntries([]);
         setParentPath(null);
+        setAncestors([]);
         setLoadError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
@@ -566,13 +588,14 @@ export function FileBrowserDialog({
           )}
           {crumbs.map((crumb, index) => {
             const isLast = index === crumbs.length - 1;
+            // Nur was der Server bestaetigt hat, wird ein Knopf. Die Krume
+            // ueber der Home des Kontos bleiben sichtbar — sie zeigen, wo man
+            // sich befindet — aber sie sind kein Ziel, und ein Klick darauf
+            // endete in "Access denied".
+            const navigable = !isLast && ancestors.includes(crumb.fullPath);
             return (
               <span key={crumb.fullPath} className={styles.crumbGroup}>
-                {isLast ? (
-                  <span className={`${styles.crumb} ${styles.crumbCurrent}`} title={crumb.fullPath}>
-                    {crumb.name}
-                  </span>
-                ) : (
+                {navigable ? (
                   <Pressable
                     type="button"
                     className={styles.crumb}
@@ -581,6 +604,14 @@ export function FileBrowserDialog({
                   >
                     {crumb.name}
                   </Pressable>
+                ) : (
+                  <span
+                    className={`${styles.crumb} ${isLast ? styles.crumbCurrent : ""}`}
+                    title={crumb.fullPath}
+                    aria-disabled={!isLast ? true : undefined}
+                  >
+                    {crumb.name}
+                  </span>
                 )}
                 {!isLast && <span className={styles.crumbSeparator}>/</span>}
               </span>

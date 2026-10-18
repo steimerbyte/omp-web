@@ -689,27 +689,31 @@ export async function GET(
         return a.name.localeCompare(b.name);
       });
 
-    // Der Elternpfad wird nur genannt, wenn man ihn auch wirklich betreten
-    // darf. `getFileDirectory()` rechnet rein lexikalisch: fuer ein Konto mit
-    // Home `<home-root>/alice` lieferte es `<home-root>`, und das liegt
-    // ausserhalb jeder Allowlist. `FileBrowserDialog` aktiviert den
-    // Aufwaerts-Knopf allein danach, ob es einen Elternpfad gibt — der Knopf
-    // fuehrte also fuer jeden Mandanten beim ersten Klick in `403 Access
-    // denied`. Dasselbe Muster wie in `/api/cwd/browse` (5569d3a): die
-    // Allowlist-Pruefung gehoert auf den Server, `null` heisst fuer die
-    // Oberflaeche "kein Weg nach oben". Fuer einen Mandanten mit Home
-    // `<root>/alice` und cwd `<root>/alice/projects/demo` ist `<root>/alice`
-    // in der Allowlist (`getAdditionalAllowedRoots` nimmt die Home jedes
-    // Kontos auf) — der Knopf bleibt also erhalten, wo er fuehrt.
-    const candidateParent = getFileDirectory(filePath);
-    const parentPath = candidateParent
-      && candidateParent !== ""
-      && candidateParent !== filePath
-      && isExistingFilePathAllowed(candidateParent, allowedRoots)
-      ? candidateParent
-      : null;
+    // Welche Vorfahren man betreten darf, entscheidet der Server: der Client
+    // kennt die Allowlist nicht. `getFileDirectory()` rechnet rein lexikalisch,
+    // also liegen fuer ein Konto mit Home `<home-root>/alice` genau die Crumbs
+    // ueber der Home ausserhalb jeder Root — und jeder Klick auf sie endete in
+    // `403 Access denied`, obwohl die Krume daneben sichtbar war. Dieselbe
+    // Fehlerklasse wie beim Aufwaerts-Knopf (5569d3a), dieselbe Route.
+    //
+    // `ancestors` zaehlt nach oben bis zur ersten nicht erlaubten Stufe, vom
+    // naechsten Vorfahren aus; `parentPath` ist dessen erstes Element und
+    // damit unveraendert die eine Stufe, die der Aufwaerts-Knopf braucht. Fuer
+    // einen Mandanten mit Home `<root>/alice` und cwd
+    // `<root>/alice/projects/demo` stehen `<root>/alice/projects` und
+    // `<root>/alice` in der Liste — die Home jedes Kontos steht in
+    // `getAdditionalAllowedRoots` —, `<root>` fehlt.
+    const ancestors: string[] = [];
+    let cursor = getFileDirectory(filePath);
+    while (cursor && cursor !== filePath && isExistingFilePathAllowed(cursor, allowedRoots)) {
+      ancestors.push(cursor);
+      const next = getFileDirectory(cursor);
+      // Die Wurzel ist ihr eigener Elternpfad; daruber waere die Schleife endlos.
+      if (next === cursor) break;
+      cursor = next;
+    }
 
-    return NextResponse.json({ entries, path: filePath, parentPath });
+    return NextResponse.json({ entries, path: filePath, parentPath: ancestors[0] ?? null, ancestors });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
