@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -714,17 +715,21 @@ export async function PUT(
     const bytes = Buffer.from(body.content, "utf-8");
     // Atomic write: dump to a sibling temp file, then rename. If the process
     // crashes mid-write the original file is intact.
-    const tempPath = `${filePath}.omp-web-${process.pid}-${Date.now()}.tmp`;
-    let tempHandle: string | null = null;
+    const tempPath = `${filePath}.omp-web-${process.pid}-${Date.now()}-${randomUUID()}.tmp`;
     try {
-      fs.writeFileSync(tempPath, bytes, { flag: "wx" });
-      tempHandle = tempPath;
+      fs.writeFileSync(tempPath, bytes, { flag: "wx", mode: stat.mode & 0o777 });
+      // `writeFileSync` masks `mode` with the umask a second time, so a file
+      // that was more permissive than the umask would land weakened — an
+      // executable would lose its +x and stop being runnable. `copyTree` in the
+      // file-actions route keeps the mode for the same reason.
+      fs.chmodSync(tempPath, stat.mode & 0o777);
       fs.renameSync(tempPath, filePath);
-      tempHandle = null;
     } catch (error) {
-      if (tempHandle) {
-        try { fs.unlinkSync(tempHandle); } catch { /* best effort */ }
-      }
+      // Clean up unconditionally. The old code only unlinked once `tempHandle`
+      // was set, which happened only after the write returned — so a write that
+      // failed part-way (ENOSPC mid-file) left a truncated file behind under a
+      // `.tmp` name, inside the project the agent is reading.
+      try { fs.unlinkSync(tempPath); } catch { /* never created, or already gone */ }
       throw error;
     }
 
