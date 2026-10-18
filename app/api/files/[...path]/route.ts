@@ -26,6 +26,7 @@ import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 // Endungstabelle, wodurch jedes `*.wasm`, `*.so`, `*.bin` als Quelltext
 // durchging.
 import { headLooksLikeText } from "@/lib/present-files-probe";
+import { PRESENT_SNIFF_BYTES } from "@/lib/present-files";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import {
@@ -80,9 +81,6 @@ function parseFileRequestType(value: string): FileRequestType | null {
   return FILE_REQUEST_TYPE_SET.has(value) ? (value as FileRequestType) : null;
 }
 
-/** How much of a file the binary sniff looks at. Same window as present_files. */
-const BINARY_SNIFF_BYTES = 4096;
-
 /**
  * Read the sniff window from the head of `filePath`.
  *
@@ -94,8 +92,8 @@ function readSniffHead(filePath: string): Buffer | null {
   let fd: number | null = null;
   try {
     fd = fs.openSync(filePath, "r");
-    const buffer = Buffer.alloc(BINARY_SNIFF_BYTES);
-    const bytesRead = fs.readSync(fd, buffer, 0, BINARY_SNIFF_BYTES, 0);
+    const buffer = Buffer.alloc(PRESENT_SNIFF_BYTES);
+    const bytesRead = fs.readSync(fd, buffer, 0, PRESENT_SNIFF_BYTES, 0);
     return buffer.subarray(0, bytesRead);
   } catch {
     return null;

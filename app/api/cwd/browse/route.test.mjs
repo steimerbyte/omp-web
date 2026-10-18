@@ -37,10 +37,10 @@ const { clearAllowedRootsCache } = await jiti.import("@/lib/allowed-roots");
 
 const ORIGIN = "http://localhost:30141";
 
-/** Legt `<home-root>/<username>` mit einem Projekt darunter an. */
-function seedTenantHome(username, projectName = "demo") {
+/** Legt `<home-root>/<username>/projects/demo` an und gibt die Home zurueck. */
+function seedTenantHome(username) {
   const home = join(HOME_ROOT, username);
-  mkdirSync(join(home, "projects", projectName), { recursive: true });
+  mkdirSync(join(home, "projects", "demo"), { recursive: true });
   return home;
 }
 
@@ -72,7 +72,7 @@ test("der Verzeichniswaehler oeffnet ohne ?path= im Home des angemeldeten Kontos
 
 test("zwei Mandanten starten in ihrem eigenen Home, nicht in einem gemeinsamen", async () => {
   const aliceHome = seedTenantHome("alice");
-  const bobHome = seedTenantHome("bob", "scratch");
+  const bobHome = seedTenantHome("bob");
 
   const [alice, bob] = await Promise.all([browse("", "alice"), browse("", "bob")]);
   const [aliceBody, bobBody] = await Promise.all([alice.json(), bob.json()]);
