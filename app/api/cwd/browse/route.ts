@@ -58,9 +58,21 @@ export async function GET(request: NextRequest) {
 
     const directories = await listDirectories(resolved);
 
+    // Der Elternpfad wird nur genannt, wenn man ihn auch wirklich betreten
+    // darf. `getParentDirectory()` rechnet rein lexikalisch: fuer ein Konto mit
+    // Home `/home/alice` lieferte es `/home`, und das liegt ausserhalb jeder
+    // Allowlist. `DirectoryPicker` aktiviert den Aufwaerts-Knopf allein danach,
+    // ob `parentPath` non-null ist — der Knopf fuehrte also in jedem Fall zu
+    // `403 Access denied`. `null` heisst fuer die Komponente "kein Weg nach
+    // oben" und schaltet den Knopf ab.
+    const candidateParent = getParentDirectory(resolved);
+    const parentPath = candidateParent && isExistingFilePathAllowed(candidateParent, allowedRoots)
+      ? candidateParent
+      : null;
+
     return NextResponse.json({
       path: resolved,
-      parentPath: getParentDirectory(resolved),
+      parentPath,
       directories,
     });
   } catch (error) {

@@ -94,3 +94,19 @@ test("ein explizit genannter Pfad gewinnt weiterhin gegen das Home der Identitae
   assert.equal(res.status, 200);
   assert.equal(body.path, project);
 });
+
+test("der Knopf 'ein Verzeichnis hoch' wird angeboten, obwohl die Antwort immer 403 waere", async () => {
+  const home = seedTenantHome("alice");
+
+  const res = await browse("", "alice");
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  // `<home-root>` liegt oberhalb von `<home-root>/alice` und damit ausserhalb
+  // jeder Allowlist dieses Kontos. `getParentDirectory()` lieferte es trotzdem,
+  // also aktivierte DirectoryPicker den Aufwaerts-Knopf und der naechste Klick
+  // endete in "Access denied". Ohne navigierbaren Elternpfad gibt es nichts zu
+  // klicken, und `canNavigateUp` wird false.
+  assert.equal(body.path, home);
+  assert.equal(body.parentPath, null);
+});
