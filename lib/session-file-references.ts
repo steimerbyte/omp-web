@@ -1,4 +1,4 @@
-import { getSessionEntries, resolveSessionPath, resolveSessionPathForIdentity } from "./session-reader";
+import { getSessionEntries, resolveSessionPathForIdentity } from "./session-reader";
 export { isFilePathReferencedByEntries } from "./session-file-references-core";
 import {
   isBashOutputPathReferencedByEntries,
@@ -18,16 +18,18 @@ import type { WebIdentity } from "./request-identity";
  * Query-String; beides sind Angaben des Aufrufers, und beides wird hier gegen
  * den Request-Header geprueft, den nur `proxy.ts` setzt.
  *
- * Ohne Identitaet ist die Antwort `false`, nicht `true` und nicht `null`:
- * `resolveSessionPathForIdentity` gibt ohne Identitaet `null` zurueck, und ein
- * vergessener Aufrufer darf daraus keine Freischaltung bauen koennen.
+ * Der Typ von `identity` ist `WebIdentity`, nicht `WebIdentity | null`: ein
+ * Aufrufer ohne Identitaet hat die Anfrage schon mit 403 beantwortet und
+ * erreicht diese Funktion nicht. Wer das nicht mehr kontrollieren kann, soll den
+ * Typ wieder auf `| null` setzen und `if (!identity) return false;`
+ * zurueckbringen — dann aber auch im Kommentar sagen, dass der Check eine
+ * Laufzeitverteidigung ist, keine Tatsache ueber den Aufrufer.
  */
 export async function isFilePathReferencedBySession(
   filePath: string,
   sessionId: string | null,
-  identity: WebIdentity | null,
+  identity: WebIdentity,
 ): Promise<boolean> {
-  if (!identity) return false;
   if (!isValidSessionId(sessionId)) return false;
   try {
     const sessionPath = await resolveSessionPathForIdentity(sessionId, identity);
@@ -40,19 +42,18 @@ export async function isFilePathReferencedBySession(
 
 /**
  * Steht `filePath` als `fullOutputPath` einer Bash-Ausfuehrung in einer Session
- * **dieser** Identitaet? Dieselbe Bindung wie oben, dieselbe Begruendung.
+ * **dieser** Identitaet? Dieselbe Bindung wie oben, dieselbe Begruendung, und
+ * derselbe nicht nullable Identitaetstyp — der Aufrufer in
+ * `app/api/agent/[id]/bash-output/route.ts` gibt ohne Identitaet 403 zurueck.
  */
 export async function isBashOutputPathReferencedBySession(
   filePath: string,
   sessionId: string | null,
-  identity: WebIdentity | null,
+  identity: WebIdentity,
 ): Promise<boolean> {
-  if (!identity) return false;
   if (!isValidSessionId(sessionId)) return false;
   try {
-    const sessionPath = identity
-      ? await resolveSessionPathForIdentity(sessionId, identity)
-      : await resolveSessionPath(sessionId);
+    const sessionPath = await resolveSessionPathForIdentity(sessionId, identity);
     if (!sessionPath) return false;
     return isBashOutputPathReferencedByEntries(filePath, await getSessionEntries(sessionPath));
   } catch {
