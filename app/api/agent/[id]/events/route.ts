@@ -1,7 +1,7 @@
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession, type AgentEvent } from "@/lib/rpc-manager";
 import { isApiRequestAllowed } from "@/lib/request-security";
-import { requireSessionAccess } from "../../../sessions/session-guard";
+import { requireSessionAccess } from "@/app/api/sessions/session-guard";
 
 export const dynamic = "force-dynamic";
 

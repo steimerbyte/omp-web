@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { requireSessionAccess } from "../../sessions/session-guard";
+import { requireSessionAccess } from "@/app/api/sessions/session-guard";
 
 /**
  * Request-body ceiling this route accepts, matching
