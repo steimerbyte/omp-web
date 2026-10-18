@@ -494,7 +494,22 @@ export async function GET(
       if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
         return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
       }
-      const content = fs.readFileSync(filePath, "utf-8");
+      // The editor writes back with `Buffer.from(content, "utf-8")`, so
+      // whatever `read` hands out has to survive that round trip byte for byte.
+      // Reading with "utf-8" is lossy for anything that is not valid UTF-8: an
+      // ISO-8859-1 file, a truncated log line, or a binary blob. Every invalid
+      // byte becomes U+FFFD, and saving then writes EF BF BD over the original
+      // — content destroyed by a save the user believed was faithful. Refuse to
+      // serve what cannot be represented, rather than offering an edit that
+      // cannot help but corrupt.
+      const bytes = fs.readFileSync(filePath);
+      const content = bytes.toString("utf-8");
+      if (!Buffer.from(content, "utf-8").equals(bytes)) {
+        return NextResponse.json(
+          { error: "File is not valid UTF-8 and cannot be edited safely", binary: true, size: stat.size },
+          { status: 415 },
+        );
+      }
       const language = getLanguage(filePath);
       return NextResponse.json({ content, language, size: stat.size });
     }
