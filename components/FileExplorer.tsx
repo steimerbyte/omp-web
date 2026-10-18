@@ -280,7 +280,24 @@ const ROW_ACTION_RIGHT_MENTION_DIR = 4;
  */
 const EXPLORER_TAB_ID = "explorer:root";
 
-async function fetchEntries(dirPath: string): Promise<FileNode[]> {
+/**
+ * Die Verzeichnisliste eines Ordners, so wie die Route sie beantwortet.
+ *
+ * `parentPath` und `ancestors` kommen vom Server und sind dort schon gegen
+ * die Allowlist geprueft. Die Komponente rechnet sie nicht selbst:
+ * `getFileDirectory()` ist lexikalisch, also lieferte es fuer ein Konto mit
+ * Home `<home-root>/alice` den Pfad `<home-root>`, den kein Mandant betreten
+ * darf — der erste Klick auf "eine Ebene hoeher" endete in `403 Access denied`,
+ * und dieselbe Rechnung liess jede Brotkrume ueber der Home klickbar, auch
+ * wenn sie niemand betreten darf.
+ */
+type DirectoryListing = {
+  entries: FileNode[];
+  parentPath: string | null;
+  ancestors: string[];
+};
+
+async function fetchEntries(dirPath: string): Promise<DirectoryListing> {
   const encoded = encodeFilePathForApi(dirPath);
   const res = await fetch(`/api/files/${encoded}?type=list`);
   if (!res.ok) {
@@ -293,15 +310,19 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
     }
     throw new Error(message);
   }
-  const data = await res.json() as { entries?: FileEntry[] };
-  return (data.entries ?? []).map((e) => ({
-    name: e.name,
-    fullPath: joinFilePath(dirPath, e.name),
-    isDir: e.isDir,
-    size: e.size,
-    children: e.isDir ? [] : undefined,
-    loaded: !e.isDir,
-  }));
+  const data = await res.json() as { entries?: FileEntry[]; parentPath?: string | null; ancestors?: string[] };
+  return {
+    entries: (data.entries ?? []).map((e) => ({
+      name: e.name,
+      fullPath: joinFilePath(dirPath, e.name),
+      isDir: e.isDir,
+      size: e.size,
+      children: e.isDir ? [] : undefined,
+      loaded: !e.isDir,
+    })),
+    parentPath: data.parentPath ?? null,
+    ancestors: data.ancestors ?? [],
+  };
 }
 
 async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
@@ -2140,6 +2161,8 @@ function Breadcrumb({
   currentPath,
   projectRoot,
   homeDir,
+  parentPath,
+  ancestors,
   canGoBack,
   canGoForward,
   onNavigate,
@@ -2152,6 +2175,8 @@ function Breadcrumb({
   currentPath: string;
   projectRoot: string;
   homeDir: string;
+  parentPath: string | null;
+  ancestors: string[];
   canGoBack: boolean;
   canGoForward: boolean;
   onNavigate: (fullPath: string) => void;
@@ -2161,7 +2186,19 @@ function Breadcrumb({
   onNavigateForward: () => void;
   t: Translate;
 }) {
-  const canGoUp = currentPath !== "/" && currentPath !== projectRoot && getFileDirectory(currentPath) !== currentPath;
+  // Der Aufwaerts-Knopf folgt dem Server: nur ein Elternpfad, den man
+  // betreten darf, wird angeboten. Rechnet die Komponente den Pfad selbst
+  // (`getFileDirectory`), zeigte sie fuer jeden Mandanten einen Knopf, dessen
+  // erster Klick in "Access denied" endete.
+  //
+  // `projectRoot` bleibt als eigene Grenze erhalten: der Explorer gehoert zum
+  // Projekt, und ein Sprung ueber dessen Wurzel hinaus war nie ein Weg, den
+  // jemand bewusst gegangen ist. Die Allowlist ist die naehere Grenze — sie
+  // entscheidet, was zusaetzlich zur Projektwurzel betretbar ist.
+  const canGoUp = parentPath !== null
+    && parentPath !== ""
+    && parentPath !== currentPath
+    && currentPath !== projectRoot;
   const atHome = normalizeFilePathSlashes(currentPath) === normalizeFilePathSlashes(homeDir);
   // Build segments by splitting the absolute path. Skip the leading empty
   // entry from the leading slash so segment 0 is the first real directory.
@@ -2258,32 +2295,57 @@ function Breadcrumb({
       <span style={{ flex: "1 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2, overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin", paddingLeft: 4 }}>
         {segments.map((segment, index) => {
           const isLast = index === segments.length - 1;
+          // Nur was der Server bestaetigt hat, wird ein Knopf. Die Krume
+          // ueber der Home des Kontos bleibt sichtbar — sie zeigt, wo man sich
+          // befindet — aber sie ist kein Ziel, und ein Klick darauf endete in
+          // "Access denied".
+          const navigable = !isLast && ancestors.includes(segment.fullPath);
           return (
             <span key={segment.fullPath} style={{ display: "inline-flex", alignItems: "center", gap: 2, minWidth: 0 }}>
-              <Pressable
-                type="button"
-                onClick={() => onNavigate(segment.fullPath)}
-                title={segment.fullPath}
-                style={{
-                  padding: "1px 5px",
-                  background: "transparent",
-                  border: "none",
-                  borderRadius: 3,
-                  color: isLast ? "var(--text)" : "var(--text-muted)",
-                  fontWeight: isLast ? 500 : 400,
-                  fontSize: 11,
-                  fontFamily: "var(--font-mono)",
-                  cursor: "pointer",
-                  maxWidth: 180,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                onMouseEnter={(event) => { if (!isLast) event.currentTarget.style.background = "var(--bg-hover)"; }}
-                onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
-              >
-                {segment.name}
-              </Pressable>
+              {navigable ? (
+                <Pressable
+                  type="button"
+                  onClick={() => onNavigate(segment.fullPath)}
+                  title={segment.fullPath}
+                  style={{
+                    padding: "1px 5px",
+                    background: "transparent",
+                    border: "none",
+                    borderRadius: 3,
+                    color: isLast ? "var(--text)" : "var(--text-muted)",
+                    fontWeight: isLast ? 500 : 400,
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    cursor: "pointer",
+                    maxWidth: 180,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+                  onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+                >
+                  {segment.name}
+                </Pressable>
+              ) : (
+                <span
+                  title={segment.fullPath}
+                  aria-disabled={!isLast ? true : undefined}
+                  style={{
+                    padding: "1px 5px",
+                    color: isLast ? "var(--text)" : "var(--text-dim)",
+                    fontWeight: isLast ? 500 : 400,
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    maxWidth: 180,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {segment.name}
+                </span>
+              )}
               {!isLast && <span style={{ color: "var(--text-dim)" }}>/</span>}
             </span>
           );
@@ -2386,6 +2448,18 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   // `initialViewState` hat Vorrang: es ist der Blick, den eine gerade neu
   // gemountete Instanz (das grosse Fenster) uebernimmt.
   const [currentPath, setCurrentPath] = useState<string>(initialViewState?.currentPath ?? cwd);
+  // Der Pfad, fuer den die naechste Listenabfrage laeuft. Er ist nicht
+  // `currentPath`: ein Sprung wird hier angekuendigt und erst mit der Antwort
+  // zum angezeigten Ordner. Vorher stand in `handleNavigate` direkt
+  // `setCurrentPath(fullPath)` — ein abgelehnter Sprung zeigte danach den
+  // verbotenen Pfad als aktuellen Ordner, mit eigener Krume-Leiste.
+  const [requestedPath, setRequestedPath] = useState<string>(initialViewState?.currentPath ?? cwd);
+  // Der Elternordner und die Kette der betretbaren Vorfahren, beide vom Server
+  // gegen die Allowlist geprueft. Nur sie werden zu klickbaren Brotkrumen; die
+  // uebrigen bleiben als Kontext sichtbar. Sie gehoeren zu `currentPath` und
+  // werden deshalb zusammen mit ihm uebernommen.
+  const [parentPath, setParentPath] = useState<string | null>(null);
+  const [ancestors, setAncestors] = useState<string[]>([]);
   // Die besuchten Ordner. Startet beim Ordner, den die Ansicht zeigt — nicht
   // beim Projektwurzel-`cwd`: sonst stuende der Index in einem Fenster, das
   // mitten in der Historie aufmacht, auf einem Eintrag, den es gar nicht
@@ -2438,6 +2512,18 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
    * erneut gestartet hat. Siehe den Ladeeffekt weiter unten.
    */
   const listPathRef = useRef<string>("");
+  /**
+   * Was mit der Historie geschehen soll, wenn die Antwort zu
+   * `requestedPath` eintrifft. Ein Sprung wird angekuendigt, nicht gesetzt —
+   * die Historienaenderung haengt darum an der Antwort, nicht am Klick.
+   */
+  const historyIntentRef = useRef<{ mode: "push" | "index"; path: string } | null>(null);
+  /**
+   * Der zuletzt mit einer Antwort bestaetigte Pfad. Er trennt einen echten
+   * Ordnerwechsel vom Refresh-Takt, der denselben Pfad alle fuenf Sekunden
+   * erneut abfragt.
+   */
+  const acceptedPathRef = useRef<string>(initialViewState?.currentPath ?? cwd);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   /**
    * Laufende Ordner-Anfragen. Ein Ref und kein Zustand, weil er nur eine
@@ -2511,7 +2597,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     loadingPathsRef.current.add(fullPath);
     setLoadingPaths((previous) => new Set(previous).add(fullPath));
     void fetchEntries(fullPath)
-      .then((entries) => { setChildrenByPath((previous) => new Map(previous).set(fullPath, entries)); })
+      .then((listing) => { setChildrenByPath((previous) => new Map(previous).set(fullPath, listing.entries)); })
       .catch(() => { /* der Ordner bleibt leer, wie es die Zeile früher tat */ })
       .finally(() => {
         loadingPathsRef.current.delete(fullPath);
@@ -2622,37 +2708,25 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   }, [loadDirectory]);
 
   const handleNavigate = useCallback((fullPath: string) => {
-    setCurrentPath(fullPath);
-    // Navigation collapses the previously expanded branches so the new
-    // starting point is a clean view; the user can re-expand from there.
-    setExpandedPaths(new Set());
-    // Jeder Sprung in einen Ordner gehoert in die Historie, egal ob er vom
-    // Zeilenklick, vom Breadcrumb, von Up oder von Home kam: zurueck soll den
-    // Weg zuruecknehmen, den der Nutzer gegangen ist, nicht nur einen Teil
-    // davon. Steht der Pfad schon an der Spitze, wird nichts eingetragen —
-    // sonst wuesste die Historie bei jedem Klick auf den Ordner, in dem man
-    // bereits ist, und der Weg waere nicht mehr abzaehlbar.
-    setHistory((prev) => {
-      if (prev.paths[prev.index] === fullPath) return prev;
-      // Alles nach dem Zeiger faellt weg. Genau das ist der Unterschied zum
-      // Blättern in der Historie: ein neuer Sprung ist ein neuer Weg und macht
-      // die alte Vorwaertsstrecke ungueltig, so wie im Browser.
-      const paths = [...prev.paths.slice(0, prev.index + 1), fullPath];
-      return { paths, index: paths.length - 1 };
-    });
+    // Angekuendigt, nicht gesetzt: `currentPath` folgt erst der Antwort aus
+    // dem Ladeeffekt. Ein Sprung in einen Ordner, den die Allowlist nicht
+    // freigibt, endet sonst mit dem verbotenen Pfad als aktuellem Ordner.
+    historyIntentRef.current = { mode: "push", path: fullPath };
+    setRequestedPath(fullPath);
   }, []);
 
   const handleNavigateUp = useCallback(() => {
-    // Der Elternordner aus dem aktuellen Pfad, nicht aus dem Updater: ein
-    // Updater muss eine reine Funktion sein, und React ruft ihn in der
-    // Entwicklung zweimal auf, um genau solche Seiteneffekte zu finden. Up ist
-    // damit eine ganz normale Navigation und geht durch `handleNavigate` —
-    // sonst stuende Up ausserhalb der Historie und waere der einzige Weg, den
-    // zurueck nicht zuruecknimmt.
-    const parent = getFileDirectory(currentPath);
-    if (parent === currentPath) return;
-    handleNavigate(parent);
-  }, [currentPath, handleNavigate]);
+    // Der Elternordner kommt vom Server und ist dort gegen die Allowlist
+    // geprueft. `getFileDirectory()` rechnet rein lexikalisch und lieferte
+    // fuer ein Konto mit Home `<home-root>/alice` den Pfad `<home-root>`,
+    // den kein Mandant betreten darf: der erste Klick auf "eine Ebene
+    // hoeher" endete in `403 Access denied`. Up ist damit eine ganz normale
+    // Navigation und geht durch `handleNavigate` — sonst stuende Up
+    // ausserhalb der Historie und waere der einzige Weg, den zurueck nicht
+    // zuruecknimmt.
+    if (parentPath === null || parentPath === "" || parentPath === currentPath) return;
+    handleNavigate(parentPath);
+  }, [currentPath, handleNavigate, parentPath]);
 
   const handleNavigateHome = useCallback(() => {
     handleNavigate(homeDir);
@@ -2674,9 +2748,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     // Lesen und dem Setzen laeuft kein weiterer Klick.
     if (history.index <= 0) return;
     const index = history.index - 1;
-    setCurrentPath(history.paths[index]);
-    setExpandedPaths(new Set());
-    setHistory((prev) => ({ paths: prev.paths, index }));
+    historyIntentRef.current = { mode: "index", path: history.paths[index] };
+    setRequestedPath(history.paths[index]);
   }, [history]);
 
   /**
@@ -2688,9 +2761,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const handleNavigateForward = useCallback(() => {
     if (history.index >= history.paths.length - 1) return;
     const index = history.index + 1;
-    setCurrentPath(history.paths[index]);
-    setExpandedPaths(new Set());
-    setHistory((prev) => ({ paths: prev.paths, index }));
+    historyIntentRef.current = { mode: "index", path: history.paths[index] };
+    setRequestedPath(history.paths[index]);
   }, [history]);
 
   const canNavigateBack = history.index > 0;
@@ -3119,6 +3191,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       setUploadSummary(null);
       setPendingConflict(null);
       setUploadError(null);
+      setRequestedPath(cwd);
       setCurrentPath(cwd);
       // Die Historie gehoert zum alten Projekt: zurueck und vorwaerts ueber
       // Ordner des vorherigen Projekts zu fuehren ist kein Weg, den jemand
@@ -3137,12 +3210,44 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     // Effekt ausnahmslos jede Antwort und `roots` bleibt leer, obwohl die API
     // eine gefuellte Liste liefert. Verworfen wird deshalb nur, was zu einem
     // Pfad gehoert, den die Ansicht inzwischen verlassen hat.
-    listPathRef.current = currentPath;
-    fetchEntries(currentPath)
-      .then((entries) => { if (listPathRef.current === currentPath) setRoots(entries); })
-      .catch((e) => { if (listPathRef.current === currentPath) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (listPathRef.current === currentPath) setLoading(false); });
-  }, [cwd, currentPath, refreshKey, treeRefreshKey]);
+    //
+    // Angefragt wird `requestedPath`, uebernommen wird `currentPath` — und
+    // erst nach der Antwort. Eine Ablehnung laesst die Ansicht damit genau so
+    // stehen, wie sie war, statt den verbotenen Pfad zu uebernehmen.
+    listPathRef.current = requestedPath;
+    fetchEntries(requestedPath)
+      .then((listing) => {
+        if (listPathRef.current !== requestedPath) return;
+        const changed = acceptedPathRef.current !== requestedPath;
+        setRoots(listing.entries);
+        setCurrentPath(requestedPath);
+        setParentPath(listing.parentPath);
+        setAncestors(listing.ancestors);
+        // Ein Refresh-Takt laeuft alle fuenf Sekunden ueber denselben Pfad.
+        // Nur ein echter Wechsel gibt den Startort auf — sonst klappte der Baum
+        // im Takt der Abfrage auf und zu.
+        if (!changed) return;
+        acceptedPathRef.current = requestedPath;
+        setExpandedPaths(new Set());
+        const intent = historyIntentRef.current;
+        historyIntentRef.current = null;
+        if (!intent || intent.path !== requestedPath) return;
+        setHistory((prev) => {
+          if (intent.mode === "index") {
+            const index = prev.paths.indexOf(requestedPath);
+            return index < 0 ? prev : { paths: prev.paths, index };
+          }
+          if (prev.paths[prev.index] === requestedPath) return prev;
+          // Alles nach dem Zeiger faellt weg. Genau das ist der Unterschied zum
+          // Blättern in der Historie: ein neuer Sprung ist ein neuer Weg und
+          // macht die alte Vorwaertsstrecke ungueltig, so wie im Browser.
+          const paths = [...prev.paths.slice(0, prev.index + 1), requestedPath];
+          return { paths, index: paths.length - 1 };
+        });
+      })
+      .catch((e) => { if (listPathRef.current === requestedPath) setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (listPathRef.current === requestedPath) setLoading(false); });
+  }, [cwd, requestedPath, refreshKey, treeRefreshKey]);
 
   // Auto-refresh the listing every 5 seconds. Bumping treeRefreshKey
   // re-runs the entry fetch above (and the git-status effect below) without
@@ -3390,6 +3495,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 currentPath={currentPath}
                 projectRoot={cwd}
                 homeDir={homeDir}
+                parentPath={parentPath}
+                ancestors={ancestors}
                 canGoBack={canNavigateBack}
                 canGoForward={canNavigateForward}
                 onNavigate={handleNavigate}
