@@ -402,9 +402,13 @@ export function FileBrowserDialog({
       })
       .catch((cause: unknown) => {
         if (requestIdRef.current !== requestId) return;
-        setEntries([]);
-        setParentPath(null);
-        setAncestors([]);
+        // NUR die Fehlermeldung. `setEntries([])`, `setParentPath(null)` und
+        // `setAncestors([])` standen hier und machten aus einem
+        // Netzwerkfehler die Aussage "dieser Ordner ist leer": der Pfad blieb
+        // korrekt, die Liste dazu war weg, und `canGoUp` (das an
+        // `parentPath !== null` haengt) nahm dem Nutzer auch den Weg zurueck,
+        // den er gerade gegangen war. Der Ordner ist unveraendert, also bleibt
+        // die Ansicht unveraendert — sichtbar ist nur der Fehler.
         setLoadError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
