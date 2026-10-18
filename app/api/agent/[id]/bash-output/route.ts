@@ -8,19 +8,20 @@ import {
   resolveBashOutputPath,
 } from "@/lib/bash-output";
 import { isBashOutputPathReferencedBySession } from "@/lib/session-file-references";
+import { getRequestIdentity } from "@/lib/request-identity";
 
 // GET /api/agent/[id]/bash-output?path=<absPath>
 // Reads a bash output temp file referenced by this session. Inline display is
 // size-limited; download responses stream the file without buffering it.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   let path: string | null = null;
   let download = false;
   try {
-    const url = new URL(_req.url);
+    const url = new URL(req.url);
     path = url.searchParams.get("path");
     download = url.searchParams.get("download") === "1";
   } catch {
@@ -36,7 +37,18 @@ export async function GET(
     return NextResponse.json({ error: "invalid path" }, { status: 400 });
   }
 
-  if (!await isBashOutputPathReferencedBySession(resolved, id)) {
+  // Die Session-Id steht in der URL und kommt damit vom Aufrufer: ohne
+  // Identitaet beantwortet die Referenzpruefung "steht das Log in irgendeiner
+  // Session dieses Hosts", und jedes Konto kaeme an das Log jedes anderen.
+  const identity = getRequestIdentity(req.headers);
+  if (!identity) {
+    return NextResponse.json(
+      { error: "forbidden" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  if (!await isBashOutputPathReferencedBySession(resolved, id, identity)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
