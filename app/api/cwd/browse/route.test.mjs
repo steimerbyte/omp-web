@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import { createJiti } from "jiti";
@@ -48,6 +48,14 @@ function browse(query, username) {
   const url = `${ORIGIN}/api/cwd/browse${query}`;
   return browseRoute.GET(new NextRequest(url, {
     headers: { host: "localhost:30141", "x-omp-user": username },
+  }));
+}
+
+/** Wie `browse`, aber mit dem Admin-Kopf — die Route sieht dann `/` als Home. */
+function browseAsAdmin(query) {
+  const url = `${ORIGIN}/api/cwd/browse${query}`;
+  return browseRoute.GET(new NextRequest(url, {
+    headers: { host: "localhost:30141", "x-omp-user": "admin", "x-omp-admin": "1" },
   }));
 }
 
@@ -123,4 +131,31 @@ test("der Knopf 'ein Verzeichnis hoch' wird angeboten, obwohl die Antwort immer 
   // klicken, und `canNavigateUp` wird false.
   assert.equal(body.path, home);
   assert.equal(body.parentPath, null);
+});
+
+test("der Admin startet weiterhin im Home des Prozesses, nicht in der Wurzel", async () => {
+  const res = await browseAsAdmin("");
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  // `getUserHome(admin)` ist `/`, nicht die Home des Kontos. Fuenf Mandanten-
+  // Tests sahen nur die Mandantenrichtung; faellt die `identity.isAdmin`-
+  // Verzweigung in `identityHome()`/`getBrowseStartDirectory()` weg, startet der
+  // Admin hier in `/` — und kein Mandantentest merkt es.
+  assert.equal(body.path, realpathSync(homedir()));
+  assert.notEqual(body.path, "/");
+});
+
+test("der Admin darf auch eine Ebene hoeher als sein Home betreten", async () => {
+  const home = realpathSync(homedir());
+
+  const res = await browseAsAdmin("");
+  const body = await res.json();
+
+  // Fuer den Admin ist der Elternpfad seiner Home erreichbar, weil `/` in
+  // seinen Roots steht. Verstuende die Allowlist das anders, waere der
+  // Aufwaerts-Knopf beim Admin weg — die Umkehrung desselben Fehlers.
+  assert.equal(body.parentPath, dirname(home));
+  const parent = await browseAsAdmin(`?path=${encodeURIComponent(body.parentPath)}`);
+  assert.equal(parent.status, 200);
 });
