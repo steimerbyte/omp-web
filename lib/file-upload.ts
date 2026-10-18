@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -56,4 +57,67 @@ export function inspectUploadTargets(directory: string, fileNames: string[]): Up
   }
 
   return { conflicts, nonReplaceable };
+}
+
+/**
+ * Write one uploaded file, replacing an existing target atomically.
+ *
+ * The previous implementation deleted the target and then wrote it. Anything
+ * that made the write fail — ENOSPC, a read-only filesystem, or a full disk —
+ * therefore destroyed the old file and left nothing behind, while the response
+ * could only report "error". Here the bytes go to a sibling temp file that is
+ * put in place in one step, so a failure anywhere before that step leaves the
+ * old file exactly as it was and leaves no half-written file under the target
+ * name either.
+ *
+ * For a fresh name the temp file is `link`ed rather than renamed: link fails
+ * with EEXIST if the name was taken in the meantime, which is the guarantee
+ * the old `flag: "wx"` gave, without the window in which the name was claimed
+ * and then written.
+ *
+ * The temp file takes the target's mode when replacing one, so overwriting a
+ * 0755 script does not quietly strip its +x.
+ */
+export function writeUploadedFileAtomicSync(
+  destination: string,
+  bytes: Buffer,
+  replacing: boolean,
+): void {
+  const tempPath = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.${randomUUID()}.upload`,
+  );
+
+  // A fresh upload gets the usual umask-derived mode; a replacement keeps the
+  // mode of the file it takes the place of.
+  let mode = 0o666 & ~process.umask();
+  if (replacing) {
+    try {
+      mode = fs.statSync(destination).mode & 0o777;
+    } catch {
+      // Vanished between the check and here. The default mode is what any
+      // other fresh file would get, so there is nothing better to fall back to.
+    }
+  }
+
+  try {
+    fs.writeFileSync(tempPath, bytes, { flag: "wx", mode });
+    // writeFileSync masks `mode` with the umask again, so an inherited mode
+    // that is more permissive than the umask would arrive weakened.
+    if (replacing) fs.chmodSync(tempPath, mode);
+    if (replacing) {
+      fs.renameSync(tempPath, destination);
+    } else {
+      fs.linkSync(tempPath, destination);
+      fs.unlinkSync(tempPath);
+    }
+  } catch (error) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // The temp file never came into existence, or something else took it.
+      // Either way the target is untouched, which is what this function is for.
+    }
+    throw error;
+  }
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -33,6 +34,7 @@ import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
   validateUploadFileNames,
+  writeUploadedFileAtomicSync,
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 
@@ -273,17 +275,14 @@ export async function POST(
         continue;
       }
 
-      if (conflictSet.has(file.name)) {
-        try {
-          fs.unlinkSync(destination);
-        } catch (error) {
-          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-          continue;
-        }
-      }
-
+      // The target is replaced, never deleted and then rewritten. `rename` over
+      // an existing path is atomic, so the file is either the old one or the new
+      // one — never absent. Deleting first would lose the old content outright
+      // whenever the write then fails (ENOSPC, EROFS, or the `wx` collision
+      // below), and the response can only report the failure, not the data.
+      const replacing = conflictSet.has(file.name);
       try {
-        fs.writeFileSync(destination, bytes, { flag: "wx" });
+        writeUploadedFileAtomicSync(destination, bytes, replacing);
         uploaded.push(file.name);
       } catch (error) {
         errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
@@ -567,11 +566,20 @@ export async function GET(
       if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
         return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
       }
-      // One read, two answers: the bytes decide whether this is text at all,
-      // and they are the bytes the viewer gets. `readFileSync(path, "utf-8")`
-      // turned every unknown-extension binary into a string of NUL bytes and
-      // U+FFFD, which the viewer then rendered as source code and happily
-      // offered to edit.
+      // One read, two answers, and the two rejections are checked in this
+      // order for a reason. `looksBinary` is the cheap heuristic (a NUL byte or
+      // a high share of control characters in the head); the round trip below is
+      // the exact one. Run the heuristic first so a real binary is reported as
+      // binary — the exact check rejects nearly every binary too, and if it ran
+      // first the client would be told "not valid UTF-8" about a PNG. Run in this
+      // order, neither protection disappears: a file that passes the heuristic
+      // (ISO-8859-1 source, a log line truncated mid-sequence) never reaches the
+      // binary message, it only reaches the round trip, which is the one that
+      // can catch it.
+      //
+      // `readFileSync(path, "utf-8")` turned every unknown-extension binary into
+      // a string of NUL bytes and U+FFFD, which the viewer then rendered as
+      // source code and happily offered to edit.
       const bytes = fs.readFileSync(filePath);
       if (looksBinary(bytes)) {
         return NextResponse.json(
@@ -580,6 +588,20 @@ export async function GET(
         );
       }
       const content = bytes.toString("utf-8");
+      // The editor writes back with `Buffer.from(content, "utf-8")`, so
+      // whatever `read` hands out has to survive that round trip byte for byte.
+      // Reading with "utf-8" is lossy for anything that is not valid UTF-8: an
+      // ISO-8859-1 file, a truncated log line, or a binary blob. Every invalid
+      // byte becomes U+FFFD, and saving then writes EF BF BD over the original
+      // — content destroyed by a save the user believed was faithful. Refuse to
+      // serve what cannot be represented, rather than offering an edit that
+      // cannot help but corrupt.
+      if (!Buffer.from(content, "utf-8").equals(bytes)) {
+        return NextResponse.json(
+          { error: "File is not valid UTF-8 and cannot be edited safely", binary: true, size: stat.size },
+          { status: 415 },
+        );
+      }
       const language = getLanguage(filePath);
       return NextResponse.json({ content, language, size: stat.size });
     }
@@ -830,17 +852,21 @@ export async function PUT(
     const bytes = Buffer.from(body.content, "utf-8");
     // Atomic write: dump to a sibling temp file, then rename. If the process
     // crashes mid-write the original file is intact.
-    const tempPath = `${filePath}.omp-web-${process.pid}-${Date.now()}.tmp`;
-    let tempHandle: string | null = null;
+    const tempPath = `${filePath}.omp-web-${process.pid}-${Date.now()}-${randomUUID()}.tmp`;
     try {
-      fs.writeFileSync(tempPath, bytes, { flag: "wx" });
-      tempHandle = tempPath;
+      fs.writeFileSync(tempPath, bytes, { flag: "wx", mode: stat.mode & 0o777 });
+      // `writeFileSync` masks `mode` with the umask a second time, so a file
+      // that was more permissive than the umask would land weakened — an
+      // executable would lose its +x and stop being runnable. `copyTree` in the
+      // file-actions route keeps the mode for the same reason.
+      fs.chmodSync(tempPath, stat.mode & 0o777);
       fs.renameSync(tempPath, filePath);
-      tempHandle = null;
     } catch (error) {
-      if (tempHandle) {
-        try { fs.unlinkSync(tempHandle); } catch { /* best effort */ }
-      }
+      // Clean up unconditionally. The old code only unlinked once `tempHandle`
+      // was set, which happened only after the write returned — so a write that
+      // failed part-way (ENOSPC mid-file) left a truncated file behind under a
+      // `.tmp` name, inside the project the agent is reading.
+      try { fs.unlinkSync(tempPath); } catch { /* never created, or already gone */ }
       throw error;
     }
 
