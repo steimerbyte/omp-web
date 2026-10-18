@@ -26,13 +26,16 @@ export function shouldShowWindowsDrivePicker(
  * own home; that is the same split `getAllowedFileRoots` makes when it scans
  * for `~/omp-cwd-*`.
  *
- * Without an identity there is nothing to derive from, so the old `homedir()`
- * stands — that path only reaches callers that have not established an identity
- * yet, and `/api/cwd/browse` refuses those before they get here.
+ * Without an identity there is nothing to derive from — so there is no such
+ * parameter. `identity` is required: a caller that forgets to thread it through
+ * gets a compile error instead of the service account's home, which is in
+ * nobody's allowlist and answers `403` for everyone. `a7e5a8c` and `d809011`
+ * removed exactly that fallback in the two routes that use this module; leaving
+ * the door open for the next route would reintroduce it without a test noticing.
  */
-export function getBrowseStartDirectory(directory?: string, identity?: WebIdentity | null): string {
+export function getBrowseStartDirectory(directory: string | undefined, identity: WebIdentity): string {
   if (directory) return directory;
-  if (identity && !identity.isAdmin) return getUserHome(identity);
+  if (!identity.isAdmin) return getUserHome(identity);
   return homedir();
 }
 
@@ -65,12 +68,12 @@ export async function listWindowsDrives(): Promise<BrowsableDirectory[]> {
  * advertised shorthand gets `403`. An admin's `~` *is* `homedir()`, which is why
  * this only ever failed for the accounts it was written for.
  */
-function identityHome(identity?: WebIdentity | null): string {
-  if (identity && !identity.isAdmin) return getUserHome(identity);
+function identityHome(identity: WebIdentity): string {
+  if (!identity.isAdmin) return getUserHome(identity);
   return homedir();
 }
 
-export function normalizeDirectory(directory: string, identity?: WebIdentity | null): string {
+export function normalizeDirectory(directory: string, identity: WebIdentity): string {
   if (directory === "~") return identityHome(identity);
   if (/^~[\\/]/.test(directory)) {
     const suffix = directory.slice(2).replace(/[\\/]+/g, path.sep);
@@ -95,7 +98,7 @@ export function getParentDirectory(directory: string): string | null {
   return parent === normalized ? null : parent;
 }
 
-export async function resolveDirectory(directory: string, identity?: WebIdentity | null): Promise<string> {
+export async function resolveDirectory(directory: string, identity: WebIdentity): Promise<string> {
   return realpath(normalizeDirectory(directory, identity));
 }
 
