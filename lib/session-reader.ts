@@ -203,6 +203,39 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   return getPathCache().get(sessionId) ?? null;
 }
 
+/**
+ * Der Pfad einer Session — aber nur, wenn `identity` diese Session in ihrer
+ * Liste auch sieht.
+ *
+ * `resolveSessionPath` beantwortet ausschliesslich die Pfadfrage: "wo liegt die
+ * Datei zu dieser Id". Der Aufrufer gehoert nicht dazu, und genau darin liegt
+ * die Luecke, wenn ein Aufrufer daraus einen Zugriff ableitet statt nur einen
+ * Pfad. Ein Identitaetsargument in `resolveSessionPath` selbst waere die falsche
+ * Adresse — dieselbe Begruendung, die in `app/api/sessions/session-guard.ts`
+ * ausgeschrieben ist.
+ *
+ * Die Regel hier ist dieselbe wie dort und dieselbe wie in `/api/sessions`:
+ * `listAllSessions({ identity })`, gefiltert ueber `isSessionOwnedBy`, und dann
+ * die Session mit dieser Id in der Liste suchen. Kein neuer Filter, keine
+ * eigene Besitzregel.
+ *
+ * **Eine laufende RPC-Session fehlt hier bewusst.** Die hat noch keine Datei,
+ * also auch keine Eintraege, die eine Referenz enthalten koennten — sie kann
+ * hier nichts freischalten. Der Fall, in dem sie sichtbar sein *muss*, ist die
+ * Session-Detailroute, und die deckt ihn ueber `isRpcSessionVisibleTo` ab.
+ *
+ * `identity === null` heisst `null` zurueck, nicht "irgendeine Session": das ist
+ * die Richtung, in der ein vergessener Aufrufer schaden kann.
+ */
+export async function resolveSessionPathForIdentity(
+  sessionId: string,
+  identity: WebIdentity | null,
+): Promise<string | null> {
+  if (!identity) return null;
+  const owned = await listAllSessions({ identity });
+  return owned.find((session) => session.id === sessionId)?.path ?? null;
+}
+
 export async function resolveSessionIdByPath(filePath: string): Promise<string | undefined> {
   const pathKey = sessionPathKey(filePath);
   const cached = getPathToIdCache().get(pathKey);

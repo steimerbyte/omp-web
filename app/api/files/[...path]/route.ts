@@ -494,10 +494,13 @@ export async function GET(
 
     const allowedRoots = await getAllowedFileRoots(identity);
     const allowedByRoot = isFilePathAllowed(filePath, allowedRoots);
+    // `identity` ist Pflichtargument: die Session-Id kommt aus dem Query-String
+    // und damit vom Aufrufer. Ohne Bindung an den Request-Header beantwortet
+    // diese Abfrage "steht der Pfad in irgendeiner Session dieses Hosts".
     const allowedBySessionReference =
       !allowedByRoot &&
       type !== "list" &&
-      await isFilePathReferencedBySession(filePath, sessionId);
+      await isFilePathReferencedBySession(filePath, sessionId, identity);
     if (!allowedByRoot && !allowedBySessionReference) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
@@ -509,7 +512,23 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (!allowedBySessionReference && !isExistingFilePathAllowed(filePath, allowedRoots)) {
+    // Die realpath-Pruefung laeuft **immer**, auch ueber den Durchlass.
+    //
+    // Sie ist der einzige Test, der symbolische Links und `..` nach dem
+    // Aufloesen sieht; die erste Pruefung ist lexikalisch. Sie war vorher an
+    // `!allowedBySessionReference` gekoppelt, und damit genau in dem Fall
+    // ausgefallen, der am weitesten greift — eine Sessionreferenz war ein
+    // vollstaendiger Bypass der Mandantengrenze fuer `/etc/passwd`, `.ssh/id_*`
+    // und alles andere, was der Prozess lesen kann.
+    //
+    // Der Durchlass ersetzt also nur die *erste* Pruefung: er holt einen Pfad
+    // durch die lexikalische Allowlist, die nach realpath aufgeloeste Grenze
+    // gilt weiter. Fuer einen Admin ist das folgenlos, denn seine Wurzelmenge
+    // enthaelt `/` (siehe `getAdditionalAllowedRoots`), und `isPathWithinRoots`
+    // beantwortet damit weiterhin `true`. Fuer einen Mandanten heisst es: der
+    // Durchlass kann nur noch Pfade freischalten, die nach realpath in seinen
+    // eigenen Roots liegen.
+    if (!isExistingFilePathAllowed(filePath, allowedRoots)) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
