@@ -290,6 +290,23 @@ derive their right offset from the same row-action constants, so they keep
 their place without a second hardcoded inset, and the dead archive-specific
 branch is gone.
 
+### Projects
+
+**A project view instead of a folder browser.** A new top-level view lists the
+projects an account works on, with size, priority and todo progress, and can
+create, rename and delete them. The registry is a JSON file per account in the
+agent directory, following the existing `omp-web-quick-phrases.json` pattern and
+the same atomic private write, so one account never sees another's list.
+`GET`/`PUT /api/projects` reads and writes it, `DELETE /api/projects/[root]`
+removes one entry.
+
+- Deleting a project **checks the protection rule before the first write** and
+  then hands session and folder removal to the existing handlers rather than
+  reimplementing their cascade. Re-implementing it would duplicate
+  `requireSessionAccess` and its deliberate 404-on-foreign-session answer, and
+  the identity headers have to travel with the delegated request or the handler
+  sees an anonymous one.
+
 ## v0.9.0
 
 The first release of the independent distribution. 98 files, +13,793/−352,

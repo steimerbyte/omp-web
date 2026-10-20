@@ -16,6 +16,7 @@ import {
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { SubagentPanel } from "./SubagentPanel";
+import { ProjectsDashboard } from "./ProjectsDashboard";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
@@ -172,6 +173,29 @@ export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
+  // Which of the three views is showing. Seeded from `?view=` so a reload or a
+  // shared link lands where the sender was, and kept in the URL below so it
+  // survives the next reload too.
+  const [activeView, setActiveView] = useState<"chat" | "projects">(
+    () => initialNavigation.requestedView,
+  );
+  // Whether this account may create projects. Creating one widens the file
+  // allow-list, which `AGENTS.md` keeps admin-gated, so the button is hidden
+  // for a tenant rather than shown and then refused. Asked the same way
+  // `SettingsConfig` asks it — the role lives in a request header, which the
+  // browser cannot read.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/whoami", { cache: "no-store" });
+        const data = (await response.json()) as { user?: { isAdmin?: boolean } | null };
+        setIsAdmin(data.user?.isAdmin === true);
+      } catch {
+        setIsAdmin(false);
+      }
+    })();
+  }, []);
   const { preference, toggleTheme } = useTheme();
   const themeLabelKey =
     preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";
@@ -996,6 +1020,32 @@ export function AppShell() {
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
+  // The projects dashboard is a third view next to chat and the placeholder.
+  // It is a *lower* priority than both: opening a session or picking a cwd is
+  // an explicit "go to the work" action, and it must always win over a view
+  // that is merely still selected in the sidebar. Without `!showChat` here the
+  // dashboard would cover the chat the moment a project got a cwd.
+  const showProjects = activeView === "projects" && !showChat;
+
+  // Opening a session or picking a cwd means "go to the work", so it always
+  // takes the user back to the chat view — even if the dashboard was still
+  // selected in the sidebar. The reverse does not hold: viewing the dashboard
+  // never clears the selection.
+  useEffect(() => {
+    if (showChat) setActiveView("chat");
+  }, [showChat]);
+
+  // Keep the view in the URL. `replaceState` rather than a router navigation
+  // so switching views never re-runs the server component tree — the
+  // dashboard is a client view, and a route change here would remount the
+  // whole shell and drop the loaded project list.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (activeView === "projects") url.searchParams.set("view", "projects");
+    else url.searchParams.delete("view");
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [activeView]);
+
   useEffect(() => {
     setProjectTrust(null);
     setProjectTrustDialogOpen(false);
@@ -1076,6 +1126,8 @@ export function AppShell() {
         onExplorerPopupOpenChange={handleExplorerPopupOpenChange}
         onAtMention={handleAtMention}
         onAtMentions={handleAtMentions}
+        onShowProjectsDashboard={() => setActiveView("projects")}
+        showProjectsDashboard={activeView === "projects"}
         onBackgroundTaskDone={handleBackgroundTaskDone}
       />
       <div style={{ padding: "0 8px", flexShrink: 0 }}>
@@ -1915,7 +1967,15 @@ export function AppShell() {
         {/* Chat content */}
         <div className="chat-content-layout">
           <div className="chat-session-column">
-          {showChat ? (
+          {showProjects ? (
+            <ProjectsDashboard
+              isAdmin={isAdmin}
+              onOpenProject={(root) => {
+                setActiveView("chat");
+                handleCwdChange(root);
+              }}
+            />
+          ) : showChat ? (
             <ChatWindow
               key={sessionKey}
               session={selectedSession}
