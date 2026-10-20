@@ -130,7 +130,14 @@ export function ProjectsDashboard({
     setNotice(null);
     try {
       const encoded = encodeFilePathForApi(target.root);
-      const response = await fetch(`/api/projects/${encoded}`, { method: "DELETE" });
+      // The chat count travels with the request. `DELETE /api/projects/…`
+      // refuses a folder with many chats until the caller repeats the number it
+      // showed the user, and a boolean "confirmed" could not tell "the user saw
+      // 3" from "the folder holds 130" — which is the 2026-10-20 incident in
+      // one line. Below the threshold this header is simply ignored.
+      const headers: Record<string, string> = {};
+      if (target.chatCount > 0) headers["x-omp-delete-confirm"] = String(target.chatCount);
+      const response = await fetch(`/api/projects/${encoded}`, { method: "DELETE", headers });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { code?: string };
         // `protected` and a failed chat deletion both mean the folder is still

@@ -71,7 +71,12 @@ export function ConfirmDialog({
         </h2>
 
         <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          {t("projects.delete.body", { n: project.chatCount })}
+          {/* A protected folder gets the reason instead of the warning: the
+              warning would describe a deletion that cannot happen, and the
+              confirm button below is disabled to match. */}
+          {project.isProtected
+            ? t("projects.delete.protected")
+            : t("projects.delete.body", { n: project.chatCount })}
         </div>
 
         <div
@@ -111,18 +116,24 @@ export function ConfirmDialog({
           </Pressable>
           <Pressable
             onClick={onConfirm}
-            disabled={busy}
+            // Disabled for a protected folder, not just for a request in
+            // flight. The route would refuse it anyway — this is about the
+            // button not promising something the server will not do, and about
+            // the explanation above matching the control next to it. It is a
+            // courtesy, not the protection: `ProjectsDashboard` still surfaces
+            // the `code: "protected"` refusal, which is the real one.
+            disabled={busy || project.isProtected === true}
             style={{
               padding: "7px 13px",
               fontSize: 12,
               fontWeight: 550,
               borderRadius: 7,
-              cursor: busy ? "default" : "pointer",
+              cursor: busy || project.isProtected ? "default" : "pointer",
               border: "1px solid var(--danger)",
               background: "var(--danger)",
               color: "var(--bg)",
               fontFamily: "inherit",
-              opacity: busy ? 0.6 : 1,
+              opacity: busy || project.isProtected ? 0.6 : 1,
             }}
           >
             {busy ? t("projects.delete.working") : t("projects.delete.confirm")}

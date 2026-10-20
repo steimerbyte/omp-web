@@ -9,7 +9,8 @@ import {
   isSameOrBelow,
   isWritePathAllowed,
 } from "@/lib/write-access";
-import { getRequestIdentity } from "@/lib/request-identity";
+import { getRequestIdentity, getUserHome, type WebIdentity } from "@/lib/request-identity";
+import { protectedRootReason } from "@/lib/projects-delete";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,24 @@ export const dynamic = "force-dynamic";
  * Every handler is refused unless the path is inside a *writable* root, which
  * is a strictly narrower set than the read allowlist — see lib/write-access.ts
  * for why reusing the read set here would be a hole rather than a shortcut.
+ *
+ * ### The second check: protected trees
+ *
+ * On 2026-10-20 a single `DELETE` here removed 130 chats. The path deleted was
+ * `~/.omp`, and it was reachable because 129 chats had `cwd = ~/.omp`, which
+ * made that directory an ordinary writable root — the request passed every
+ * guard the handler had.
+ *
+ * That is the difference the two checks answer. `isWritePathAllowed` answers
+ * *may this caller write here*, and a chat that once ran in a directory makes it
+ * yes. `protectedRootReason` answers *may this tree be destroyed, moved away,
+ * or written into at all* — a question no session cwd gets a vote on. Same
+ * function the projects dashboard uses, so the two routes cannot drift apart.
+ *
+ * It runs on **both operands** of every transfer, and after the write guard
+ * rather than before it: the write guard is the one that costs nothing to fail,
+ * so it goes first and a refusal there explains itself as a permission problem
+ * rather than as "that folder is not yours to remove".
  */
 
 const MAX_COPY_BYTES = 512 * 1024 * 1024;
@@ -50,6 +69,32 @@ function isAbsolute(target: string): boolean {
 /** An absolute destination under `targetDir`, named `name`. */
 function destinationIn(targetDir: string, name: string): string {
   return path.join(targetDir, name);
+}
+
+/**
+ * The refusal for a path that may not be destroyed, moved or written into.
+ *
+ * `protectedRootReason` and not the boolean `isProtectedProjectRoot`, for two
+ * reasons. The client needs `code: "protected"` to tell this apart from a
+ * write-permission failure — the dashboard's `ConfirmDialog` keys its message
+ * off that code, and a delete refused as "access denied" reads as a bug to the
+ * person who just clicked the right button. And the *reason* names the rule
+ * that spoke: `"omp-runtime"` is "this is the running installation", which is
+ * a different sentence from `"system-path"`, which is "pick another folder".
+ *
+ * `getUserHome(identity)`, never `os.homedir()`: the process serves several
+ * identities from one account, so the home is a property of the caller. On the
+ * host where the 130 chats went, the admin's home resolved to `/`, and every
+ * home-derived comparison was made against a tree with nothing to do with the
+ * folder being deleted.
+ */
+function protectedRefusal(target: string, identity: WebIdentity): NextResponse | null {
+  const reason = protectedRootReason(target, getUserHome(identity));
+  if (reason === null) return null;
+  return NextResponse.json(
+    { error: "This path is protected and cannot be modified", code: "protected", reason },
+    { status: 403 },
+  );
 }
 
 /** The final path segment, rejecting "." and "..". */
@@ -131,6 +176,13 @@ export async function POST(
       if (!(await isWritePathAllowed(target, { mustExist: false }, identity))) {
         return errorResponse("Access denied", 403);
       }
+      // mkdir never destroys anything, but it is not harmless either: a
+      // directory created inside the agent tree becomes a place omp reads.
+      // `<runtime>/extensions` and `<runtime>/skills` are the concrete case —
+      // both are loaded as executable or model-invoked content on the next
+      // start, so this is a write to the boundary, not a housekeeping write.
+      const refused = protectedRefusal(target, identity);
+      if (refused) return refused;
       fs.mkdirSync(target);
       return NextResponse.json({ ok: true, path: target });
     }
@@ -145,6 +197,16 @@ export async function POST(
       }
       const auth = await authorizeTransfer(source, destination, "move", identity);
       if (!auth.ok) return errorResponse("Access denied", 403, { reason: auth.reason });
+      // Both operands, not just the new name. `destination` is a sibling of
+      // `source`, so a rename cannot cross into another tree — which means a
+      // check on the destination alone would read as "the folder is writable"
+      // for every protected tree, and moving `~/.omp/agent` to
+      // `~/.omp/agent.bak` would pass it. A rename is a delete of the old name
+      // plus a write of the new one, so both are checked.
+      for (const operand of [source, destination]) {
+        const refused = protectedRefusal(operand, identity);
+        if (refused) return refused;
+      }
       // A directory cannot be renamed into itself or a descendant; the kernel
       // would reject it, but with an error the user cannot act on.
       if (isSameOrBelow(source, destination)) {
@@ -169,6 +231,24 @@ export async function POST(
 
       const auth = await authorizeTransfer(source, destination, type, identity);
       if (!auth.ok) return errorResponse("Access denied", 403, { reason: auth.reason });
+
+      // Both operands again, and here the two cases fail differently:
+      //
+      // - `move` destroys the source. Moving `~/.omp` out of the tree — to a
+      //   scratch directory, a rename-friendly name, anywhere the allowlist
+      //   permits — is the same loss as deleting it, with a step in between
+      //   that looks like a rename.
+      // - `copy` reads the source and writes the destination. Either half can
+      //   be the violation: a protected source is an exfiltration primitive
+      //   (the agent tree holds credentials and every transcript), and a
+      //   protected destination is a write into a place omp later loads.
+      //
+      // `authorizeTransfer` already checks both halves for *writability* and
+      // passes when both are writable, which is exactly the incident's shape.
+      for (const operand of [source, destination]) {
+        const refused = protectedRefusal(operand, identity);
+        if (refused) return refused;
+      }
 
       // Copying or moving a folder into itself recurses until the disk is
       // full, and the size guard below would only notice after the writes
@@ -239,13 +319,31 @@ export async function DELETE(
       return errorResponse("Access denied", 403);
     }
 
+    // The check that was missing, and the one the writable-root test above
+    // cannot substitute for. `isWritePathAllowed` answers "may this caller
+    // write here", and a directory that a session once used as its cwd is
+    // writable by construction — `~/.omp` was, because 129 chats ran there.
+    // That answer is correct and useless here, because this call removes the
+    // tree recursively. `protectedRootReason` answers the other question —
+    // "may this be destroyed at all" — and it has no identity argument that
+    // could talk its way past it, which is the property the incident turned
+    // on: the guard that failed was reached through the caller's home.
+    //
+    // After `isWritePathAllowed`, not before it: the guard order here is
+    // pinned by tests, and a caller with no write access gets the permission
+    // error rather than learning which trees exist on this host.
+    const refused = protectedRefusal(target, identity);
+    if (refused) return refused;
+
     const stat = fs.lstatSync(target);
     if (stat.isDirectory()) {
       // rmSync without recursive would fail on a populated folder. Recursive
       // deletion is the user's explicit action, and the writable-root check
       // above is what bounds it — but refuse the filesystem root outright,
       // because a root that somehow entered the writable set must not be
-      // removable with one request.
+      // removable with one request. Unreachable while `isWritePathAllowed`
+      // filters `/` out of the write set; kept as a second line under a
+      // recursive delete, which is the wrong place to be short one.
       if (path.resolve(target) === path.parse(path.resolve(target)).root) {
         return errorResponse("Refusing to delete a filesystem root", 400);
       }

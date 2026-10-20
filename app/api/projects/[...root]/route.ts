@@ -7,7 +7,12 @@ import { getRequestIdentity, getUserHome, type WebIdentity } from "@/lib/request
 import { isApiRequestAllowed } from "@/lib/request-security";
 import { filePathFromSegments } from "@/lib/file-paths";
 import { normalizeProjectRoot } from "@/lib/projects-schema";
-import { isProtectedProjectRoot } from "@/lib/projects-delete";
+import {
+  countTreeEntries,
+  DELETE_CONFIRMATION_CHAT_THRESHOLD,
+  protectedRootReason,
+  type ProjectDeletionPreview,
+} from "@/lib/projects-delete";
 import {
   getProjectsPath,
   isProjectsPathAllowed,
@@ -94,6 +99,123 @@ function forwardedHeaders(request: Request): HeadersInit {
   };
 }
 
+/**
+ * Sessions a delete of `root` would remove: everything whose cwd *is* the root
+ * or lies below it.
+ *
+ * Below, not only equal — a chat that ran in `project/src` would otherwise
+ * survive as a record pointing at a folder that no longer exists. It is the
+ * same predicate the delete itself uses, factored out, because the count the
+ * user confirms and the set the server deletes must not be able to disagree.
+ */
+function sessionsInside(sessions: readonly { id: string; cwd: string }[], root: string) {
+  return sessions.filter(
+    (session) =>
+      session.cwd === root || (typeof session.cwd === "string" && session.cwd.startsWith(`${root}/`)),
+  );
+}
+
+/**
+ * What a delete of `root` would destroy, computed without destroying anything.
+ *
+ * ### Why this exists separately from `isProtectedProjectRoot`
+ *
+ * The protection rule answers "may this be deleted at all". It cannot answer
+ * "how much goes", and on 2026-10-20 the amount was 130 chats. So the amount is
+ * measured, and a delete above the threshold is refused until the request
+ * carries a confirmation that names the number the server itself computed.
+ *
+ * ### Why the number is recomputed here instead of taken from the client
+ *
+ * A client-supplied count is a suggestion. The confirmation is compared against
+ * this count, computed after the guards and immediately before the first write,
+ * so a caller that shows a stale number — or none — gets a refusal rather than
+ * a silent delete. The client's value is a *promise* that it showed the user;
+ * the server's is the fact.
+ */
+async function buildPreview(
+  root: string,
+  identity: WebIdentity,
+): Promise<ProjectDeletionPreview> {
+  const sessions = await listAllSessions({ identity });
+  const inside = sessionsInside(sessions, root);
+  const { entryCount, entriesTruncated } = countTreeEntries(root);
+
+  return {
+    sessionCount: inside.length,
+    sessionIds: inside.map((session) => session.id),
+    entryCount,
+    entriesTruncated,
+    requiresConfirmation: inside.length >= DELETE_CONFIRMATION_CHAT_THRESHOLD,
+  };
+}
+
+/**
+ * The confirmation the client has to send back: the count of chats it says the
+ * user was shown, as a string in `x-omp-delete-confirm`.
+ *
+ * A string comparison, not a boolean, is the whole design. `confirm: true`
+ * proves only that *something* was clicked; `confirm: "130"` proves the caller
+ * held the number 130 when it clicked, and lets the server refuse when the real
+ * number has moved on since — the case where a user confirms "3 chats" and the
+ * folder turns out to hold 130.
+ */
+function confirmedChatCount(request: Request): string | null {
+  const raw = request.headers.get("x-omp-delete-confirm");
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return /^\d{1,9}$/.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * GET /api/projects/[...root] — what a delete would remove, before asking.
+ *
+ * Same guards as the delete, in the same order, so a preview cannot report a
+ * number for a folder the delete would refuse. That is the point of it: the
+ * client that shows "130 chats" and the server that deletes 130 chats must be
+ * looking at the same folder under the same rules.
+ */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ root: string[] }> },
+) {
+  if (!isApiRequestAllowed(request)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  const identity = requireIdentity(request);
+  if (identity === null) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+
+  try {
+    const { root: segments } = await params;
+    const root = normalizeProjectRoot(filePathFromSegments(segments));
+    if (root === null) {
+      return NextResponse.json({ error: "Invalid project root" }, { status: 400 });
+    }
+
+    const reason = protectedRootReason(root, getUserHome(identity));
+    if (reason !== null) {
+      return NextResponse.json(
+        { error: "This folder is protected and cannot be deleted", code: "protected", reason },
+        { status: 403 },
+      );
+    }
+
+    if (!(await isWritePathAllowed(root, { mustExist: true }, identity))) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+
+    const preview = await buildPreview(root, identity);
+    return NextResponse.json({ root, ...preview });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
+  }
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ root: string[] }> },
@@ -127,9 +249,15 @@ export async function DELETE(
     // account while serving several identities, so "the home" is a property of
     // the caller. Passing the wrong one would compare every path against the
     // wrong tree and refuse or allow the wrong folders.
-    if (isProtectedProjectRoot(root, getUserHome(identity))) {
+    //
+    // The *reason* is reported alongside the refusal because "protected" alone
+    // does not tell the user which rule spoke. Measured 2026-10-20: the admin
+    // whose home is `/` got no answer at all from the home rules for
+    // `~/.omp`, and the runtime rule is what closes that.
+    const reason = protectedRootReason(root, getUserHome(identity));
+    if (reason !== null) {
       return NextResponse.json(
-        { error: "This folder is protected and cannot be deleted", code: "protected" },
+        { error: "This folder is protected and cannot be deleted", code: "protected", reason },
         { status: 403 },
       );
     }
@@ -141,15 +269,55 @@ export async function DELETE(
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    const sessions = await listAllSessions({ identity });
-    // Sessions *inside* the folder, not only ones whose cwd is the root: a
-    // chat that ran in a subdirectory would otherwise survive as a record
-    // pointing at a folder that no longer exists.
-    const inside = sessions.filter(
-      (session) =>
-        session.cwd === root ||
-        (typeof session.cwd === "string" &&
-          session.cwd.startsWith(`${root}/`)),
+    // (1b) Count what this would destroy, before the first write.
+    //
+    // Independent of the rule above on purpose. `isProtectedProjectRoot` is a
+    // hard "never" for a folder that must not be deleted at all; this is the
+    // second layer for a folder that *may* be deleted but is not what the user
+    // had in mind. On 2026-10-20 a wrong path was a legitimate project by every
+    // rule in the first layer, and 130 chats went with it.
+    const preview = await buildPreview(root, identity);
+
+    if (preview.requiresConfirmation) {
+      const confirmed = confirmedChatCount(request);
+      if (confirmed === null) {
+        // Nothing confirmed yet. The response carries the count so the client
+        // can show it and send it back — and the folder is untouched.
+        return NextResponse.json(
+          {
+            error: `This project has ${preview.sessionCount} chats; confirming the delete is required`,
+            code: "confirmation-required",
+            ...preview,
+          },
+          { status: 409 },
+        );
+      }
+      if (confirmed !== String(preview.sessionCount)) {
+        // The number moved between the preview and the confirmation. Refusing
+        // is the only honest answer: the user confirmed a count that is no
+        // longer the truth, which is exactly the mistake this layer exists for.
+        return NextResponse.json(
+          {
+            error:
+              `The chat count changed since it was confirmed ` +
+              `(confirmed ${confirmed}, now ${preview.sessionCount}); nothing was deleted`,
+            code: "confirmation-stale",
+            ...preview,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    const inside = await listAllSessions({ identity }).then((sessions) =>
+      // Recomputed rather than reusing `preview.sessionIds`: between the count
+      // and here a session could have been created, and deleting the preview's
+      // list would leave that one behind pointing at a folder that is gone.
+      // The confirmation compared against `preview.sessionCount`, so a count
+      // that grew in between is caught by the confirmation check above only if
+      // it grew *before* it; this keeps the delete and the preview consistent
+      // in the other direction.
+      sessionsInside(sessions, root),
     );
 
     // (2) Every session, fully, before the folder goes.
