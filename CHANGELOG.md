@@ -5,6 +5,49 @@ upstream line — see the Provenance section in the README.
 
 ## v0.11.0
 
+### Data loss
+
+**Deleting a project could destroy the omp installation.** On 2026-10-20 a test
+ran `DELETE /api/projects/home/steimerbyte/.omp` against the dev server and lost
+130 chats. `isProtectedProjectRoot` did not fire, and the reason was structural:
+`getUserHome()` returns `/` for an **admin**, so every home-derived rule was
+evaluated against the filesystem root, where `/home/steimerbyte/.omp` sits at
+depth 3 — outside the depth-1 rule that normally protects `~/.omp`. Measured
+before the fix: `isProtectedProjectRoot("/home/steimerbyte/.omp", "/")` was
+`false`; for a non-admin it was `true`. The protection was a coincidence of the
+identity's home pointing at the right tree.
+
+- The omp runtime directories are now refused **by their resolved path**, from
+  `getAgentDir()` / `getConfigRootDir()` / `getSessionsDir()` and from any path
+  passing through a `.omp` segment — for every identity, admin or not. The
+  answer no longer depends on what `getUserHome()` returned. Both the resolved
+  config-dir name and omp's default `.omp` are matched, because
+  `getConfigDirName()` follows `PI_CONFIG_DIR`.
+- An **ancestor** of the home and **any account's home directory** are refused
+  too. `/home` measured `false` before: it is nobody's home, and no rule
+  reached it.
+- `protectedRootReason()` gained `omp-runtime`, `home-ancestor` and
+  `account-home`, and `DELETE /api/projects/…` reports the reason next to
+  `code: "protected"`. "Pick a different folder" and "this is the running
+  installation's own state" are different sentences and the UI now tells them
+  apart.
+
+**Every other write on a protected folder is refused as well.** Delete, create
+directory, rename, move and copy under the file explorer ran their filesystem
+call first and only asked afterwards — so a rename that would have landed on the
+agent directory was already irreversible once the guard answered. Each of those
+handlers now asks before touching anything, and asks twice where it takes a
+source and a target.
+
+**Deleting a project now states what it would destroy first.** `GET
+/api/projects/[…root]` returns the chat count, the recursive entry count and
+whether a confirmation is required, under the same guards in the same order as
+the delete. At ten or more chats the delete is refused with `409
+confirmation-required` until the request repeats that number in
+`x-omp-delete-confirm`; a number that no longer matches answers `409
+confirmation-stale`. A boolean "confirmed" cannot tell "the user saw 3" from
+"the folder holds 130".
+
 ### Sign-in
 
 **The native Basic-Auth dialog is gone.** A browser without a valid session
@@ -306,6 +349,23 @@ removes one entry.
   `requireSessionAccess` and its deliberate 404-on-foreign-session answer, and
   the identity headers have to travel with the delegated request or the handler
   sees an anonymous one.
+
+**The Projects button now shows the Projects view.** Clicking it pressed the
+button and then rendered nothing. The view was gated behind "no chat is open",
+but the sidebar adopts a working directory at startup, so a chat is open from
+the first moment and that condition was never true again — the panel was dead
+code behind a live button. Loading `?view=projects` fell back into the chat for
+the same reason after a moment. The view now depends only on the active view,
+and the directory chosen at startup no longer steals the initial selection away
+from the URL. Choosing a session, starting a new chat or switching the working
+directory returns to the chat explicitly instead of by accident.
+
+**Creating a project no longer answers 405.** "New project" posted to
+`/api/projects`, which only had a read and an update handler, so the dialog's
+submit always failed. The create handler exists now, behind the same identity,
+path and protection checks a delete gets, and refuses a name or target that is
+already taken instead of silently writing over it. Creating a folder is an
+ordinary per-account action, so it needs no admin role.
 
 ### Sign-in
 
