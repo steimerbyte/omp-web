@@ -278,6 +278,18 @@ multi-line insertion.
   read-only, and a root writable through group ownership is no longer
   refused.
 
+### Interface
+
+**The download button in the file explorer is always there.** It was rendered
+only while the row was hovered and positioned absolutely over it, so a
+download was reachable by pointer but not discoverable, and the overlay could
+cover the file name it belonged to. Every file row now renders the anchor in
+the normal flow with `flexShrink: 0`, and the row text gives way with an
+ellipsis instead. The remaining hover-only buttons (image preview, mention)
+derive their right offset from the same row-action constants, so they keep
+their place without a second hardcoded inset, and the dead archive-specific
+branch is gone.
+
 ## v0.9.0
 
 The first release of the independent distribution. 98 files, +13,793/−352,

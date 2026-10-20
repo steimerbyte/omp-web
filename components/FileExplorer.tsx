@@ -24,7 +24,7 @@ import {
   normalizeFilePathSlashes,
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
-import { isArchivePath, isImagePath } from "@/lib/file-types";
+import { isImagePath } from "@/lib/file-types";
 import { FileActionToast, FileContextMenu, type FileActionNotice, type FileMenuTarget } from "./FileContextMenu";
 import { FileBrowserDialog } from "./FileBrowserDialog";
 import { FileImagePreview } from "./FileImagePreview";
@@ -248,26 +248,29 @@ interface PendingConflict {
 /**
  * Rechte Kanten der absoluten Hover-Knöpfe einer Baumzeile, in Pixeln.
  *
- * Die Knöpfe stehen nebeneinander am rechten Zeilenrand. Von rechts nach links:
- * Download (4), grosse Vorschau (30), Mention (58 bei Dateien, 4 bei Ordnern).
- * Die beiden Bildwerkzeuge sind 22 Pixel breit (20 plus je ein Pixel Rahmen),
- * der Download-Anker 23 (5 Pixel Polster links und rechts um ein 11-Pixel-Zeichen
- * plus Rahmen). Zwischen den 22-Pixel-Knoepfen bleiben damit 4 Pixel Luft, und
- * die Kante des 23-Pixel-Ankers liegt genau an der linken Kante des
- * Bildknopfes.
+ * Der Download-Anker steht nicht mehr absolut, sondern im Fluss am rechten
+ * Zeilenrand (siehe `FileTreeLabel`): er ist immer da, und deshalb belegt er
+ * dauerhaft Platz. Die Zeile gibt diesen Platz über `flex: 1` am Dateinamen ab,
+ * der Text läuft also nicht unter dem Knopf durch, sondern endet früher mit
+ * Auslassungspunkten. Damit die absoluten Hover-Knöpfe nicht auf dem
+ * Download-Anker landen, rechnen ihre Kanten von dessen Kante aus.
  *
- * Fuer Archivzeilen gilt die Tabelle nicht: ihr Download-Knopf ist kein
- * Hover-Knopf, sondern steht im Fluss hinter dem Git-Kuerzel (siehe
- * `downloadAlwaysVisible` in `FileTreeLabel`). Die absoluten Kanten werden
- * dort nicht ausgewertet — sie wuerden ihn neben den Git-Status ziehen.
+ * Fussbreite des Ankers: 5 Pixel Polster links und rechts um ein 11-Pixel-
+ * Zeichen plus je ein Pixel Rahmen, dazu 4 Pixel Abstand zum Vorgaenger und
+ * die 8 Pixel rechter Polster der Zeile — zusammen `ROW_DOWNLOAD_FLOW_WIDTH`.
+ * Von rechts nach links stehen damit: Download (im Fluss), grosse Vorschau
+ * (`ROW_ACTION_RIGHT_IMAGE`), Mention (`ROW_ACTION_RIGHT_MENTION_FILE` bei
+ * Dateien, `ROW_ACTION_RIGHT_MENTION_DIR` bei Ordnern — ein Ordner hat keinen
+ * Download-Knopf). Die beiden Bildwerkzeuge sind 22 Pixel breit (20 plus je ein
+ * Pixel Rahmen); zwischen ihnen bleiben 4 Pixel Luft.
  *
  * Die Mention-Schaltflaeche traegt Text und ist je nach Sprache unterschiedlich
  * breit; sie steht deshalb ganz links. Ihre Breite kann so wachsen, wie es die
  * Uebersetzung verlangt, ohne einen Nachbarn zu ueberdecken.
  */
-const ROW_ACTION_RIGHT_DOWNLOAD = 4;
-const ROW_ACTION_RIGHT_IMAGE = 30;
-const ROW_ACTION_RIGHT_MENTION_FILE = 58;
+const ROW_DOWNLOAD_FLOW_WIDTH = 35;
+const ROW_ACTION_RIGHT_IMAGE = ROW_DOWNLOAD_FLOW_WIDTH + 4;
+const ROW_ACTION_RIGHT_MENTION_FILE = ROW_ACTION_RIGHT_IMAGE + 22 + 4;
 const ROW_ACTION_RIGHT_MENTION_DIR = 4;
 
 /**
@@ -1566,18 +1569,6 @@ function FileTreeLabel({
    */
   const canPreviewImage = ctx.imagePreviewEnabled && !data.isDir && isImagePath(data.name);
 
-  /**
-   * Archive bekommen ihren Download-Knopf ohne Hover.
-   *
-   * Eine Zeile mit einem Bild laesst sich oeffnen, eine mit Text, eine mit
-   * PDF. Eine ZIP-Zeile nicht: der Viewer hat dafuer nichts, und der
-   * Rechtsklick-Menue fuehrt zum selben Download. Bleibt der Knopf an `hovered`
-   * gebunden, ist er auf einem Telefon unauffindbar — dort gibt es kein
-   * Darueberfahren, die Zeile wird getippt, und die Datei kommt nie an.
-   * Fuer Archivzeilen steht der Knopf deshalb immer.
-   */
-  const downloadAlwaysVisible = !data.isDir && isArchivePath(data.name);
-
   return (
     <div
       ref={dragHandle}
@@ -1723,7 +1714,7 @@ function FileTreeLabel({
           <ImageOpenIcon />
         </Pressable>
       )}
-      {node.isLeaf && (hovered || downloadAlwaysVisible) && (
+      {node.isLeaf && (
         <a
           href={`/api/files/${encodeFilePathForApi(data.fullPath)}?type=download`}
           download
@@ -1731,11 +1722,15 @@ function FileTreeLabel({
           onMouseDown={(e) => e.preventDefault()}
           title={ctx.t("files.download")}
           aria-label={ctx.t("files.download")}
+          data-download-always-visible="true"
           style={{
-            // Der Knopf einer Archivzeile steht im Fluss, nicht absolut: er ist
-            // dann neben dem Git-Kuerzel zu sehen, statt es zu ueberdecken.
-            // Die Zeile gibt ihren Platz ueber `flex: 1` am Dateinamen ab, also
-            // sitzt der Knopf auch so am rechten Rand.
+            // Immer im Fluss, nie absolut: der Anker belegt dauerhaft seinen
+            // Platz am rechten Zeilenrand und ist ohne Hover sichtbar wie
+            // klickbar. Die Zeile gibt diesen Platz ueber `flex: 1` am
+            // Dateinamen ab, der Text endet also mit Auslassungspunkten vor
+            // dem Knopf und laeuft nicht unter ihm durch. Absolut waere er nur
+            // sichtbar, wenn eine Zeile Hover oder Auswahl traegt — und auf
+            // einem Telefon gibt es kein Darueberfahren, die Datei kaeme nie an.
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1744,10 +1739,6 @@ function FileTreeLabel({
             height: 20,
             marginLeft: 4,
             flexShrink: 0,
-            position: downloadAlwaysVisible ? "static" : "absolute",
-            right: ROW_ACTION_RIGHT_DOWNLOAD,
-            top: "50%",
-            transform: downloadAlwaysVisible ? "none" : "translateY(-50%)",
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 4,

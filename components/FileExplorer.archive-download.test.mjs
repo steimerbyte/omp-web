@@ -95,6 +95,9 @@ win.HTMLElement.prototype.getBoundingClientRect = function rect() {
 Object.defineProperty(win.Element.prototype, "clientHeight", { get: () => 600, configurable: true });
 Object.defineProperty(win.Element.prototype, "scrollHeight", { get: () => 600, configurable: true });
 Object.defineProperty(win.Element.prototype, "scrollTop", { get: () => 0, set: () => {}, configurable: true });
+// Das grosse Fenster rendert eine echte `TabBar`; deren Effekt scrollt den
+// aktiven Tab sichtbar, und `linkedom` kennt `scrollIntoView` nicht.
+win.HTMLElement.prototype.scrollIntoView = function () {};
 
 const CWD = "/home/steimerbyte/workspace";
 
@@ -180,13 +183,120 @@ test("a zip row carries a download link before any pointer touches it", async ()
   );
 });
 
-test("a text row keeps its download link behind hover", async () => {
+test("a viewable text row carries its download link without hover too", async () => {
   const container = await mountExplorer();
   const links = [...container.querySelectorAll("a[download]")];
 
-  assert.equal(
-    links.some((a) => a.getAttribute("href")?.includes("notes.md")),
-    false,
-    "a viewable file must not get a permanent button; the row is still openable by click",
+  const textLink = links.find((a) => a.getAttribute("href")?.includes("notes.md"));
+
+  assert.ok(
+    textLink,
+    `the text row has no download link without hover; links found: ` +
+    `${JSON.stringify(links.map((a) => a.getAttribute("href")))}\n` +
+    `rendered: ${JSON.stringify((container.textContent ?? "").slice(0, 300))}`,
   );
+
+  assert.equal(
+    textLink.getAttribute("data-download-always-visible"),
+    "true",
+    "the download anchor must be marked as permanently visible",
+  );
+});
+
+test("the download anchor sits in the row flow and is never hidden", async () => {
+  const container = await mountExplorer();
+  const anchors = [...container.querySelectorAll("a[download]")];
+
+  assert.ok(anchors.length > 0, "no download anchors rendered at all");
+
+  for (const anchor of anchors) {
+    const style = anchor.getAttribute("style") ?? "";
+    assert.equal(
+      /position:\s*absolute/.test(style),
+      false,
+      `an absolutely positioned download anchor only appears on hover: ${style}`,
+    );
+    assert.equal(
+      /opacity:\s*0/.test(style),
+      false,
+      `a transparent download anchor is invisible without hover: ${style}`,
+    );
+    assert.equal(
+      /visibility:\s*hidden/.test(style),
+      false,
+      `a hidden download anchor cannot be clicked: ${style}`,
+    );
+    assert.equal(
+      anchor.getAttribute("aria-hidden"),
+      null,
+      "the download anchor must not be hidden from assistive tech either",
+    );
+    assert.equal(
+      anchor.hasAttribute("disabled"),
+      false,
+      "the download anchor must not be disabled",
+    );
+  }
+});
+
+test("a folder row has no download anchor", async () => {
+  const container = await mountExplorer();
+  const anchors = [...container.querySelectorAll("a[download]")];
+
+  assert.equal(
+    anchors.some((a) => a.getAttribute("href")?.includes("/pages")),
+    false,
+    "a directory is not downloadable",
+  );
+});
+
+test("the popup explorer window shows the same always-visible download anchors", async () => {
+  const container = await mountExplorer();
+
+  const openButton = [...container.querySelectorAll("button")]
+    .find((b) => (b.getAttribute("aria-label") ?? "").includes("large window"));
+  assert.ok(
+    openButton,
+    `the popup opener is missing; buttons: ${JSON.stringify(
+      [...container.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")),
+    )}`,
+  );
+
+  await act(async () => { openButton.dispatchEvent(new win.Event("click", { bubbles: true })); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+
+  // Das Fenster haengt ueber ein Portal an `document.body`, nicht im Container.
+  const dialog = win.document.querySelector('[role="dialog"]');
+  assert.ok(dialog, "the explorer window did not open");
+
+  const popupAnchors = [...dialog.querySelectorAll("a[download]")];
+  assert.ok(
+    popupAnchors.length > 0,
+    `the explorer window has no download anchors without hover; rendered: ` +
+    `${JSON.stringify((dialog.textContent ?? "").slice(0, 300))}`,
+  );
+
+  for (const anchor of popupAnchors) {
+    assert.equal(
+      anchor.getAttribute("data-download-always-visible"),
+      "true",
+      "the popup window must mark its download anchors as permanently visible",
+    );
+    assert.equal(
+      /position:\s*absolute/.test(anchor.getAttribute("style") ?? ""),
+      false,
+      "the popup download anchor must not be absolutely positioned",
+    );
+  }
+
+  assert.ok(
+    popupAnchors.some((a) => a.getAttribute("href")?.includes("notes.md")),
+    "the text row is missing its download link in the popup window too",
+  );
+
+  await act(async () => {
+    const close = [...dialog.querySelectorAll("button")]
+      .find((b) => (b.getAttribute("aria-label") ?? "").toLowerCase().includes("close"));
+    if (close) close.dispatchEvent(new win.Event("click", { bubbles: true }));
+  });
 });
