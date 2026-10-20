@@ -12,18 +12,26 @@ import styles from "./login.module.css";
  * Sign-in, reached from `proxy.ts` when a locked server turns away a navigation.
  *
  * The page posts the credential to `/api/web-access/login`, which sets an
- * `httpOnly` session cookie, and then hands the browser back to `/`. The
- * username field is pre-filled with `omp` because that is what every
- * single-user deployment has always used — one keystroke, and existing
- * installations keep working. With several accounts it is just a first guess:
- * the field is editable, and the server resolves an omitted name to the same
- * default.
+ * `httpOnly` session cookie, and then hands the browser back to `/`.
+ *
+ * The username field starts empty, deliberately. It used to be pre-filled with
+ * `omp`, on the grounds that every single-user deployment signs in with that
+ * name and one keystroke is cheaper than typing it. The pre-fill was wrong on
+ * its own terms: it named one account on a server that has several, to a
+ * visitor who had to clear it before typing their own, and it put a value in
+ * a field that is also the browser's `autoComplete="username"` key — so the
+ * field looked filled to the person and to anything reading the DOM while it
+ * had never been chosen. The server still resolves an omitted name to the
+ * configured single-user default (`getExpectedUsername()`), so an empty field
+ * is a valid request; the field itself is simply no longer second-guessing the
+ * visitor. `app/login/login-username-prefill.test.mjs` holds the mount-time
+ * value at empty.
  */
 
 export default function LoginPage() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [username, setUsername] = useState("omp");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);

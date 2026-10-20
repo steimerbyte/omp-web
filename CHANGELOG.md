@@ -307,6 +307,12 @@ removes one entry.
   the identity headers have to travel with the delegated request or the handler
   sees an anonymous one.
 
+### Sign-in
+
+The login field no longer arrives pre-filled with `omp`. The value was a
+hardcoded state initial value, so the form suggested one account name to
+everyone and a user had to clear it before typing their own.
+
 ## v0.9.0
 
 The first release of the independent distribution. 98 files, +13,793/−352,

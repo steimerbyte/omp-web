@@ -12,8 +12,9 @@ import { getExpectedUsername, verifyCredential } from "@/lib/web-auth";
  * instead of a native auth dialog.
  *
  * The username is optional. Omitting it means the configured single-user name,
- * which is how every existing deployment signs in and why the login page still
- * comes pre-filled. Supplying one selects an account from `omp-web-accounts.json`.
+ * which is how every existing deployment signs in. Supplying one selects an
+ * account from `omp-web-accounts.json`. The login page sends the name the
+ * visitor typed and no other — it does not pre-fill one.
  */
 
 export const dynamic = "force-dynamic";
