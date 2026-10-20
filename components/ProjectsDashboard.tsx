@@ -8,6 +8,7 @@ import { DashboardTopbar } from "./projects/DashboardTopbar";
 import { NewProjectDialog } from "./projects/NewProjectDialog";
 import { PriorityFilterBar } from "./projects/PriorityFilterBar";
 import { ProjectGrid, ProjectGridSkeleton } from "./projects/ProjectGrid";
+import { encodeFilePathForApi } from "@/lib/file-paths";
 import type { PriorityDef, PriorityId, ProjectView } from "@/lib/projects-schema";
 
 /**
@@ -23,7 +24,7 @@ import type { PriorityDef, PriorityId, ProjectView } from "@/lib/projects-schema
  * ### Delete
  *
  * The confirm dialog is a convenience. The protection is server-side in
- * `DELETE /api/projects/[root]`: a protected folder comes back with
+ * `DELETE /api/projects/[...root]`: a protected folder comes back with
  * `code: "protected"` and nothing was deleted. A failure anywhere in that route
  * leaves the folder and its chats untouched, and the message says so rather
  * than pretending the folder is gone.
@@ -128,7 +129,7 @@ export function ProjectsDashboard({
     setDeleting(true);
     setNotice(null);
     try {
-      const encoded = target.root.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+      const encoded = encodeFilePathForApi(target.root);
       const response = await fetch(`/api/projects/${encoded}`, { method: "DELETE" });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { code?: string };

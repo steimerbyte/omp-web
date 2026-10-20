@@ -11,7 +11,7 @@ import type { ProjectView } from "@/lib/projects-schema";
  * ### This is the convenience, not the protection
  *
  * The protection is `isProtectedProjectRoot`, enforced server-side in
- * `DELETE /api/projects/[root]` *before* a single chat is touched. A protected
+ * `DELETE /api/projects/[...root]` *before* a single chat is touched. A protected
  * folder cannot be deleted from here even if this dialog were removed, bypassed
  * or never rendered — the request comes back with `code: "protected"` and
  * nothing happens.

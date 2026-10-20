@@ -5,6 +5,7 @@ import { listAllSessions } from "@/lib/session-reader";
 import { isWritePathAllowed } from "@/lib/write-access";
 import { getRequestIdentity, getUserHome, type WebIdentity } from "@/lib/request-identity";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { filePathFromSegments } from "@/lib/file-paths";
 import { normalizeProjectRoot } from "@/lib/projects-schema";
 import { isProtectedProjectRoot } from "@/lib/projects-delete";
 import {
@@ -17,7 +18,9 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * DELETE /api/projects/<encoded-root> — delete a project *and* its folder.
+ * DELETE /api/projects/[...root] (catch-all: an absolute project root
+ * spans several segments, so `/home/pi/workspace/omp-web` is one root, not one
+ * segment) — delete a project *and* its folder.
  *
  * ### Why this is a route and not a client-side sequence
  *
@@ -109,8 +112,11 @@ export async function DELETE(
     // reassembled — including its leading slash. Joining the filtered segments
     // alone would turn `/etc` into `etc`, a relative path that every check
     // downstream rejects for the wrong reason.
-    const joined = segments.map((segment) => decodeURIComponent(segment)).join("/");
-    const root = normalizeProjectRoot(joined.startsWith("/") ? joined : `/${joined}`);
+    //
+    // Next has *already* percent-decoded the segments, so they must not be
+    // decoded a second time here: a folder literally named `100%` would make
+    // `decodeURIComponent` throw and turn a valid delete into a 500.
+    const root = normalizeProjectRoot(filePathFromSegments(segments));
     if (root === null) {
       return NextResponse.json({ error: "Invalid project root" }, { status: 400 });
     }
