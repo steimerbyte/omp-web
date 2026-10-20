@@ -97,23 +97,11 @@ export const zhCNLocale: LocalePlugin = {
     "projects.noRepo": "非 Git 仓库",
     "projects.chats": "{n} 个会话",
     "projects.oneChat": "1 个会话",
-    "projects.branch": "分支",
-    "projects.adopted": "从会话继承",
     "projects.empty": "暂无项目",
     "projects.emptyHint": "新建一个项目，或先选择一个工作目录。",
     "projects.error": "无法加载项目",
     "projects.sizeUnknown": "无法获取大小",
     "projects.open": "打开",
-    "projects.loading": "正在加载项目...",
-    // 优先级名称不在这里。它们存放在注册表
-    // （`priorities[].name`，`lib/projects-schema.ts`）中，因为它们按账号重命名。
-    // 这五个仅是 `DEFAULT_PRIORITIES` 写入的首次运行回退值，
-    // 这就是它们在两种语言中都存在的原因。
-    "projects.priority.now": "立即",
-    "projects.priority.important": "重要",
-    "projects.priority.later": "有空再说",
-    "projects.priority.done": "已完成",
-    "projects.priority.parked": "低优先级",
     "projects.delete": "删除项目",
     "projects.delete.title": "确定删除该项目？",
     "projects.delete.body": "该目录及其内容，以及其中的 {n} 个会话都将被删除。此操作无法撤销。",

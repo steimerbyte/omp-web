@@ -188,7 +188,13 @@ export function ProjectsDashboard({
   );
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+    <div
+      // Stable hook for "which view is mounted" assertions — a view test that
+      // greps for visible text cannot tell this apart from the sidebar's own
+      // "Search projects & sessions" filter.
+      data-projects-dashboard=""
+      style={{ height: "100%", overflowY: "auto", display: "flex", flexDirection: "column" }}
+    >
       <DashboardTopbar
         projectCount={projects?.length ?? 0}
         chatCount={chatCount}

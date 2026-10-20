@@ -171,6 +171,31 @@ function sanitizeBranchForDir(branch: string): string {
   return branch.replace(/[\/\\:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+/**
+ * `git init` in `cwd`, for the dashboard's "create a git repository" option.
+ *
+ * ### Why this lives next to the other git calls
+ *
+ * `resolveProject` reads the repo to decide what a card shows, so a folder
+ * created with the box ticked and no `.git` would report "kein Repo" for a
+ * project the user explicitly asked to be one. Running git anywhere but here
+ * would put a second `execFile("git", …)` in the codebase with different
+ * timeout and locale handling — and the locale pin matters here for the same
+ * reason it does in `removeWorktree`: `git` speaks its error text in the
+ * user's language otherwise.
+ *
+ * Re-initialising an existing repo is a no-op `git init` reports as "Reinitialized",
+ * which is exactly right for a folder the registry already knows.
+ *
+ * The cache is dropped because `resolveProject` memoises per directory for a
+ * minute: without this, a card created as a repo would still say "kein Repo"
+ * until the TTL expired.
+ */
+export async function initRepository(cwd: string): Promise<void> {
+  await git(cwd, ["init", "--quiet"]);
+  invalidateProjectCache();
+}
+
 export async function addWorktree(
   cwd: string,
   branch: string,

@@ -1,18 +1,28 @@
 import { NextResponse } from "next/server";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { getAllowedFileRoots } from "@/lib/file-access";
+import { allowFileRoot } from "@/lib/allowed-roots";
 import { listAllSessions } from "@/lib/session-reader";
-import { getRequestIdentity, getUserHome, type WebIdentity } from "@/lib/request-identity";
+import { getRequestIdentity, getUserHome, isAdminIdentity, type WebIdentity } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { resolveProject } from "@/lib/worktree";
+import { isPathWithinRoots } from "@/lib/path-security";
+import { resolveProject, initRepository } from "@/lib/worktree";
+import { isProtectedProjectRoot } from "@/lib/projects-delete";
 import {
   DEFAULT_PRIORITIES,
   applyProjectPatches,
   applySizeMeasurements,
+  isPriorityId,
   isSizeMeasurementStale,
+  isValidProjectFolderName,
   mergePriorityPatches,
   mergeProjectPatches,
+  normalizeProjectMeta,
+  normalizeProjectRoot,
   projectDisplayName,
   sortProjectViews,
+  type PriorityId,
   type ProjectView,
   type ProjectsFile,
 } from "@/lib/projects-schema";
@@ -128,6 +138,12 @@ async function buildProjectViews(
         isGit: resolved.branch !== null || resolved.isWorktree,
         branch: resolved.branch,
         lastActivityAt,
+        // The answer, not the rule: the browser cannot run
+        // `isProtectedProjectRoot` (it reads the identity's home and the
+        // filesystem), so it is computed here and shipped. `getUserHome`, not
+        // `os.homedir()` — see the delete route for why the home is a property
+        // of the caller.
+        isProtected: isProtectedProjectRoot(project.root, getUserHome(identity)),
       };
     }),
   );
@@ -251,5 +267,188 @@ export async function PUT(req: Request) {
     return NextResponse.json({ projects: views, priorities: written.priorities });
   } catch {
     return NextResponse.json({ error: "Unable to save projects" }, { status: 500 });
+  }
+}
+
+/**
+ * POST /api/projects — create a project, which means creating its folder.
+ *
+ * ### The guard chain, and the order it runs in
+ *
+ * `isApiRequestAllowed` → `requireIdentity` → `hasJsonContentType` → name
+ * validation → path check → protection check → existence check → `mkdir`.
+ *
+ * The first three are byte-for-byte the chain PUT runs, and deliberately:
+ * this is the same resource with one method more, and a second set of guards
+ * would be a second thing to get wrong. In particular there is **no**
+ * `requireAdmin` — the registry is per account (see the note at the top of
+ * this file), so a tenant managing their own dashboard is the normal case.
+ *
+ * The rest is the part the order is about. Everything that can *write* to the
+ * filesystem — `mkdirSync`, `allowFileRoot`, the registry write — sits behind
+ * every check, and the name is validated before the path is even joined. The
+ * reverse order is the bug `bin/web-auth-store.js` documents: a `400` that
+ * arrives after a `mkdir` has already created `../etc` is a refusal that cost
+ * something.
+ *
+ * ### What the identity is allowed to grant
+ *
+ * `allowFileRoot` is process-wide state, so it stays admin-gated exactly as
+ * `AGENTS.md` requires for `/api/cwd/validate` and `/api/default-cwd`: a
+ * tenant's folder is checked against their own home and **nothing** is
+ * granted, because a grant made by one user would widen the filesystem for
+ * every other operator in the process, permanently. That is also why the
+ * "New project" button is admin-only in the dashboard — not a cosmetic
+ * choice.
+ *
+ * ### An existing folder is refused, not adopted
+ *
+ * 409, and this is the honest answer rather than the convenient one. The
+ * dashboard's promise is "the folder *is* the project" — deleting a project
+ * recursively deletes that folder and every chat inside it. Silently adopting
+ * `~/Documents` because the user typed its name would put an unrecoverable
+ * delete button on a folder nobody asked to create. Refusing keeps the
+ * invariant true: everything on the board was created by this endpoint.
+ *
+ * The registry already contains an entry for a folder whose directory was
+ * removed by hand, so that case is answered too — re-creating the folder is
+ * allowed there, because the existing entry is this account's own record of a
+ * project, not a foreign folder.
+ */
+export async function POST(req: Request) {
+  if (!isApiRequestAllowed(req)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  const identity = requireIdentity(req);
+  if (identity === null) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+  if (!hasJsonContentType(req)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+
+  try {
+    const body: unknown = await req.json();
+    const raw = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+
+    // Before any path is joined. `isValidProjectFolderName` is the single
+    // definition of a legal folder name (see `lib/projects-schema.ts`); the
+    // dialog's copy exists to give the same answer without a round trip.
+    if (!isValidProjectFolderName(raw.name)) {
+      return NextResponse.json(
+        { error: "A project name must be kebab-case, without path separators" },
+        { status: 400 },
+      );
+    }
+    const priority: PriorityId = isPriorityId(raw.priority) ? raw.priority : "later";
+
+    // The home of the *identity*, not `homedir()` of the service process:
+    // the process serves several identities from one tree, so "the home" is a
+    // property of the caller.
+    const home = getUserHome(identity);
+    const workspace = join(home, "workspace");
+    const root = normalizeProjectRoot(join(workspace, raw.name));
+    if (root === null || !isPathWithinRoots(root, new Set([workspace]))) {
+      // Unreachable given the name check above — `join` of a segment with no
+      // separator cannot leave its parent. It stays because this is the
+      // boundary that runs `mkdir`, and a check that only holds because of a
+      // property of a *different* function is not a check.
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+
+    // `isProtectedProjectRoot` on the *child*. Not on `<home>/workspace` as
+    // well: `lib/projects-delete.ts` protects every depth-1 folder under the
+    // home, so the workspace directory is itself "protected" by that rule and
+    // asking about it would refuse every project this endpoint exists to
+    // create. That rule exists to stop a *delete* from eating `~/Documents`;
+    // it says nothing about writing a new folder two levels down, which is
+    // exactly what this is. The child check still runs because it is the
+    // question that matters — a home that resolves into a system root, or a
+    // named protected home child further down — and because it is the one a
+    // future change to the derived path has to keep passing.
+    if (isProtectedProjectRoot(root, home)) {
+      return NextResponse.json(
+        { error: "This location is protected and cannot be used for a project", code: "protected" },
+        { status: 403 },
+      );
+    }
+
+    const stored = readProjectsFile(identity);
+    const current: ProjectsFile = stored ?? {
+      schemaVersion: 1,
+      projects: [],
+      priorities: DEFAULT_PRIORITIES.map((priority) => ({ ...priority })),
+    };
+    const alreadyRegistered = current.projects.some((project) => project.root === root);
+
+    // `mkdirSync({recursive: true})` would succeed silently on an existing
+    // directory, which would turn "create" into "adopt" — see the note above.
+    // Re-creating a folder this account already had a card for is the one
+    // exception, and it is the exception because the registry entry is this
+    // account's own record rather than a foreign folder.
+    if (!alreadyRegistered && existsSync(root)) {
+      return NextResponse.json(
+        { error: "A folder with this name already exists", code: "exists" },
+        { status: 409 },
+      );
+    }
+
+    mkdirSync(root, { recursive: true });
+
+    // `initGit` is the client's checkbox, and it is honoured here rather than
+    // ignored: a folder the card then reports as "kein Repo" because the
+    // server dropped the flag would be a silent lie. `resolveProject`
+    // (`lib/worktree.ts`) reads the repo the same way the card does.
+    if (raw.initGit === true) {
+      await initRepository(root);
+    }
+
+    const now = new Date().toISOString();
+    // Server-owned fields, exactly as in PUT: the client chose a name and a
+    // category, and nothing else. `root` is derived here, `createdAt` and
+    // `adopted` are facts about how the entry came to exist, and the size
+    // cache belongs to the next GET.
+    const entry = normalizeProjectMeta(
+      {
+        root,
+        priority,
+        openTodos: 0,
+        status: "yellow",
+        createdAt: now,
+        lastTouchedAt: now,
+        adopted: false,
+      },
+    );
+    if (entry === null) {
+      return NextResponse.json({ error: "Invalid project" }, { status: 400 });
+    }
+
+    const next: ProjectsFile = {
+      schemaVersion: 1,
+      // Replace rather than append: a re-created folder keeps its identity,
+      // and two cards for one path is the duplicate the normalization exists
+      // to prevent.
+      projects: [...current.projects.filter((project) => project.root !== root), entry],
+      priorities: current.priorities,
+    };
+    const written = writeProjectsFile(identity, next);
+
+    // Admin-only, with the identity as the argument. Without it the grant
+    // lands in the unattributed bucket (`AGENTS.md`), which is visible to
+    // every admin rather than to the account that created the project.
+    if (isAdminIdentity(identity)) {
+      allowFileRoot(root, identity);
+    }
+
+    const views = await buildProjectViews(identity, written);
+    return NextResponse.json(
+      { projects: views, priorities: written.priorities, root },
+      { status: 201 },
+    );
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to create the project" },
+      { status: 500 },
+    );
   }
 }

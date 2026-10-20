@@ -4,7 +4,13 @@ import { useState } from "react";
 import { ModalBackdrop, ModalPanel } from "@/components/motion/Enter";
 import { Pressable } from "@/components/motion/Pressable";
 import { useI18n } from "@/hooks/useI18n";
-import { PRIORITY_IDS, type PriorityDef, type PriorityColorValue, type PriorityId } from "@/lib/projects-schema";
+import {
+  PRIORITY_IDS,
+  isValidProjectFolderName,
+  type PriorityDef,
+  type PriorityColorValue,
+  type PriorityId,
+} from "@/lib/projects-schema";
 
 /**
  * Create a project: a name, a category, and nothing else.
@@ -223,15 +229,12 @@ export function NewProjectDialog({
 /**
  * Kebab-case, no traversal, no leading dash.
  *
- * The name becomes a directory name under `<home>/workspace`, so `/`, `\`, `.`
- * and a leading `-` are all refused. The check is deliberately strict: a
- * project folder has no legitimate reason to contain a slash, and refusing the
- * whole class here is cheaper than sanitising the names that slip through.
+ * Delegates to `isValidProjectFolderName` in `lib/projects-schema.ts`, which
+ * is where the rule the *server* enforces lives. The dialog keeps this name
+ * because its purpose is different from the schema module's: it exists so the
+ * user is told now rather than after a round trip. Two copies of the pattern
+ * would be free to drift, and the copy that drifts is the one the server reads.
  */
 export function isValidFolderName(name: string): boolean {
-  if (name.length === 0 || name.length > 64) return false;
-  if (name.startsWith("-")) return false;
-  if (name === "." || name === "..") return false;
-  if (name.includes("/") || name.includes("\\")) return false;
-  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name);
+  return isValidProjectFolderName(name);
 }

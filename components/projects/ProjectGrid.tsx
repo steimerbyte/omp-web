@@ -1,10 +1,9 @@
 "use client";
 
-import { Enter } from "@/components/motion/Enter";
 import { Skeleton } from "@/components/motion/Skeleton";
 import { useI18n } from "@/hooks/useI18n";
 import { ProjectCard } from "./ProjectCard";
-import { PRIORITY_IDS, type PriorityDef, type PriorityColorValue, type ProjectView } from "@/lib/projects-schema";
+import { PRIORITY_IDS, type PriorityColorValue, type PriorityDef, type ProjectView } from "@/lib/projects-schema";
 
 /**
  * The card grid, grouped by category.
@@ -16,6 +15,16 @@ import { PRIORITY_IDS, type PriorityDef, type PriorityColorValue, type ProjectVi
  * The grouping follows `PRIORITY_IDS`, not the order the array happens to
  * arrive in — the order *is* the taxonomy, and a server that returned them
  * shuffled must not reshuffle the user's screen.
+ *
+ * ### Why there is no second, sidebar-shaped list here
+ *
+ * An earlier draft exported a `ProjectListRow` for a "by urgency" list in the
+ * session sidebar. It was never rendered anywhere, and it is gone rather than
+ * wired up: the sidebar has its own project list built from the session list,
+ * not from this registry, so a second entry point would need the projects
+ * again — a second `GET /api/projects`, a second load state, and a second
+ * answer to "which projects exist" that could disagree with the dashboard's.
+ * The categories are visible as the dashboard's own sections instead.
  */
 export function ProjectGrid({
   projects,
@@ -134,40 +143,5 @@ export function ProjectGridSkeleton({ rows = 2, columns = 3 }: { rows?: number; 
         </div>
       ))}
     </div>
-  );
-}
-
-/** One category, for the sidebar's urgency list. */
-export function ProjectListRow({
-  name,
-  colorValue,
-  chatCount,
-}: {
-  name: string;
-  colorValue: PriorityColorValue;
-  chatCount: number;
-}) {
-  return (
-    <Enter direction="down" style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
-      <span
-        aria-hidden="true"
-        style={{ width: 6, height: 6, borderRadius: "50%", background: colorValue, flexShrink: 0 }}
-      />
-      <span
-        style={{
-          flex: 1,
-          minWidth: 0,
-          fontSize: 12,
-          color: "var(--text-muted)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-        title={name}
-      >
-        {name}
-      </span>
-      <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{chatCount}</span>
-    </Enter>
   );
 }

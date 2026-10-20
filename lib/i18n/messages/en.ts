@@ -97,23 +97,11 @@ export const enLocale: LocalePlugin = {
     "projects.noRepo": "No git repo",
     "projects.chats": "{n} chats",
     "projects.oneChat": "1 chat",
-    "projects.branch": "Branch",
-    "projects.adopted": "Adopted from sessions",
     "projects.empty": "No projects yet",
     "projects.emptyHint": "Create a project, or pick a folder as your workspace.",
     "projects.error": "Projects could not be loaded",
     "projects.sizeUnknown": "Size unavailable",
     "projects.open": "Open",
-    "projects.loading": "Loading projects...",
-    // Priority names are NOT here. They live in the registry
-    // (`priorities[].name`, `lib/projects-schema.ts`) because they are renamed
-    // per account. These five are only the first-run fallback written by
-    // `DEFAULT_PRIORITIES`, which is why they exist in both languages.
-    "projects.priority.now": "Now",
-    "projects.priority.important": "Important",
-    "projects.priority.later": "Nice to have",
-    "projects.priority.done": "Done",
-    "projects.priority.parked": "Low priority",
     "projects.delete": "Delete project",
     "projects.delete.title": "Delete this project?",
     "projects.delete.body": "The folder, its contents and all {n} chats inside it will be removed. This cannot be undone.",

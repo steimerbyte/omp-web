@@ -179,6 +179,22 @@ export function AppShell() {
   const [activeView, setActiveView] = useState<"chat" | "projects">(
     () => initialNavigation.requestedView,
   );
+  // The sidebar's *automatic* first cwd adoption is what would break a
+  // `?view=projects` reload, so it is switched off at the source rather than
+  // detected afterwards.
+  //
+  // The distinction this makes is exactly "automatic restore" vs "user click",
+  // and it is the only place in the shell where those two are separable
+  // without guessing: `SessionSidebar`'s auto-select effect (getRecentProjects
+  // → setSelectedCwd → onCwdChange) runs once, before any input, while every
+  // later `onCwdChange` is a click, a `?cwd=` URL or a session restore. The
+  // latter two already arm `suppressCwdBumpRef`; this covers the third.
+  //
+  // The dashboard is the one view that does not want a cwd adopted under it:
+  // it lists its own projects, and the chat underneath stays the empty
+  // welcome state rather than a half-opened session.
+  const skipInitialProjectSelection =
+    initialNavigation.requestedCwd !== null || activeView === "projects";
   // Whether this account may create projects. Creating one widens the file
   // allow-list, which `AGENTS.md` keeps admin-gated, so the button is hidden
   // for a tenant rather than shown and then refused. Asked the same way
@@ -671,10 +687,22 @@ export function AppShell() {
 
     // Keep the project identity in sync during the initial URL restore without
     // remounting the just-created or restored chat.
+    //
+    // This guard is also what separates an *automatic* restore from a user
+    // click, and that separation is load-bearing: everything below it — the
+    // session reset, `router.replace("/")`, and the view switch — is "go to
+    // the work". A restore triggered by the URL must not throw away the view
+    // the URL asked for.
     if (suppressCwdBumpRef.current) {
       suppressCwdBumpRef.current = false;
       return;
     }
+    // Picking a cwd is an explicit "go to the work", so it leaves the
+    // dashboard. Reached only past the guard above, which is why a `?view=`
+    // reload still lands on the dashboard: the automatic adoption is stopped
+    // at the source (see `skipInitialProjectSelection` below), and the two
+    // remaining automatic paths — `?cwd=` and `?session=` — both arm the guard.
+    setActiveView("chat");
     // Worktrees of one repo share a project root. Moving the effective cwd
     // within the same project (e.g. switching worktree, or clicking a session
     // that lives in another worktree) must not close the open session.
@@ -713,6 +741,10 @@ export function AppShell() {
     // project switch and the just-selected session is cleared.
     activeProjectRootRef.current = session.projectRoot ?? session.cwd;
     invalidateWorkspaceRestore();
+    // Clicking a session is "go to the work". A *restore* (`?session=` in the
+    // URL) is not: the URL may also ask for the dashboard, and the chat it
+    // restores is the layer underneath it.
+    if (!isRestore) setActiveView("chat");
     // Re-clicking the already-open session must not remount the chat and
     // re-run the full load/positioning cycle. Only skip when the effective
     // cwd context already matches — otherwise a pending cwd move still needs
@@ -747,6 +779,8 @@ export function AppShell() {
 
   const handleNewSession = useCallback((_sessionId: string, cwd: string) => {
     invalidateWorkspaceRestore();
+    // The `+` button and the keyboard shortcut are both "go to the work".
+    setActiveView("chat");
     setSelectedSession(null);
     setNewSessionCwd(cwd);
     setSessionKey((k) => k + 1);
@@ -1020,20 +1054,19 @@ export function AppShell() {
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
-  // The projects dashboard is a third view next to chat and the placeholder.
-  // It is a *lower* priority than both: opening a session or picking a cwd is
-  // an explicit "go to the work" action, and it must always win over a view
-  // that is merely still selected in the sidebar. Without `!showChat` here the
-  // dashboard would cover the chat the moment a project got a cwd.
-  const showProjects = activeView === "projects" && !showChat;
-
-  // Opening a session or picking a cwd means "go to the work", so it always
-  // takes the user back to the chat view — even if the dashboard was still
-  // selected in the sidebar. The reverse does not hold: viewing the dashboard
-  // never clears the selection.
-  useEffect(() => {
-    if (showChat) setActiveView("chat");
-  }, [showChat]);
+  // The projects dashboard is a third view, and it is chosen — not derived.
+  //
+  // It must NOT be gated on `!showChat`. The sidebar adopts a cwd by itself on
+  // first load (`SessionSidebar`: `getRecentProjects → setSelectedCwd` →
+  // `onCwdChange`), so `showChat` is durably true in normal operation; gating
+  // on it made this branch unreachable while the sidebar button (which reads
+  // `activeView` directly) still showed the dashboard as pressed. The chat and
+  // the placeholder stay mounted underneath as the state the dashboard falls
+  // back to — they are a layer below, not a veto.
+  //
+  // "Go to the work" is therefore explicit instead: `handleSelectSession`,
+  // `handleNewSession` and `handleCwdChange` each switch the view themselves.
+  const showProjects = activeView === "projects";
 
   // Keep the view in the URL. `replaceState` rather than a router navigation
   // so switching views never re-runs the server component tree — the
@@ -1114,7 +1147,7 @@ export function AppShell() {
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
-        skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
+        skipInitialProjectSelection={skipInitialProjectSelection}
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}

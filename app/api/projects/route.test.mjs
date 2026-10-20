@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -333,6 +333,14 @@ test("GET persists a fresh measurement for a stale project", () => withHome(asyn
  * `app/api/host-wide-guards.test.mjs` pins the guards it wants: by reading the
  * route text. If someone swaps `requireIdentity` for `requireAdmin`, this line
  * fails.
+ *
+ * `isAdminIdentity` *is* allowed, and it appears in exactly one place: the
+ * `allowFileRoot` grant on create. `AGENTS.md` requires that grant to be
+ * operator-only, because the allow-list is one process-wide store — a grant
+ * made by one account widens the filesystem for all of them. That is a
+ * narrower question than "may this account create a project", and it is why
+ * the two checks are not the same check. What must not appear is
+ * `requireAdmin` as the *entry* guard.
  */
 test("the route requires an identity but not an admin role", async () => {
   const { readFileSync } = await import("node:fs");
@@ -350,12 +358,16 @@ test("the route requires an identity but not an admin role", async () => {
     /requireAdmin/,
     "the registry is per account; admin-only would lock tenants out of their own dashboard",
   );
-  assert.doesNotMatch(
-    code,
-    /isAdminIdentity\(identity\)/,
-    "an inline admin check is the pattern AGENTS.md rules out; the create path uses requireAdmin",
-  );
   assert.match(code, /requireIdentity/, "an identity is still required");
+
+  // The one admin check that is allowed is the allow-list grant, and it has to
+  // carry the identity — a grant without one lands in the unattributed bucket,
+  // which every admin can see.
+  const grants = [...code.matchAll(/allowFileRoot\(([^)]*)\)/g)].map((match) => match[1]);
+  assert.ok(grants.length > 0, "the create path grants the new root to the file allow-list");
+  for (const args of grants) {
+    assert.match(args, /identity/, "allowFileRoot without an identity lands in the unattributed bucket");
+  }
 });
 
 test("PUT requires an identity, not an admin role", () => withHome(async () => {
@@ -365,4 +377,268 @@ test("PUT requires an identity, not an admin role", () => withHome(async () => {
     body: { projects: [] },
   }));
   assert.equal(response.status, 200, "a tenant manages their own registry");
+}));
+
+// ------------------------------------------------------------ POST: guards --
+
+/**
+ * `POST /api/projects` — the create path.
+ *
+ * The client (`ProjectsDashboard.createProject`) has always sent this, and the
+ * route only had GET and PUT, so "New project" answered 405 every time. The
+ * guard chain is the one PUT uses, plus the checks that stand between a name
+ * and a `mkdir`.
+ *
+ * Every assertion here reads the *filesystem*, not the response body: a route
+ * that returns 400 while still having created a directory passes a
+ * status-code test and is exactly the bug these tests exist for.
+ */
+
+/**
+ * What a rejected create is allowed to have left behind: nothing.
+ *
+ * `getUserHome(identity)` is `<OMP_WEB_HOME_ROOT>/<username>`, so the only
+ * directory the create path could ever create is `<root>/alice/workspace`.
+ * Even that must be absent — nothing may run before the guards, which is the
+ * property `bin/web-auth-store.js` documents for account names and the reason
+ * these assertions look at the disk rather than the response.
+ */
+function createdRoots(root) {
+  const workspace = join(root, "alice", "workspace");
+  return existsSync(workspace) ? [workspace] : [];
+}
+
+test("POST without an identity is 403 and creates nothing", () => withHome(async (root) => {
+  const response = await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: ANON,
+    body: { name: "alpha", priority: "later", initGit: false },
+  }));
+  assert.equal(response.status, 403);
+  assert.deepEqual(createdRoots(root), [], "an anonymous request created a directory");
+  assert.equal(existsSync(getProjectsPath(alice)), false, "and wrote a registry");
+}));
+
+test("POST without a JSON content type is 415", () => withHome(async (root) => {
+  const response = await route.POST(new Request("http://localhost/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: JSON.stringify({ name: "alpha" }),
+  }));
+  assert.equal(response.status, 415);
+  assert.deepEqual(createdRoots(root), []);
+}));
+
+test("POST refuses a cross-origin request before reading the identity", () => withHome(async (root) => {
+  const response = await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: { ...TENANT, origin: "https://evil.example" },
+    body: { name: "alpha", priority: "later", initGit: false },
+  }));
+  assert.equal(response.status, 403);
+  assert.deepEqual(createdRoots(root), []);
+}));
+
+// -------------------------------------------------- POST: name validation --
+
+/**
+ * The name becomes a path segment. Each of these is one way out of
+ * `<home>/workspace`, so each is asserted together with "nothing was created".
+ */
+const ESCAPING_NAMES = [
+  ["a parent traversal", "../../etc"],
+  ["a single parent", ".."],
+  ["a separator", "alpha/beta"],
+  ["a backslash separator", "alpha\\beta"],
+  ["an absolute path", "/etc/passwd"],
+  ["a leading dot", ".hidden"],
+  ["a leading dash", "-rf"],
+  ["an empty name", ""],
+  ["a whitespace name", "   "],
+  ["a name with spaces", "my project"],
+  ["a non-string", 42],
+];
+
+for (const [label, name] of ESCAPING_NAMES) {
+  test(`POST refuses ${label}`, () => withHome(async (root) => {
+    const response = await route.POST(request("/api/projects", {
+      method: "POST",
+      headers: TENANT,
+      body: { name, priority: "later", initGit: false },
+    }));
+    assert.equal(response.status, 400, `${JSON.stringify(name)} should be refused`);
+      assert.deepEqual(createdRoots(root), [], "a refused name still created a directory");
+    assert.equal(existsSync("/etc/omp-web-should-not-exist"), false);
+  }));
+}
+
+test("POST refuses a name longer than the folder-name limit", () => withHome(async (root) => {
+  const response = await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: { name: "a".repeat(65), priority: "later", initGit: false },
+  }));
+  assert.equal(response.status, 400);
+  assert.deepEqual(createdRoots(root), []);
+}));
+
+// -------------------------------------------------- POST: path and purpose --
+
+test("POST creates the folder under the account's own workspace", () => withHome(async (root) => {
+  const read = readFileSync;
+  const response = await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: { name: "alpha", priority: "important", initGit: false },
+  }));
+  assert.equal(response.status, 201);
+
+  // The temp home root is this account's `getUserHome`, so the folder has to
+  // land exactly here and nowhere else.
+  const expected = join(root, "alice", "workspace", "alpha");
+  assert.ok(existsSync(expected), `expected ${expected} to exist`);
+
+  const body = await response.json();
+  assert.equal(body.root, expected);
+  assert.ok(
+    body.projects.some((project) => project.root === expected),
+    "the new project is in the response",
+  );
+  assert.ok(
+    body.projects.some((project) => project.root === expected && project.priority === "important"),
+    "the chosen category was kept",
+  );
+
+  // Server-owned fields: the client sent none of them, so the store's values
+  // must be the ones on disk.
+  const onDisk = JSON.parse(read(getProjectsPath(alice), "utf8"));
+  const stored = onDisk.projects.find((project) => project.root === expected);
+  assert.equal(stored.adopted, undefined, "a created project is not 'adopted from sessions'");
+  assert.ok(typeof stored.createdAt === "string", "createdAt is the store's");
+  assert.ok(Number.isFinite(Date.parse(stored.createdAt)), "and it is a timestamp");
+  assert.equal(stored.openTodos, 0);
+  assert.equal(stored.branch, undefined, "the client cannot set derived fields");
+}));
+
+test("POST refuses a folder that already exists rather than adopting it", () => withHome(async (root) => {
+  mkdirSync(join(root, "alice", "workspace", "taken"), { recursive: true });
+
+  const response = await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: { name: "taken", priority: "later", initGit: false },
+  }));
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.equal(body.code, "exists");
+
+  // The folder the user already had is now a one-click recursive delete away
+  // from the dashboard. It must not have become a project.
+  assert.equal(existsSync(getProjectsPath(alice)), false, "an existing folder entered the registry");
+}));
+
+test("POST creates no git repository unless it was asked for", () => withHome(async (root) => {
+  await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: { name: "plain", priority: "later", initGit: false },
+  }));
+  assert.equal(existsSync(join(root, "alice", "workspace", "plain", ".git")), false);
+
+  await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: { name: "withgit", priority: "later", initGit: true },
+  }));
+  assert.ok(
+    existsSync(join(root, "alice", "workspace", "withgit", ".git")),
+    "initGit was honoured, so the card does not say 'no repo' for a repo the user asked for",
+  );
+}));
+
+/**
+ * A protected location is refused before anything is written.
+ *
+ * The derived path is `<home>/workspace/<name>`, which is depth 2 and so never
+ * caught by the depth-1 delete rule — the check is defence in depth for a home
+ * that resolves into a system root, and its real value here is the *order*:
+ * `isProtectedProjectRoot` has to run before the `mkdirSync`, or a refusal
+ * costs a directory. That order cannot be exercised through the happy path, so
+ * it is pinned against the source, the way `delete-route.test.mjs` pins its
+ * own ordering.
+ */
+test("POST checks protection before it creates anything", async () => {
+  const source = readFileSync(new URL("./route.ts", import.meta.url), "utf8");
+
+  const protection = source.indexOf("isProtectedProjectRoot(root, home)");
+  const pathCheck = source.indexOf("isPathWithinRoots(root");
+  const mkdir = source.indexOf("mkdirSync(root");
+
+  assert.ok(protection > -1, "the create path consults isProtectedProjectRoot");
+  assert.ok(pathCheck > -1, "the create path constrains the joined path");
+  // `indexOf` returns -1 for an absent string, and -1 compares less than
+  // everything — so without these two the ordering assertions below would pass
+  // on a route that dropped the check entirely.
+  assert.ok(protection < mkdir, "the protection check has to run before the mkdir — after it, a refusal costs a directory");
+  assert.ok(pathCheck < protection, "the path check runs before the protection check");
+  assert.ok(pathCheck < mkdir, "and before anything is created");
+});
+
+test("POST refuses a protected home without creating anything", () => withHome(async () => {
+  // `OMP_WEB_HOME_ROOT` is the root the account homes are computed under, so
+  // pointing it at a system directory gives this identity a home that
+  // `isProtectedProjectRoot` refuses outright — the case the check exists for.
+  const previous = process.env.OMP_WEB_HOME_ROOT;
+  process.env.OMP_WEB_HOME_ROOT = "/etc";
+  try {
+    const response = await route.POST(request("/api/projects", {
+      method: "POST",
+      headers: TENANT,
+      body: { name: "alpha", priority: "later", initGit: false },
+    }));
+    assert.equal(response.status, 403);
+    const body = await response.json();
+    assert.equal(body.code, "protected");
+  } finally {
+    if (previous === undefined) delete process.env.OMP_WEB_HOME_ROOT;
+    else process.env.OMP_WEB_HOME_ROOT = previous;
+  }
+}));
+
+test("POST keeps another account's registry out of it", () => withHome(async (root) => {
+  const read = readFileSync;
+  await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: { host: "localhost", "x-omp-user": "alice" },
+    body: { name: "alpha", priority: "later", initGit: false },
+  }));
+  await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: { host: "localhost", "x-omp-user": "bob" },
+    body: { name: "beta", priority: "later", initGit: false },
+  }));
+
+  assert.ok(existsSync(join(root, "alice", "workspace", "alpha")));
+  assert.ok(existsSync(join(root, "bob", "workspace", "beta")));
+
+  const aliceFile = JSON.parse(read(getProjectsPath(alice), "utf8"));
+  assert.deepEqual(
+    aliceFile.projects.map((project) => project.root),
+    [join(root, "alice", "workspace", "alpha")],
+    "alice's registry holds only her project",
+  );
+}));
+
+test("POST accepts an unknown category by falling back, and refuses nothing else", () => withHome(async (root) => {
+  const read = readFileSync;
+  const response = await route.POST(request("/api/projects", {
+    method: "POST",
+    headers: TENANT,
+    body: { name: "alpha", priority: "not-a-priority", initGit: false },
+  }));
+  assert.equal(response.status, 201);
+  const expected = join(root, "alice", "workspace", "alpha");
+  assert.ok(existsSync(expected));
+  const onDisk = JSON.parse(read(getProjectsPath(alice), "utf8"));
+  assert.equal(onDisk.projects[0].priority, "later", "an unknown id falls back instead of being stored");
 }));

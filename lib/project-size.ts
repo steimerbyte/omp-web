@@ -60,6 +60,13 @@ const MAX_OUTPUT_BYTES = 4_096;
  * The caller is responsible for having checked that this path belongs to this
  * identity. This function does no authorization: it runs `du` on whatever it is
  * handed, and the route is what knows which paths are allowed.
+ *
+ * Exported although the only production caller is `measureProjectSizes` below:
+ * the single-folder behaviour *is* the contract — `null` versus `0`, shell
+ * metacharacters treated as a name, a missing folder — and `lib/project-size.test.mjs`
+ * asserts each of those against this function directly. Exercising them
+ * through the pool version would mean constructing enough roots to leave one
+ * pool round, which tests the batching rather than the answer.
  */
 export async function measureProjectSize(root: string): Promise<number | null> {
   if (typeof root !== "string" || root.trim() === "") return null;

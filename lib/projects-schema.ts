@@ -126,6 +126,18 @@ export interface ProjectView extends ProjectMeta {
   branch: string | null;
   /** The later of `lastTouchedAt` and `lastSessionAt`. */
   lastActivityAt: string;
+  /**
+   * `true` when `isProtectedProjectRoot` refuses this folder, i.e. the delete
+   * route will answer `403 code: "protected"` and remove nothing.
+   *
+   * Computed here, on the server, rather than re-derived in the dialog: the
+   * rule reads the identity's home and a filesystem layout, neither of which
+   * the browser has. Shipping the *answer* lets the confirm dialog say why the
+   * button will not work, instead of letting the user press it and read the
+   * refusal afterwards. It is a display convenience — the refusal itself is
+   * still the route's, and a stale `true` here can never authorise a delete.
+   */
+  isProtected?: boolean;
 }
 
 export const PROJECTS_SCHEMA_VERSION = 1 as const;
@@ -230,6 +242,46 @@ export function normalizeProjectRoot(root: string): string | null {
   }
   const joined = segments.join("/");
   return isAbsolute ? `/${joined}` : joined;
+}
+
+/**
+ * Whether `name` may become a folder name under `<home>/workspace`.
+ *
+ * ### Why this is here and not in the dialog
+ *
+ * The name is a *path segment*. The dialog validates it so the user learns
+ * immediately, but a dialog is a UI affordance and this is the boundary: the
+ * server is what calls `mkdir`, so the server is what has to refuse `../../etc`
+ * and `a/b`. Two copies of this rule would drift, and the copy that drifts is
+ * always the one the attacker gets.
+ *
+ * ### The rules
+ *
+ * Kebab-case and nothing else. A slash or a backslash is the whole class of
+ * "escapes into a parent directory", and a leading dot is the class of "a
+ * hidden folder nobody sees in a listing". Both are refused outright rather
+ * than sanitised: a project folder has no legitimate reason to contain one,
+ * and stripping them would create a folder whose name is not the name that was
+ * asked for — which is worse than a refusal, because the card would then
+ * disagree with the dialog.
+ *
+ * The length cap mirrors the filesystem's own limit for a single component
+ * (255 on ext4, APFS and NTFS) with room to spare, so the failure is always
+ * this `false` and never an `ENAMETOOLONG` halfway through a create.
+ */
+export function isValidProjectFolderName(name: unknown): name is string {
+  if (typeof name !== "string") return false;
+  if (name.length === 0 || name.length > 64) return false;
+  // Leading dash: refused so a name can never be read as a command-line flag
+  // by a script that builds a path argument, and leading dot for the hidden
+  // folder reason above.
+  if (name.startsWith("-") || name.startsWith(".")) return false;
+  if (name.includes("/") || name.includes("\\")) return false;
+  // `..` and `.` cannot reach here through the pattern below, but they are the
+  // two names a reader of this function is looking for, so they are refused
+  // by name rather than left to be implied.
+  if (name === "." || name === "..") return false;
+  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name);
 }
 
 /** The card title for a root. Never empty: a `/` root falls back to the full path. */
