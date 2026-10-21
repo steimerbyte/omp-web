@@ -323,6 +323,25 @@ multi-line insertion.
 
 ### Interface
 
+**The file explorer's separator line no longer crosses the tree on a phone.**
+Reported as "the separator lines are too far up, and as long as I navigate
+they should not be there at all". Measured in Chromium at 390×844 against the
+big explorer window, the tree area was 120px tall — the minimum from
+`TREE_MIN_HEIGHT` — and the section's `border-bottom` landed at y=305, which
+is inside the sixth tree row (302–326), so the line ran straight through its
+text. The cause was a feedback loop: on narrow viewports the section was
+content-sized (`flex: 0 0 auto`, `max-height: 40vh`), so its height depended
+on the tree and the tree's own height measurement (`measure()` in
+`FileExplorer.tsx`) depended on the section. The loop settled at the
+minimum, and the line moved with the tree whenever the listing changed.
+
+The section now takes the space it has (`flex: 1 1 auto`) instead of the
+space its content needs, and the line is gone. Measured after the change at
+the same viewport: the tree is 611px tall, all 20 rows are inside it, and no
+border crosses any row. The line also had nothing to separate — the tree is
+the content of its own tab, and the two-column arrangement on a desktop puts
+no line between tree and file view either. The desktop layout is unchanged.
+
 **The download button in the file explorer is always there.** It was rendered
 only while the row was hovered and positioned absolutely over it, so a
 download was reachable by pointer but not discoverable, and the overlay could

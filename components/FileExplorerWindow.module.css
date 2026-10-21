@@ -348,21 +348,47 @@
  * (`max-width: 640px`), damit Fenster, Seitenleiste und Hauptseite an
  * derselben Stelle umbrechen.
  *
- * Gestapelt wird der Baum oben und der Inhalt darunter, und der Baum
- * behaelt nur 40vh: auf einem Hochformat-Geraet ist der Baum das, was man
- * beim Lesen nicht braucht, der Inhalt das, was man braucht — ein Drittel
- * Bildschirm fuer die Navigation, der Rest fuer die Datei ist das brauchbare
- * Verhaeltnis. */
+ * Gestapelt wird der Baum oben und der Inhalt darunter.
+ *
+ * DER BAUM BEKOMMT DIE GANZE FLAECHE, UND KEINEN TRENNSTRICH.
+ *
+ * Zwei Fehler, beide nur auf dem Telefon sichtbar, und beide haben dieselbe
+ * Ursache: der Abschnitt hing an der Hoehe seines Inhalts.
+ *
+ * 1. Der Trennstrich. Der Baum ist der Inhalt seines TABS, nicht eine feste
+ *    Spalte neben der Datei — das Fenster zeigt entweder den Baum oder die
+ *    Datei, nie beides. Unter dem Baum liegt im Explorer-Tab also gar nichts,
+ *    was ein Strich trennen koennte; er trennte nur Leerraum. In der
+ *    zweispaltigen Anordnung am Desktop gibt es denselben Strich nicht, und
+ *    dort ist es auch nicht stoerend. Er stand nur hier.
+ *
+ * 2. Die abgeschnittene Baumzeile. Der Baum misst seine eigene Hoehe gegen
+ *    den scrollenden Vorfahren (siehe `measure()` in `FileExplorer.tsx`) und
+ *    nimmt sich davon, was uebrig bleibt. Der Abschnitt hier war
+ *    inhaltgroß (`flex: 0 0 auto`, `max-height: 40vh`), also hing seine
+ *    Hoehe an der Baumhoehe und die Baumhoehe an der Abschnittshoehe. Diese
+ *    Schleife endete bei der Mindesthoehe von 120px: fuenf Zeilen sichtbar,
+ *    der Rest abgeschnitten — und der Trennstrich des Abschnitts lag
+ *    mitten in der sechsten Zeile, durch ihren Text. Beim Navigieren sprang
+ *    die Zeile mit, weil die Ladezustandszeilen eine andere Hoehe haben als
+ *    die geladenen. Genau das war die Meldung: "die Trennlinien sind zu weit
+ *    oben, und solange ich navigiere, sollen sie gar nicht da sein".
+ *
+ * Deshalb: der Abschnitt nimmt den Platz, den es hat (`flex: 1 1 auto`, wie
+ * oben), nicht den, den sein Inhalt braucht. Damit haengt seine Hoehe nicht
+ * mehr an der Baumhoehe, die Baummessung bekommt einen stabilen Wert, alle
+ * Zeilen sind erreichbar, und ueber dem Baum steht kein Strich, der nichts
+ * trennt. */
 @media (max-width: 640px) {
   .workspace {
     flex-direction: column;
   }
 
   .explorer {
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     width: 100%;
-    max-height: 40vh;
+    min-height: 0;
     border-right: none;
-    border-bottom: 1px solid var(--border);
+    border-bottom: none;
   }
 }
