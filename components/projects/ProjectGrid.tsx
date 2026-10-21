@@ -2,8 +2,47 @@
 
 import { Skeleton } from "@/components/motion/Skeleton";
 import { useI18n } from "@/hooks/useI18n";
-import { ProjectCard } from "./ProjectCard";
+import { PROJECT_CARD_HEIGHT, ProjectCard } from "./ProjectCard";
 import { PRIORITY_IDS, type PriorityColorValue, type PriorityDef, type ProjectView } from "@/lib/projects-schema";
+
+/**
+ * The card grid, in ONE place.
+ *
+ * The real grid and the loading skeleton both lay their cards out with this
+ * string. It was two rules until 2026-10-21: the skeleton asked for a fixed
+ * `repeat(3, minmax(0, 1fr))` while the real grid asked for the auto-fill
+ * below, so the two could not agree about the column count. Measured at
+ * 390x844: three 106px placeholder columns, then one 342px card column. At
+ * 1440x900: three 369px placeholder columns, then four 274px ones. Thirty
+ * seconds of the endpoint measuring folder sizes, and then the board jumped.
+ *
+ * `auto-fill` rather than `auto-fit` on purpose: `auto-fit` collapses the
+ * empty tracks, so a group with two cards in a four-column grid would stretch
+ * those two across the whole width and the cards would change size with the
+ * number of projects in their group.
+ */
+const CARD_GRID_TEMPLATE = "repeat(auto-fill, minmax(258px, 1fr))";
+
+/**
+ * The gap between two cards, and between a group header and its cards.
+ *
+ * Both grids, for the same reason as `CARD_GRID_TEMPLATE`: two numbers that
+ * can drift apart are two numbers that will.
+ */
+const CARD_GRID_GAP = 12;
+const GROUP_GAP = 11;
+const GROUP_HEADER_HEIGHT = 19.5;
+
+/**
+ * The height of one card.
+ *
+ * Not declared here. It is `PROJECT_CARD_HEIGHT` from `ProjectCard.tsx`, the
+ * card that actually has that height, so the placeholder reserves the box the
+ * card declares rather than a number copied out of a comment — and
+ * `components/projects/ProjectCard.path-order.test.mjs` holds the two to
+ * the same value.
+ */
+const CARD_HEIGHT = PROJECT_CARD_HEIGHT;
 
 /**
  * The card grid, grouped by category.
@@ -69,8 +108,15 @@ export function ProjectGrid({
         const priority = priorities.find((entry) => entry.id === id);
 
         return (
-          <section key={id} style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <section key={id} style={{ display: "flex", flexDirection: "column", gap: GROUP_GAP }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                minHeight: GROUP_HEADER_HEIGHT,
+              }}
+            >
               <span
                 aria-hidden="true"
                 style={{
@@ -93,8 +139,8 @@ export function ProjectGrid({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(258px, 1fr))",
-                gap: 12,
+                gridTemplateColumns: CARD_GRID_TEMPLATE,
+                gap: CARD_GRID_GAP,
               }}
             >
               {group.map((project) => (
@@ -119,25 +165,45 @@ export function ProjectGrid({
 /**
  * The loading placeholder.
  *
- * `Skeleton` blocks rather than a spinner because the shape of the answer is
- * known — a grid of cards — and the layout should not jump when the real cards
- * arrive.
+ * Blocks rather than a spinner, because the answer's shape is known: a grid of
+ * cards, one group per priority. Every dimension here comes from the same
+ * constants the real grid uses — the column rule, the gap, the group header
+ * height and the card height — so the placeholder stands where the cards
+ * will stand.
+ *
+ * ### What that costs, honestly
+ *
+ * What it does NOT know is how many groups there will be: `priorities` is
+ * empty until the same response that brings the projects arrives. The board
+ * therefore shows `rows` groups while loading and up to five afterwards, and
+ * the content below the first group grows. The *first* group is the part that
+ * does not move — its header, its grid and its first card land on the same
+ * pixels — and that is what a user staring at a thirty-second wait is looking
+ * at. Anything past the first group moves because the answer was longer than
+ * the placeholder, not because the two disagreed about a rule.
+ *
+ * The endpoint needs up to 30 seconds (`lib/project-size.ts` measures folder
+ * sizes synchronously), so this state is not a blink. It is the board.
  */
-export function ProjectGridSkeleton({ rows = 2, columns = 3 }: { rows?: number; columns?: number }) {
+export function ProjectGridSkeleton({ rows = 2 }: { rows?: number }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
       {Array.from({ length: rows }, (_, row) => (
-        <div key={row} style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-          <Skeleton width={140} height={13} />
+        <div key={row} style={{ display: "flex", flexDirection: "column", gap: GROUP_GAP }}>
+          <Skeleton width={140} height={GROUP_HEADER_HEIGHT} />
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-              gap: 12,
+              // the real grid's rule, not a column count of its own
+              gridTemplateColumns: CARD_GRID_TEMPLATE,
+              gap: CARD_GRID_GAP,
             }}
           >
-            {Array.from({ length: columns }, (_, column) => (
-              <Skeleton key={column} height={172} radius={10} />
+            {/* `minmax(258px, 1fr)` decides how many of these fit; the number
+                is only "enough to fill the widest board", because a grid track
+                beyond the last card stays empty either way. */}
+            {Array.from({ length: 4 }, (_, column) => (
+              <Skeleton key={column} height={CARD_HEIGHT} radius={10} />
             ))}
           </div>
         </div>

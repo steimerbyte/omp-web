@@ -1,20 +1,35 @@
 "use client";
 
 import { Pressable } from "@/components/motion/Pressable";
+import { Skeleton } from "@/components/motion/Skeleton";
 import { useI18n } from "@/hooks/useI18n";
 
 /**
  * The dashboard header: title, counts, and the create button.
  *
  * Counts are derived from the list the parent already holds. Asking the server
- * again for "9 projects" would be a second answer that could disagree with
- * the cards on screen.
+ * again for "9 projects" would be a second answer that could disagree with the
+ * cards on screen.
+ *
+ * ### The counts are not shown before they are known
+ *
+ * `GET /api/projects` measures folder sizes synchronously and can take up to
+ * 30 seconds (`lib/project-size.ts`). Until it answers, `projectCount` is not
+ * a count of zero — it is no count at all, and the line used to say
+ * "0 projects · 0 chats" for the whole wait. That reads as "this board is
+ * empty", which is a different statement from "this board is still loading".
+ *
+ * So `loading` replaces the line with a bar of the same height (13px, the
+ * measured height of the text it stands in for). The header does not change
+ * size between the two states, so nothing below it moves when the numbers
+ * arrive.
  */
 export function DashboardTopbar({
   projectCount,
   chatCount,
   onNewProject,
   canCreate,
+  loading = false,
 }: {
   projectCount: number;
   chatCount: number;
@@ -25,6 +40,8 @@ export function DashboardTopbar({
    * button is not offered to an account that cannot use it.
    */
   canCreate: boolean;
+  /** The registry has not answered yet. */
+  loading?: boolean;
 }) {
   const { t } = useI18n();
 
@@ -41,9 +58,19 @@ export function DashboardTopbar({
         <h1 style={{ margin: 0, fontSize: 19, fontWeight: 650, color: "var(--text)" }}>
           {t("projects.title")}
         </h1>
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-          {t("projects.subtitle", { count: projectCount, chats: chatCount })}
-        </span>
+        {loading ? (
+          // Wrapped in an inline-flex span on purpose: a bare block-level
+          // placeholder collapses the line box and the header loses 8px, so
+          // everything below it would move up and then back down. Measured:
+          // the text gives 81.5px, a block child 73.5px, this wrapper 81.5px.
+          <span style={{ fontSize: 12, display: "inline-flex", alignItems: "center" }}>
+            <Skeleton width={124} height={13} />
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {t("projects.subtitle", { count: projectCount, chats: chatCount })}
+          </span>
+        )}
       </div>
 
       <div style={{ flex: 1 }} />

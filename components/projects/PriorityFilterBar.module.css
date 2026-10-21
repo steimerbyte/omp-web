@@ -1,0 +1,30 @@
+/**
+ * The chip strip's scrollbar.
+ *
+ * Two properties, both load-bearing:
+ *
+ * `overflow-x: auto` lets the categories scroll sideways when they do not fit.
+ * That is what removes the row-count jump: the strip is one line whatever the
+ * data says, so the bar's height does not depend on how many categories hold a
+ * project.
+ *
+ * `scrollbar-width: none` hides the scrollbar that would otherwise take
+ * ~15px of layout height. A visible scrollbar appearing only once the chips
+ * overflow would move the strip *down* — a jump of its own, exactly the class
+ * of defect the strip exists to remove. So it is hidden, and the strip stays
+ * scrollable by touch, wheel and keyboard for the same reason a chip row can
+ * scroll anywhere else in an app.
+ */
+.strip {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.strip::-webkit-scrollbar {
+  display: none;
+}

@@ -206,6 +206,7 @@ export function ProjectsDashboard({
         projectCount={projects?.length ?? 0}
         chatCount={chatCount}
         canCreate={isAdmin}
+        loading={projects === null}
         onNewProject={() => setShowNew(true)}
       />
 
@@ -240,6 +241,7 @@ export function ProjectsDashboard({
           query={query}
           onQueryChange={setQuery}
           counts={counts}
+          loading={projects === null}
         />
       </div>
 

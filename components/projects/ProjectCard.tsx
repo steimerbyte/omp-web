@@ -11,6 +11,22 @@ import type { PriorityColorValue, ProjectView } from "@/lib/projects-schema";
 type Translate = (key: string, params?: TranslationParams) => string;
 
 /**
+ * The height of one card, in pixels.
+ *
+ * It lives here rather than in `ProjectGrid` because the card is what has
+ * this height: `ProjectGridSkeleton` imports it to reserve the same box, so
+ * the placeholder and the card cannot drift apart by construction rather
+ * than by agreement.
+ *
+ * `minHeight`, not `height`. Every row inside the card is `white-space:
+ * nowrap`, so the natural height is the same at every viewport — measured
+ * 2026-10-21 at 320x800, 390x844, 768x1024 and 1440x900: 191px, all four.
+ * A floor reserves that box and still lets a card grow if its content ever
+ * needs more, which a fixed height would clip.
+ */
+export const PROJECT_CARD_HEIGHT = 191;
+
+/**
  * One project card.
  *
  * ### The status rail, and why it is a rail
@@ -91,6 +107,7 @@ export function ProjectCard({
           flexDirection: "column",
           gap: 10,
           minWidth: 0,
+          minHeight: PROJECT_CARD_HEIGHT,
         } as React.CSSProperties
       }
       className="omp-project-card"
@@ -162,7 +179,20 @@ export function ProjectCard({
         }}
         title={project.root}
       >
-        {project.root}
+        {/* `direction: rtl` above is what makes the *truncation* happen at the
+            start, so the informative end of the path stays visible. It also
+            flips the bidi order of the text inside — measured on 2026-10-21,
+            the leading "/" was painted at the END of every card, and the path
+            read "home/steimerbyte/workspace/omp-web/".
+
+            The `<bdi>` puts the path back into its own left-to-right isolate,
+            so the glyphs keep their order while the container still clips at
+            the start. A LEFT-TO-RIGHT MARK (U+200E) prefix does the same, but
+            that is an invisible character in the source that also ends up in
+            anything copied out of the card. See
+            `components/projects/ProjectCard.path-order.test.mjs` for what holds
+            this in place. */}
+        <bdi dir="ltr">{project.root}</bdi>
       </div>
 
       <div style={{ display: "flex", gap: 18, alignItems: "baseline" }}>

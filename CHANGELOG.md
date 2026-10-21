@@ -5,6 +5,120 @@ upstream line — see the Provenance section in the README.
 
 ## v0.11.0
 
+### Layout
+
+**Every project card drew its path backwards.** The path sits in a
+`direction: rtl` box, which is what makes the truncation happen at the *start*
+so the informative end of the path stays on screen. That same directive
+reorders the glyphs: measured in Chromium on 2026-10-21, the leading `/` was
+painted at the **end** of the string, so every card in every viewport read
+`home/steimmerbyte/workspace/omp-web/` instead of
+`/home/steimmerbyte/workspace/omp-web`. Read back per character, the `/` sat at
+x=533.1 while the `h` behind it sat at x=302.1 — about 231px out of place.
+
+The path is now wrapped in `<bdi dir="ltr">`, which isolates it as
+left-to-right while the box around it stays RTL and keeps truncating at the
+start. Measured after the change on the same long path: the visible run is a
+contiguous substring of the logical text in the right order (was: not a
+substring at all) and it is a suffix of it, so the tail — the part that
+identifies the project — is what stays visible. The full path is still in the
+`title` attribute, and the DOM text carries no bidi control character, so
+copying a path out of a card yields the path.
+
+A LEFT-TO-RIGHT MARK (U+200E) prefix renders identically and was the first
+candidate. It was rejected: it is an invisible character in the source, and it
+copies into anything the user selects from the card.
+
+**The board rearranged itself after a thirty-second wait.** `GET /api/projects`
+measures folder sizes synchronously and can take up to 30 seconds. The skeleton
+and the real grid asked for different column rules — the skeleton for a fixed
+`repeat(3, minmax(0, 1fr))`, the real grid for
+`repeat(auto-fill, minmax(258px, 1fr))` — so the columns could not agree:
+
+| viewport | skeleton | after loading |
+| --- | --- | --- |
+| 390x844 | 3 × 106px | 1 × 342px |
+| 768x1024 | 3 × 145.3px | 1 × 460px |
+| 1440x900 | 3 × 369.3px | 4 × 274px |
+
+Both grids now take one shared rule, and the `columns` parameter is gone: it
+was a number that had nothing to do with the rule and could therefore drift
+away from it. The card's own height moved into `ProjectCard` as
+`PROJECT_CARD_HEIGHT` and the skeleton imports it, so the placeholder reserves
+the box the card declares rather than a number copied out of a comment.
+
+The loading state also stopped claiming things it did not know. It said
+"0 projects · 0 chats" for the whole wait, which reads as an empty board
+rather than a slow one; it now shows a bar of the header's own line height, and
+the header measures 81.5px in both states.
+
+The category chips are one scrolling strip instead of a wrapping row. The
+names are account data from the registry (`GET /api/projects` returns
+`file.priorities`, renameable per account), so their width is not known before
+the answer arrives — and it is what decided how many rows the chips took.
+Measured at 390x844, five categories wrapped the chips into two rows and put
+the first card 38px lower than it had been a moment earlier; at 768x1024 the
+same happened at a different name length than anyone would have predicted. The
+strip is `flex-wrap: nowrap` and scrolls sideways when the chips do not fit, so
+its height is one line whatever the data says. Measured after the change at
+390x844, 320x800, 768x1024 and 1440x900, with one, three and five categories
+in use: the bar's height, the search field's position and the first card's
+position are identical before and after the load in all twelve combinations.
+Nothing is reserved for categories that are not in use.
+
+The skeleton cannot know how many *groups* there will be — `priorities` is
+empty until the same response that brings the projects — so the board shows two
+groups while loading and up to five afterwards. The first group stands still;
+the content below it grows because the answer was longer than the placeholder,
+not because two rules disagreed. That is what `ProjectGridSkeleton`'s docstring
+says now, replacing a sentence that claimed the opposite of what the code did.
+
+All of it is pinned by `components/projects/ProjectCard.path-order.test.mjs`,
+which mounts the components in jsdom and asserts what they produced. It fails
+on the pre-fix code — checked by re-introducing each defect: 0 pass, 4 fail.
+Two of its assertions are about properties of the DOM and not of the layout
+(the path's character order, the identity of the two grid rules); the ones that
+are layout — where the first card stands, how tall the strip is — are proved in
+a browser, because jsdom has no line boxes.
+
+**Still open: the thirty seconds themselves.** `GET /api/projects` measures
+folder sizes with `du` synchronously, eight at a time, before it answers
+(`lib/project-size.ts`: 10s per project, `ceil(n/8) * 10s` worst case). The
+board now looks the same throughout that wait, but it is still a wait: nothing
+in this change shortens it. Moving the measurement off the request is a
+different piece of work.
+
+### Settings
+
+**The settings window cut off part of its own content, with no scrollbar to
+show for it.** `.window` is `display: grid` with `grid-template-columns` but no
+`grid-template-rows`, so its single row was an implicit `auto` row — sized by
+its content — while the box was bounded by `height`. The row grew past the box
+and `overflow: hidden` cut it away. `.content` reported `scrollHeight ==
+clientHeight` and therefore believed it was complete, so nothing scrolled.
+
+Measured 2026-10-21 on a production build, Chromium 1237, with the Models
+section open:
+
+| Viewport | `grid-template-rows` | `clientHeight` | Cut off | Buttons below the bottom edge |
+|---|---|---|---|---|
+| 390x844 | 967px | 826px | **141px** | **28** |
+| 1440x900 | 910.5px | 858px | **53px** | **7** |
+
+`document.elementFromPoint` on the centre of one of those buttons returned the
+`SettingsConfig_backdrop`, not the button — on the phone the hit point was
+outside the viewport entirely. The affected controls are the model reasoning
+selectors (`inherit`, `off`, `auto`, `minimal`, `low`, `medium`, `high`) and
+the nav entries at the foot of the sidebar.
+
+`grid-template-rows: minmax(0, 1fr)` bounds the row to the window. After it the
+same two viewports measure 826px and 858px, `.content` ends exactly on the
+window's bottom edge, 0 buttons lie below it, the window itself no longer
+scrolls (`clientHeight == scrollHeight`), and `.content` scrolls internally.
+`.sidebar` and `.nav` need no `min-height: 0` for this — they are grid items
+stretched onto the bounded row, and `.nav` measures `clientHeight` 730 against
+`scrollHeight` 871 and scrolls. Adding it changed nothing measurable.
+
 ### Data loss
 
 **Deleting a project could destroy the omp installation.** On 2026-10-20 a test

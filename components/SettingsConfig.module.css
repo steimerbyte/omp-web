@@ -14,6 +14,25 @@
   height: min(860px, calc(100dvh - 36px));
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
+  /* Die Zeile muss ausdruecklich auf die Fensterhoehe laufen. Ohne diese Regel
+     entsteht genau eine implizite Zeile mit `auto`, und `auto` misst sich am
+     Inhalt: sie wurde 967px hoch, waehrend das Fenster per `height` 828px
+     misst. `overflow: hidden` schneidet dann still ab — kein Scrollbalken,
+     weil `.content` `scrollHeight == clientHeight` meldet und sich fuer
+     vollstaendig haelt.
+     Gemessen 2026-10-21, Chromium 1237, omp-web Produktionsbuild:
+       390x844:   grid-template-rows 967px  gegen clientHeight 826px
+                  Ueberhang 141px, 28 Knoepfe unterhalb der Fensterunterkante,
+                  elementFromPoint auf einem davon traf den Backdrop
+       1440x900:  grid-template-rows 910.5px gegen clientHeight 858px
+                  Ueberhang 53px, 7 Knoepfe unterhalb der Kante
+     Mit `minmax(0, 1fr)` misst dieselbe Seite 826px bzw. 858px, `.content`
+     endet exakt auf der Fensterunterkante, und 0 Knoepfe liegen darunter.
+     `.sidebar` und `.nav` brauchen dafuer KEIN `min-height: 0` — sie sind
+     Grid-Items und werden auf die Zeile gestreckt; `.nav` (flex:1,
+     overflow-y:auto) misst danach clientHeight 730 gegen scrollHeight 871 und
+     scrollt. Ein zusaetzliches `min-height: 0` dort aendert nichts Messbares. */
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 14px;

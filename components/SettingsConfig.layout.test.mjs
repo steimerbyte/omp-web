@@ -1,0 +1,148 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+/**
+ * Why a CSS-text test is admissible here, and what it is allowed to say.
+ *
+ * The defect is a layout defect, and jsdom computes no geometry — it cannot
+ * reproduce a row that outgrew its box, so no mount-and-measure test exists for
+ * it. What CAN be asserted in jsdom is the declaration that causes it. The repo
+ * already reads stylesheets as text and asserts rules with `assert.match` in
+ * five places (`SearchableSelect.placement.test.mjs`, `MobilePwaLayout.test.mjs`,
+ * `SubagentPanel.test.mjs`, `motion/motion.test.mjs`, `login/login-motion.test.mjs`),
+ * so this file follows that convention rather than inventing one.
+ *
+ * The line between an admissible test and a weak one is this: assert the
+ * property the defect turns on, not a string. `.window` is `display: grid`
+ * whose only row was left implicit, so the row sized itself to its CONTENT
+ * (`auto`) while the box was bounded by `height`, and `overflow: hidden` cut
+ * the difference away — 141px on a 390x844 phone (28 buttons below the window's
+ * bottom edge, `elementFromPoint` returning the backdrop), 53px at 1440x900.
+ *
+ * The defect is not the absence of one exact declaration. It is that the row
+ * was free to outgrow the box. So `assertBoundedRow` accepts ANY track list
+ * that is pinned to the container and rejects every form that reproduces the
+ * bug — including the near miss `minmax(auto, 1fr)`, which is `auto` with a
+ * friendly-looking wrapper and behaves exactly like the implicit row.
+ *
+ * Measured 2026-10-21 on a production build, Chromium 1237, Models section open:
+ *   before  grid-template-rows 967px   against clientHeight 826px  (390x844)
+ *          grid-template-rows 910.5px against clientHeight 858px  (1440x900)
+ *   after   826px and 858px, 0 buttons below the bottom edge, the window itself
+ *          no longer scrolls, `.nav` measures 730 against 871 and scrolls.
+ */
+
+const css = readFileSync(new URL("./SettingsConfig.module.css", import.meta.url), "utf8");
+
+/**
+ * The body of one rule with comments removed, so a comment block can never
+ * satisfy an assertion — the comment above documents the very defect under test
+ * and mentions `grid-template-rows` and `minmax(0, 1fr)` in the same breath.
+ */
+function ruleBody(source, selector) {
+  const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = withoutComments.match(new RegExp(`(?:^|[},])\\s*${escaped}\\s*\\{([^}]*)\\}`));
+  assert.ok(m, `${selector} nicht in SettingsConfig.module.css gefunden`);
+  return m[1];
+}
+
+/** The declared value of one property inside a rule body, or undefined. */
+function declaration(body, property) {
+  const m = body.match(new RegExp(`(?:^|;)\\s*${property}\\s*:([^;]+)`));
+  return m ? m[1].trim() : undefined;
+}
+
+/**
+ * A row track is BOUNDED when the container's height decides its size. It is
+ * UNBOUNDED — the defect — when the content decides it.
+ *
+ * Rejected, each of these a way to ship the original bug again:
+ *   absent      the row is implicit, and implicit means `auto`
+ *   `auto`      sized by content
+ *   `967px`     a fixed length: taller content overflows it just the same
+ *   `min-content` / `max-content`
+ *   `minmax(auto, 1fr)`   `auto` as the minimum — the wrapper does not help
+ *   `minmax(180px, 1fr)`  a floor above zero still lets it outgrow a short box
+ *
+ * Accepted: a fraction track, with a floor of zero or none.
+ */
+function assertBoundedRow(rowValue, context) {
+  assert.notEqual(rowValue, undefined,
+    `${context}: grid-template-rows fehlt. Ohne die Angabe ist die Zeile ` +
+    `implizit, und eine implizite Zeile ist \`auto\` — sie misst sich am ` +
+    `Inhalt und wächst über die per height begrenzte Box hinaus.`);
+  const value = rowValue.replace(/\s+/g, "");
+
+  assert.ok(!/^(auto|none)$/.test(value),
+    `${context}: grid-template-rows: ${rowValue} lässt die Zeile vom Inhalt ` +
+    `abhängen statt von der Box — das ist genau der Defekt.`);
+  assert.ok(!/^\d/.test(value) && !/px|em|rem|vh|vw|%/.test(value),
+    `${context}: grid-template-rows: ${rowValue} ist eine feste oder relative ` +
+    `Länge. Eine feste Zeile läuft bei genug Inhalt genauso über wie eine ` +
+    `auto-Zeile.`);
+  assert.ok(!/min-content|max-content/.test(value),
+    `${context}: grid-template-rows: ${rowValue} hängt von einem Intrinsikwert ab.`);
+
+  // A `minmax()` floor is the sharpest edge: minmax(auto, 1fr) and
+  // minmax(180px, 1fr) both keep the track free to outgrow a short box.
+  const minmax = value.match(/^minmax\(([^,]+),(.+)\)$/);
+  if (minmax) {
+    const floor = minmax[1];
+    assert.ok(/^0(px|%)?$|^0$/.test(floor),
+      `${context}: grid-template-rows: ${rowValue} setzt eine Untergrenze von ` +
+      `"${floor}". Nur eine Untergrenze von 0 verhindert, dass die Zeile ihre ` +
+      `Box überragt; minmax(auto, 1fr) reproduziert den Defekt.`);
+  }
+  assert.match(value, /\dfr|\bfr\b/,
+    `${context}: grid-template-rows: ${rowValue} enthält keine ` +
+    `fraktionelle Spur, die sich am Rest der Box ausrichtet.`);
+}
+
+test("the settings window binds its grid row to the window height", () => {
+  const body = ruleBody(css, ".window");
+
+  assert.match(body, /display:\s*grid/,
+    ".window muss ein Grid-Container sein — ohne grid entfällt die Zeile ganz.");
+
+  // The cause, and the only assertion that carries it.
+  assertBoundedRow(declaration(body, "grid-template-rows"), ".window");
+
+  // Two columns, the second taking the rest of the row and allowed to shrink.
+  // Deliberately NOT the 238px: that width is design. If someone re-sizes the
+  // sidebar, nothing here should fail.
+  const columns = declaration(body, "grid-template-columns");
+  assert.ok(columns, ".window braucht grid-template-columns.");
+  const tracks = columns.split(/\s+(?![^(]*\))/);
+  assert.equal(tracks.length, 2,
+    `.window erwartet zwei Spalten, gefunden: ${tracks.length} (${columns})`);
+  assert.match(tracks[1], /minmax\(\s*0\s*,\s*1fr\s*\)/,
+    `die zweite Spalte muss minmax(0, 1fr) sein, damit sie unter ihre ` +
+    `Inhaltsbreite schrumpfen kann; gefunden: ${tracks[1]}`);
+});
+
+test("the narrow-viewport override cannot widen the row again", () => {
+  // The 760px block re-declares .window (width, height, columns, radius). It
+  // does not set grid-template-rows at all today, so the bounded row from the
+  // base rule carries over. The invariant is NOT "it must stay silent" — if a
+  // future author repeats the rule explicitly and correctly, that is fine. The
+  // invariant is: if it sets the row, the row it sets must be bounded.
+  const start = css.indexOf("@media (max-width: 760px)");
+  assert.notEqual(start, -1, "@media (max-width: 760px) fehlt");
+  const block = css.slice(start);
+
+  let mobileWindow = null;
+  for (const m of block.matchAll(/(?:^|[},])\s*\.window\s*\{([^}]*)\}/g)) {
+    mobileWindow = m[1];  // last wins, as in CSS
+  }
+  assert.ok(mobileWindow, ".window wird im Mobile-Block nicht ueberschrieben");
+
+  const row = declaration(mobileWindow, "grid-template-rows");
+  if (row === undefined) {
+    // Nothing set: the base rule's bounded row still applies. That is the
+    // state we ship in, and it is correct.
+    return;
+  }
+  assertBoundedRow(row, ".window @media (max-width: 760px)");
+});
