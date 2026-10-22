@@ -1,6 +1,6 @@
 # Projects-Feature — Spezifikation
 
-Stand 2026-10-22, Commit `7620bf4` auf `main` plus der Commit, der die Größenmessung in den Hintergrund legt. **Nicht deployed** — dieser Stand ist im Repo belegt (Tests und Messung gegen den lokalen Dev-Server), im Betrieb noch nicht verifiziert.
+Stand 2026-10-22, Commit `7620bf4` auf `main` plus der Commit, der die Größenmessung in den Hintergrund legt. **Deployed** auf agent-pc (Build `m9AgZHWtzoyB8HvhOvXZV`, 2026-10-22 18:06:11 UTC) und im laufenden Betrieb verifiziert — die Verifikation mit den gemessenen Zahlen steht in Kapitel 3.2.
 
 Dieses Dokument beschreibt, was ausgeliefert ist. Es ist keine Planung und kein Arbeitsbericht. Der Plan, gegen den die Umsetzung gebaut wurde, steht in `docs/plans/projects-dashboard-plan.md` und sagt zu Recht „Status: Plan, nicht implementiert“ — dieses Dokument ersetzt ihn nicht, es beschreibt das Ergebnis.
 
@@ -18,7 +18,7 @@ Ausgeliefert ist:
 - die Anbindung an die Seitenleiste und den Datei-Explorer,
 - die Layout-Korrekturen, die in Kapitel 5 beschrieben sind.
 
-Der Stand ist Commit `7620bf4` auf `main` plus dem Hintergrundlauf für die Größenmessung (Kapitel 3.1). Der Commit `ed92611` ist deployed auf agent-pc und in der Produktion; der Hintergrundlauf ist es nicht.
+Der Stand ist Commit `7620bf4` auf `main` plus dem Hintergrundlauf für die Größenmessung (Kapitel 3.1). Der Commit `ed92611` ist deployed auf agent-pc und in der Produktion; der Hintergrundlauf ist es seit dem 2026-10-22 ebenfalls, und die Verifikation im laufenden Betrieb steht in Kapitel 3.2.
 
 Es gab zwei getrennte Messserien, mit zwei verschiedenen Chromium-Builds:
 
@@ -173,6 +173,57 @@ Das zweite Lesen ist der Kern. Ohne es schriebe der Lauf einen Stand zurück, de
 Die TTL `SIZE_TTL_MS = 5 * 60_000` (`lib/projects-schema.ts:214`) ist fünf Minuten, nicht 30 Sekunden: die alte TTL war **kürzer als die Messung, die sie verteilen sollte** (20,5 s gegen 30 s), also startete der nächste Request einen neuen `du`-Schwarm, während der alte noch lief. Die Lastrechnung: der Lauf wird **nicht** von einer Uhr ausgelöst, sondern von einem Request (`startProjectSizeMeasurement`) — ein Lauf kostet 6,9 s bis 20,5 s `du` (acht Prozesse parallel), ein geöffnetes Dashboard also 20,5 s von 300 s, **6,8 %**, und ein *geschlossenes* Dashboard kostet nichts, weil kein Request kommt und kein Lauf startet. Mit 30 s TTL wären es 20,5 s von 30 s, **68 %**, bei jedem Öffnen innerhalb einer Minute. Der Wert steht im Kommentar über der Konstante mit der Messung und der Rechnung, und `lib/projects-schema.test.mjs` prüft dieselbe Zahl.
 
 `isSizeMeasurementStale` (`lib/projects-schema.ts:627`) entscheidet nach dem **Zeitstempel**, nicht nach dem Wert: ein Ordner, dessen Messung gescheitert ist, hat einen frischen Zeitstempel und `sizeBytes: null`. Das ist eine Antwort („keine Größe“), keine offene Zusage. Die alte Regel (`sizeBytes === null` heißt veraltet) hat denselben Ordner bei **jedem** Request neu gemessen — das war der Grund für den Dauerschwarm, und weil 7 von 18 Ordnern `null` liefern, war `stale.length` im alten Code **immer** größer null: die TTL wurde nie erreicht, der Cache war wirkungslos.
+
+### 3.2 Die Verifikation im Produktivbetrieb
+
+Die lokale Serie aus 3.1 misst auf dem Dev-Host gegen 18 Wurzeln. Dieser Abschnitt ist die **Verifikation im laufenden Betrieb**: gegen agent-pc, mit fünf Projekten, mit denselben Kommandos vor und nach dem Deploy. Das sind zwei verschiedene Messumgebungen mit zwei verschiedenen Registrys — die Zahlen werden nicht vermischt.
+
+**Die Umgebung.** agent-pc, `omp-web.service`, `127.0.0.1:8788`, Build `m9AgZHWtzoyB8HvhOvXZV`, deployed 2026-10-22 18:06:11 UTC. Die Registry des Kontos `/home/pi` hat fünf Wurzeln:
+
+| Ordner | Größe |
+|---|---|
+| `/home/pi/workspace/Recherche` | 247,5 MiB |
+| `/home/pi/workspace/decomp` | 394,0 MiB |
+| `/home/pi/workspace` | 5,37 GiB |
+| `/home/pi/workspace/omp-web-dev` | 2,78 GiB |
+| `/home/pi/workspace/Haus-Kaufen` | 15,54 MiB |
+
+**Die Vorher-Messung** lief gegen den Stand, in dem `GET /api/projects` die Größen synchron im Request maß. Fünf Durchläufe, `curl -w` mit Status, `time_starttransfer`, `time_total` und `size_download`:
+
+| | ttfb | total | Status | Bytes |
+|---|---|---|---|---|
+| Kaltlauf | 2073,294 ms | 2073,323 ms | 200 | 2468 |
+| Warmlauf 1 | 4,709 ms | | 200 | 2468 |
+| Warmlauf 2 | 3,737 ms | | 200 | 2468 |
+| Warmlauf 3 | 3,8 ms | | 200 | 2468 |
+| Warmlauf 4 | 3,728 ms | | 200 | 2468 |
+| Warmlauf 5 | 3,511 ms | | 200 | 2468 |
+
+Der Kaltlauf war **echt kalt**: `sizeMeasuredAt` war zu Beginn 7312,7 s alt, die TTL ist 300 s (`SIZE_TTL_MS`, `lib/projects-schema.ts:247`), also `stale = true` — und genau deshalb hat der Request die Größenmessung synchron ausgeführt. Die Differenz Kaltlauf zu Warmlauf ist **2069,6 ms**, und das ist exakt der Messanteil, der im Request stand.
+
+**Der `du`-Pool über dieselben fünf Produktionswurzeln**, fünf Durchläufe, Wanduhr: 2005,7 / 2019,9 / 2019 / 2003 / 2025,7 ms. Median **2019 ms**, Spanne 22,7 ms = **1,1 %**. Die Spanne ist so klein, weil alle fünf Läufe dieselbe, bereits gefüllte Page-Cache-Lage hatten — der Pool ist damit gut genug als Vergleichsmaßstab für die Cold-Warm-Differenz.
+
+**Die Nachher-Messung** lief mit denselben Kommandos gegen den deployed Stand, in dem die Messung im Hintergrund läuft:
+
+| | ttfb | total | Status | Bytes |
+|---|---|---|---|---|
+| Durchlauf 1 | 3,317 ms | 3,343 ms | 200 | 2468 |
+| Durchlauf 2 | 2,93 ms | 2,953 ms | 200 | 2468 |
+| Durchlauf 3 | 2,7 ms | 2,724 ms | 200 | 2468 |
+| Durchlauf 4 | 2,628 ms | 2,651 ms | 200 | 2468 |
+| Durchlauf 5 | 6,534 ms | 6,562 ms | 200 | 2468 |
+
+Median **2,953 ms**, Minimum 2,651 ms, Maximum 6,562 ms. **Der Kaltlauf hat keinen Sprung mehr**: er liegt bei 2,7 bis 6,6 ms, also auf dem Niveau des Warmlaufs. Die Größen sind trotzdem im Payload — alle fünf gefüllt, mit **denselben Werten wie vorher** (247,5 MiB, 394,0 MiB, 5,37 GiB, 2,78 GiB, 15,54 MiB), und keine davon als Untergrenze markiert.
+
+`GET /api/projects/sizes`, fünf Durchläufe: Median **3,061 ms**, Minimum 2,858 ms, Maximum 6,316 ms, je 674 Bytes.
+
+**Der `pending`-Zyklus wurde gezielt beobachtet.** Nach Ablauf der 300-s-TTL lieferte der erste Poll `pending = true` (43,891 ms, weil er den Messlauf anstößt), der zweite `pending = true` (5,525 ms), der dritte `pending = false` (4,202 ms). Der erste Poll ist also messbar größer als die reguläre Abfrage, liegt aber weit unter dem `du`-Pool-Median von 2019 ms: **der Endpunkt blockiert nicht auf der Messung, er startet sie nur.**
+
+**Die Registry auf agent-pc** wurde neu geschrieben: mtime 16:11:07 → 17:11:28, Größe unverändert 2232 Bytes, sha256 geändert. Der `sizeMeasuredAt` aller fünf Projekte ist **17:11:28.744Z, identisch** — ein Messlauf über alle fünf Wurzeln. (Der mtime davor, 16:11:07, ist die Zeit des fehlgeschlagenen Deploys; die Änderung kam also vom ersten tatsächlichen API-Zugriff, nicht von einem Neustart.)
+
+**Was nicht verifiziert wurde.** Ein bewusst erzwungener stale-Kaltlauf auf dem neuen Build wurde **nicht** abgenommen: beim ersten Zugriff nach dem Deploy waren die Größen nur 54 s alt, also nicht stale. Die Aussage „kein Sprung mehr“ stützt sich darauf, dass auch der größte Nachher-Wert 6,6 ms beträgt, und darauf, dass der Request im Code keinen Messschritt mehr enthält. Ebenfalls nicht gemessen: das Verhalten bei mehreren gleichzeitigen Clients, bei Fehlern in der Messung (`sizeIsLowerBound: true`), bei einer Registry, die sich während der Messung ändert, und die **Browser-Darstellung** — gemessen wurde ausschließlich gegen die API.
+
+**Die Betriebsbedingung des Deploys auf agent-pc.** Der Build braucht den laufenden Dienst **gestoppt**: der Host hat 8 GB RAM und **kein Swap**, mit laufendem Dienst stehen rund 2,7 GB `available` zur Verfügung, und der Next-Build passt da nicht hinein — Exit 137 mit dem Kernel-Text `Killed`, also der OOM-Killer. Eine Heap-Deckelung (`NODE_OPTIONS=--max-old-space-size=3072` bzw. `2048`) hilft nicht: sie ändert nur die Fehlerart von SIGKILL (137) auf einen stillen Exit 1 an derselben Stelle. Mit gestopptem Dienst steigt `available` auf rund 3972 MB, der Build läuft in **52,1 s** durch, die Ausfallzeit zwischen Stop und Start beträgt **60,6 s**. Das ist eine Bedingung des Hosts, kein Fehler des Features — aber es betrifft jeden künftigen Deploy.
 
 ### GET /api/projects/sizes
 
@@ -515,7 +566,7 @@ Die Zahlen, die den Punkt ausgelöst haben, bleiben als Vergleich stehen. Die **
 
 Nach der Umstellung antwortet dieselbe Route in **0,13 s bis 4,39 s** (Median 1,21 s über zehn Requests am 2026-10-22, gemessen gegen denselben Dev-Server); mit laufender Hintergrundmessung 0,69 s bis 1,37 s. Der alte Code antwortete unter denselben Bedingungen mit 5,0 s (warmer Cache, Messung fiel an) bzw. 52,0 s (kalter Cache). Die Messung läuft daneben weiter; mit warmem Metadaten-Cache dauerte ein Lauf dort 5,3 s.
 
-**Derselbe Vorbehalt wie bei den alten Zeiten.** Diese Zahlen stammen aus derselben Messumgebung wie die 30,7 s und die 52,0 s (lokaler Dev-Server, 2026-10-22, `curl -w "%{time_total}"`, ein angemeldeter Request nach dem Aufwärmen der Route) und haben denselben Vorbehalt: sie sind **nicht nachreproduzierbar**. Der Boden des Requests ist die Sessionliste (Kapitel 3.1), und die hängt am Cache der Sitzungsdateien; die Spanne von 0,13 s bis 4,39 s ist deshalb Cache, nicht Code. In der Produktion wurde die Wartezeit nicht nachgemessen.
+**Derselbe Vorbehalt wie bei den alten Zeiten.** Diese Zahlen stammen aus derselben Messumgebung wie die 30,7 s und die 52,0 s (lokaler Dev-Server, 2026-10-22, `curl -w "%{time_total}"`, ein angemeldeter Request nach dem Aufwärmen der Route) und haben denselben Vorbehalt: sie sind **nicht nachreproduzierbar**. Der Boden des Requests ist die Sessionliste (Kapitel 3.1), und die hängt am Cache der Sitzungsdateien; die Spanne von 0,13 s bis 4,39 s ist deshalb Cache, nicht Code. **In der Produktion wurde die Wartezeit nachgemessen** — mit fünf Projekten statt achtzehn, gegen agent-pc; die Zahlen und der Vergleich mit dem Vorher-Zustand stehen in Kapitel 3.2.
 
 ### Weitere offene Punkte
 

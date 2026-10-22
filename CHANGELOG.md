@@ -543,6 +543,14 @@ process per project. The same route answers in 0,13 s to 4,39 s now (median
 a background measurement is running. The old code answered in 5,0 s with a warm
 cache and 52,0 s with a cold one.
 
+**The same change, verified in production.** Deployed on agent-pc and measured
+there, with five projects and the same commands before and after: the cold run
+answered in **2073,3 ms** before the change — the measurement ran inside the
+request — and the route answers with a **median of 2,95 ms** now, the cold run
+included. The sizes are in the payload either way, with the same values, none of
+them marked as a lower bound. The full numbers, the measurement environment and
+what was *not* verified are in `docs/spec.md`.
+
 **The size cache expired faster than it could be filled — and it never
 expiryed at all.** `SIZE_TTL_MS` was 30 seconds against a measurement that
 takes 6,9 s to 20,5 s, so every request found the previous result already
