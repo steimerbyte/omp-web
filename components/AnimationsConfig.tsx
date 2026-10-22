@@ -2,6 +2,7 @@
 
 import { useAnimationPreference, setAnimationMode } from "./motion/AnimationProvider";
 import type { AnimationMode } from "./motion/AnimationProvider";
+import { GradientBorderConfig } from "./GradientBorderConfig";
 import styles from "./SettingsConfig.module.css";
 
 /**
@@ -68,6 +69,7 @@ export function AnimationsConfig() {
             </div>
           ))}
         </div>
+        <GradientBorderConfig />
       </div>
     </div>
   );

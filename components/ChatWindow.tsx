@@ -393,6 +393,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       onFollowUp={agentRunning ? handleFollowUp : undefined}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       isStreaming={sessionBusy}
+      isAgentRunning={agentRunning}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}

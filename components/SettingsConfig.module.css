@@ -305,6 +305,31 @@
   font: inherit;
 }
 .choice[data-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.choiceToggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The gradient border controls. A colour swatch, a slider and a value read
+ * out; the slider takes the accent colour so it reads in both themes, and
+ * every one of them carries a focus ring the mouse never draws. */
+.gradientColors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; width: 100%; }
+.gradientColorInput {
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.gradientColorInput:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gradientSliderRow { display: flex; align-items: center; gap: 8px; width: 100%; }
+.gradientSlider { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+.gradientSlider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gradientValue { flex: 0 0 auto; min-width: 40px; text-align: right; font: 10px var(--font-mono); color: var(--text-muted); }
+.gradientPresetSwatch { display: inline-flex; gap: 2px; margin-right: 5px; }
+.gradientPresetSwatch > span { width: 7px; height: 7px; border-radius: 2px; }
+.gradientNote { margin-top: 6px; font-size: 10px; line-height: 1.45; color: var(--text-dim); }
+
 .reorder { display: inline-flex; gap: 2px; }
 .reorder button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 2px; }
 

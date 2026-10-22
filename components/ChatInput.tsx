@@ -30,6 +30,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { usePopupPlacement } from "@/hooks/usePopupPlacement";
 import { computePopupPlacement, preferredPopupHeight, POPUP_GAP_PX, type PopupSide } from "@/lib/popup-placement";
 import { Pressable } from "./motion/Pressable";
+import { useGradientBorderBar } from "./motion/GradientBorder";
 import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/hooks/useI18n";
 import { useQuickPhrases } from "@/hooks/useQuickPhrases";
@@ -55,6 +56,14 @@ interface Props {
   onFollowUp?: (message: string, images?: AttachedImage[]) => void;
   onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
   isStreaming: boolean;
+  /**
+   * Whether an agent is working right now.
+   *
+   * `isStreaming` is the busy state of the whole surface — it is also true
+   * while a shell command runs. The gradient border is about the agent, so it
+   * gets its own flag instead of guessing from the busy state.
+   */
+  isAgentRunning?: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
@@ -448,7 +457,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
+  onSend, onAbort, onSteer, onFollowUp, isStreaming, isAgentRunning, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   modelRoles, onRoleModelChange, modelSwitching,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, effectiveThinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -479,6 +488,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
+  // The rotating gradient around the bar. It replaces the border colour while
+  // an agent works, and it leaves the bar's own box alone: the ring is painted
+  // over the border box and the interior back over it.
+  const gradientBorder = useGradientBorderBar({ running: isAgentRunning === true, suppressed: bashMode });
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
@@ -2000,21 +2013,33 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             );
           })()}
           <div
+            className={gradientBorder.className}
             style={{
               minWidth: 0,
               display: "flex",
               gap: 8,
               alignItems: "center",
               background: "var(--bg)",
-              border: `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
-                ? "rgba(234,179,8,0.4)"
-                : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
+              // The gradient ring takes the place of the border colour while an
+              // agent works. The width of the border stays, so the bar keeps
+              // its box and nothing shifts.
+              border: gradientBorder.active
+                ? "1px solid transparent"
+                : `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
+                  ? "rgba(234,179,8,0.4)"
+                  : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: 14,
               padding: "10px 10px 10px 14px",
               boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
+              ...gradientBorder.style,
             } as React.CSSProperties}
           >
+          {gradientBorder.active && gradientBorder.variant === "rotate" && (
+            <span className="omp-gradient-rotate-clip" aria-hidden="true">
+              <span className="omp-gradient-rotate-layer" />
+            </span>
+          )}
           <textarea
             ref={textareaRef}
             value={value}

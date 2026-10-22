@@ -352,6 +352,45 @@ claims more than was tested is worse than one that admits the gap:
   round trip are covered by `components/motion/motion.test.mjs`; the rendered
   motion is not. Verify it on a real session before relying on it.
 
+### Gradient border
+
+**The chat input can wear a rotating gradient border while an agent works.**
+The ring is drawn around the composer bar, its colours turn, and it is gone
+the moment the agent stops. It is a new look, so it is **off by default** and
+the user switches it on in **Settings → Animations**, where the whole group
+lives: a switch, five colour presets, four colour pickers, a slider for the
+width, one for the rotation speed and one for the glow.
+
+The defaults are a **6 px** ring, a **2.4 s** turn, the **Omphie** palette
+(amber, green, blue, violet) and a glow at **0.25** with a **4 px** blur. The
+rotation runs **only while an agent is working** — a running shell command
+does not light it up, because the busy state of the surface and the state of
+the agent are not the same thing. The colours, the width, the speed and the
+glow are stored in `localStorage` under `omp-gradient-border`, in this browser
+only, next to the other surface preferences.
+
+The ring is a band, not a frame. It lies outside the bar and covers the one
+pixel border the bar has, and it reaches **no pixel into the padding** the
+text lives in, at any width — the bar's box is the same with and without the
+ring, measured. That took the geometry apart: the containing block of an
+absolutely positioned layer is the **padding box** of its positioned ancestor
+and not the border box, so the offsets have to be the width plus the border
+on both sides. The formula lives in
+`components/motion/gradient-border-settings.ts` and
+`components/motion/gradient-border-settings.test.mjs` holds it down.
+
+**A colour that vanishes on white is a colour that is not there.** The first
+palette was measured against the two surfaces the bar stands on, and its green
+reaches **1.34:1** against white — invisible as a line. A second palette,
+**Omphie Light**, carries the same hues with depth: the four colours reach
+3.19:1 at the weakest against white and keep 3.11:1 against the dark
+surface. The glow was pulled back to 0.25 and its blur to 4 px for the same
+reason: at the earlier values the halo, not the ring, was what the eye saw.
+
+The rendered motion was measured in Chromium: two frames 1.5 s apart differ in
+**4 411 of 17 661** pixels of the ring zone and in **none** of the 22 230
+pixels of the surface inside the bar.
+
 ### Terminal
 
 **Tenant shells run in a user namespace.** `lib/sandbox.ts` builds a
