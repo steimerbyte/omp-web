@@ -30,6 +30,51 @@ import { useSweepProps } from "./hooks.ts";
 const stripComments = (source) =>
   source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
+/**
+ * The body of a rule, found by its braces.
+ *
+ * Slicing to the first `}` stops inside the first keyframe, because every
+ * keyframe is itself a nested `{ }` — the same reason `readWashKeyframes`
+ * counts the braces instead of cutting at the first one.
+ */
+const cssRuleBody = (text, selector) => {
+  const at = text.indexOf(selector);
+  if (at === -1) return null;
+  const open = text.indexOf("{", at);
+  if (open === -1) return null;
+  let depth = 0;
+  let close = open;
+  for (; close < text.length; close += 1) {
+    if (text[close] === "{") depth += 1;
+    else if (text[close] === "}") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  return text.slice(open + 1, close);
+};
+
+/**
+ * The body of every block of an at-rule.
+ *
+ * The file grows, and a search by position picks the first occurrence: a
+ * second reduced-motion block above the shimmer's made an assertion read a
+ * different rule and fail against a rule that was correct. The blocks are
+ * counted by their braces instead, so where they stand in the file does not
+ * decide what is read.
+ */
+const atRuleBodies = (css, atRule) => {
+  const bodies = [];
+  let index = css.indexOf(atRule);
+  while (index !== -1) {
+    const body = cssRuleBody(css.slice(index), "{");
+    if (body === null) break;
+    bodies.push(body);
+    index = css.indexOf(atRule, index + atRule.length);
+  }
+  return bodies;
+};
+
 test("Der Server-Snapshot ist der Default, damit Server und erster Client-Render übereinstimmen", () => {
   // The provider hands `getServerSnapshot` this value. If it ever stopped being
   // the default, the first client render would differ from the server HTML and
@@ -262,10 +307,29 @@ test("Gradient und Animation gehoeren in dieselbe CSS-Regel", () => {
 
   // Same for an OS that asks for reduced motion: no loop and no band, because
   // a motionless gradient is what this whole change is about.
-  const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
-  const block = reduced.slice(reduced.indexOf(".omp-shimmer"), reduced.indexOf("}", reduced.indexOf(".omp-shimmer")));
-  assert.match(block, /animation:\s*none/, "Animation laeuft bei reduced motion weiter");
-  assert.match(block, /background-image:\s*none/, "Gradient bleibt bei reduced motion stehen");
+  //
+  // Every reduced-motion block that mentions the shimmer has to stand it down
+  // completely — the rule that owns the gradient owns the animation, and the
+  // block that stops the animation has to take the gradient with it.
+  //
+  // The blocks are counted by their braces and not by their place in the file.
+  // The file carries more than one, and the one that owns the shimmer is not
+  // the first one: a search by position read a different rule and failed
+  // against a rule that was correct. Counting every block is also stricter
+  // than before, because a second, broken block further down can no longer
+  // hide behind the first, good one.
+  const reducedBlocks = atRuleBodies(
+    stripComments(css),
+    "@media (prefers-reduced-motion: reduce)",
+  );
+  const shimmerRules = reducedBlocks
+    .map((block) => cssRuleBody(block, ".omp-shimmer"))
+    .filter((body) => body !== null);
+  assert.ok(shimmerRules.length > 0, "keine reduced-motion-Regel fuer .omp-shimmer");
+  for (const rule of shimmerRules) {
+    assert.match(rule, /animation:\s*none/, "Animation laeuft bei reduced motion weiter");
+    assert.match(rule, /background-image:\s*none/, "Gradient bleibt bei reduced motion stehen");
+  }
 });
 
 /*
