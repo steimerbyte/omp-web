@@ -1,6 +1,6 @@
 # Projects-Feature — Spezifikation
 
-Stand 2026-10-22, Commit `7620bf4` auf `main` plus der Commit, der die Größenmessung in den Hintergrund legt. **Deployed** auf agent-pc (Build `m9AgZHWtzoyB8HvhOvXZV`, 2026-10-22 18:06:11 UTC) und im laufenden Betrieb verifiziert — die Verifikation mit den gemessenen Zahlen steht in Kapitel 3.2.
+Stand 2026-10-22, Commit `7620bf4` auf `main` plus der Commit, der die Größenmessung in den Hintergrund legt. **Deployed** auf agent-pc (Build `uNx0a8MzlzUvqTa14nhnN`, 2026-10-22 17:10:45 UTC) und im laufenden Betrieb verifiziert — die Verifikation mit den gemessenen Zahlen steht in Kapitel 3.2.
 
 Dieses Dokument beschreibt, was ausgeliefert ist. Es ist keine Planung und kein Arbeitsbericht. Der Plan, gegen den die Umsetzung gebaut wurde, steht in `docs/plans/projects-dashboard-plan.md` und sagt zu Recht „Status: Plan, nicht implementiert“ — dieses Dokument ersetzt ihn nicht, es beschreibt das Ergebnis.
 
@@ -178,7 +178,7 @@ Die TTL `SIZE_TTL_MS = 5 * 60_000` (`lib/projects-schema.ts:214`) ist fünf Minu
 
 Die lokale Serie aus 3.1 misst auf dem Dev-Host gegen 18 Wurzeln. Dieser Abschnitt ist die **Verifikation im laufenden Betrieb**: gegen agent-pc, mit fünf Projekten, mit denselben Kommandos vor und nach dem Deploy. Das sind zwei verschiedene Messumgebungen mit zwei verschiedenen Registrys — die Zahlen werden nicht vermischt.
 
-**Die Umgebung.** agent-pc, `omp-web.service`, `127.0.0.1:8788`, Build `m9AgZHWtzoyB8HvhOvXZV`, deployed 2026-10-22 18:06:11 UTC. Die Registry des Kontos `/home/pi` hat fünf Wurzeln:
+**Die Umgebung.** agent-pc, `omp-web.service`, `127.0.0.1:8788`. Gemessen wurde gegen den Build `uNx0a8MzlzUvqTa14nhnN`, deployed 2026-10-22 17:10:45 UTC (Quelle `6127c45`) — das ist der Deploy, der den Hintergrundlauf brachte. Der danach deployte Build `m9AgZHWtzoyB8HvhOvXZV` (2026-10-22 18:06:11 UTC, Quelle `858c1c6`) änderte am Größen-Code nichts: `git diff --stat 6127c45..858c1c6` über `app/api/projects`, `lib/project-size*.ts`, `lib/projects-*.ts` und `hooks/useProjectSizes.ts` ist leer. Die Registry des Kontos `/home/pi` hat fünf Wurzeln:
 
 | Ordner | Größe |
 |---|---|
@@ -223,7 +223,7 @@ Median **2,953 ms**, Minimum 2,651 ms, Maximum 6,562 ms. **Der Kaltlauf hat kein
 
 **Was nicht verifiziert wurde.** Ein bewusst erzwungener stale-Kaltlauf auf dem neuen Build wurde **nicht** abgenommen: beim ersten Zugriff nach dem Deploy waren die Größen nur 54 s alt, also nicht stale. Die Aussage „kein Sprung mehr“ stützt sich darauf, dass auch der größte Nachher-Wert 6,6 ms beträgt, und darauf, dass der Request im Code keinen Messschritt mehr enthält. Ebenfalls nicht gemessen: das Verhalten bei mehreren gleichzeitigen Clients, bei Fehlern in der Messung (`sizeIsLowerBound: true`), bei einer Registry, die sich während der Messung ändert, und die **Browser-Darstellung** — gemessen wurde ausschließlich gegen die API.
 
-**Die Betriebsbedingung des Deploys auf agent-pc.** Der Build braucht den laufenden Dienst **gestoppt**: der Host hat 8 GB RAM und **kein Swap**, mit laufendem Dienst stehen rund 2,7 GB `available` zur Verfügung, und der Next-Build passt da nicht hinein — Exit 137 mit dem Kernel-Text `Killed`, also der OOM-Killer. Eine Heap-Deckelung (`NODE_OPTIONS=--max-old-space-size=3072` bzw. `2048`) hilft nicht: sie ändert nur die Fehlerart von SIGKILL (137) auf einen stillen Exit 1 an derselben Stelle. Mit gestopptem Dienst steigt `available` auf rund 3972 MB, der Build läuft in **52,1 s** durch, die Ausfallzeit zwischen Stop und Start beträgt **60,6 s**. Das ist eine Bedingung des Hosts, kein Fehler des Features — aber es betrifft jeden künftigen Deploy.
+**Die Betriebsbedingung des Deploys auf agent-pc.** Der Build braucht den laufenden Dienst **gestoppt**: der Host hat 8 GB RAM und **kein Swap**, mit laufendem Dienst stehen rund 2,7 GB `available` zur Verfügung, und der Next-Build passt da nicht hinein — Exit 137 mit dem Kernel-Text `Killed`, also der OOM-Killer. Eine Heap-Deckelung (`NODE_OPTIONS=--max-old-space-size=3072` bzw. `2048`) hilft nicht: sie ändert nur die Fehlerart von SIGKILL (137) auf einen stillen Exit 1 an derselben Stelle. Mit gestopptem Dienst steigt `available` auf rund 3972 MB. Der gemessene Deploy lief in **41,3 s** durch, die Ausfallzeit zwischen Stop und Start betrug **51,3 s**; der nachfolgende Deploy brauchte **52,1 s** bei **60,6 s** Ausfallzeit. Das ist eine Bedingung des Hosts, kein Fehler des Features — aber es betrifft jeden künftigen Deploy.
 
 ### GET /api/projects/sizes
 

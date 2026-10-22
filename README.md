@@ -87,16 +87,19 @@ instead of starting a git process per project.
 
 In production, against agent-pc, with five projects, the same endpoint answered
 in **2073,3 ms** on a cold run before the change — the measurement ran inside the
-request — and now answers with a **median of 2,95 ms**, the cold run included.
-The measured size is the same work either way; it just no longer sits in the
-request path. The full numbers, the measurement environment and what was *not*
-verified are in [docs/spec.md](./docs/spec.md).
+request — and answers with a **median of 2,95 ms** now. The measurement is the
+same work either way; it just no longer sits in the request path, and the sizes
+are in the payload either way. A deliberately forced stale cold run on the new
+build was **not** taken — the sizes were only 54 s old at first access — so what
+the numbers show is the request without a measurement step, not a cold run
+measured end to end. The full numbers, the measurement environment and what was
+*not* verified are in [docs/spec.md](./docs/spec.md).
 
 **The background run re-reads the registry immediately before it writes**, and
-applies only `sizeBytes` and `sizeMeasuredAt`. Without that second read it would
-write back a snapshot taken up to twenty seconds earlier and silently overwrite
-whatever the user had changed in the meantime — a priority, a todo counter, a
-status.
+applies only the size fields — `sizeBytes`, `sizeMeasuredAt` and
+`sizeIsLowerBound`. Without that second read it would write back a snapshot
+taken up to twenty seconds earlier and silently overwrite whatever the user had
+changed in the meantime — a priority, a todo counter, a status.
 
 A folder that `du` could only read partly keeps the number `du` computed, as a
 lower bound: the card shows a "≥", because a number that looks exact and is not

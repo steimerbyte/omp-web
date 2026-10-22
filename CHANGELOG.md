@@ -132,8 +132,9 @@ rounds (a calculation from the constants, not a measurement).
 
 The measurement now runs in the background, and the run reads the registry
 **again** immediately before it writes and applies the measurement to that
-state — `applySizeMeasurements` touches `sizeBytes` and `sizeMeasuredAt` and
-nothing else. The window between read and write is milliseconds instead of
+state — `applySizeMeasurements` touches the size fields (`sizeBytes`,
+`sizeMeasuredAt`, `sizeIsLowerBound`) and nothing else. The window between read
+and write is milliseconds instead of
 twenty seconds, and a project that was deleted in between is not written back
 at all. The regression test was written first and was red against the old code
 (`'now' !== 'later'`): `app/api/projects/size-race.test.mjs`.
@@ -546,10 +547,13 @@ cache and 52,0 s with a cold one.
 **The same change, verified in production.** Deployed on agent-pc and measured
 there, with five projects and the same commands before and after: the cold run
 answered in **2073,3 ms** before the change — the measurement ran inside the
-request — and the route answers with a **median of 2,95 ms** now, the cold run
-included. The sizes are in the payload either way, with the same values, none of
-them marked as a lower bound. The full numbers, the measurement environment and
-what was *not* verified are in `docs/spec.md`.
+request — and the route answers with a **median of 2,95 ms** now. The sizes are
+in the payload either way, with the same values, none of them marked as a lower
+bound. A deliberately forced stale cold run on the new build was **not** taken —
+the sizes were only 54 s old at first access — so the numbers show the request
+without a measurement step, not a cold run measured end to end. The full
+numbers, the measurement environment and what was *not* verified are in
+`docs/spec.md`.
 
 **The size cache expired faster than it could be filled — and it never
 expiryed at all.** `SIZE_TTL_MS` was 30 seconds against a measurement that
