@@ -68,12 +68,21 @@ const CARD_HEIGHT = PROJECT_CARD_HEIGHT;
 export function ProjectGrid({
   projects,
   priorities,
+  sizeError,
   onTodosChange,
   onOpen,
   onDelete,
 }: {
   projects: readonly ProjectView[];
   priorities: readonly PriorityDef[];
+  /**
+   * The last poll of the sizes failed.
+   *
+   * The cards have to say so themselves: a card that waits for a number
+   * which is not coming has to name the reason, not sit on "Measuring..."
+   * for two minutes.
+   */
+  sizeError?: boolean;
   onTodosChange: (root: string, openTodos: number) => void;
   onOpen: (project: ProjectView) => void;
   onDelete: (project: ProjectView) => void;
@@ -149,6 +158,7 @@ export function ProjectGrid({
                   project={project}
                   priorityColor={(priority?.colorValue ?? "var(--text-dim)") as PriorityColorValue}
                   priorityName={priority?.name ?? id}
+                  sizeError={sizeError}
                   onTodosChange={onTodosChange}
                   onOpen={onOpen}
                   onDelete={onDelete}

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getAllowedFileRoots } from "@/lib/file-access";
 import { allowFileRoot } from "@/lib/allowed-roots";
 import { listAllSessions } from "@/lib/session-reader";
 import { getUserHome, isAdminIdentity, type WebIdentity } from "@/lib/request-identity";
@@ -9,7 +8,7 @@ import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security"
 import { isPathWithinRoots } from "@/lib/path-security";
 import { resolveProject, initRepository } from "@/lib/worktree";
 import { isProtectedProjectRoot } from "@/lib/projects-delete";
-import { requireProjectsIdentity } from "@/lib/projects-guards";
+import { requireProjectsIdentity, visibleProjectRoots } from "@/lib/projects-guards";
 import {
   DEFAULT_PRIORITIES,
   applyProjectPatches,
@@ -144,25 +143,6 @@ async function buildProjectViews(
   return sortProjectViews(projects);
 }
 
-/**
- * `true` when this identity may see this folder at all.
- *
- * Filtering happens on *this* identity's allowed roots, so a project that
- * another account added to its own registry does not appear here with a path
- * this account cannot open. Hidden rather than refused: the request itself was
- * legitimate, and a 403 would confirm that something exists over there.
- */
-async function isVisibleTo(identity: WebIdentity, root: string): Promise<boolean> {
-  const allowed = await getAllowedFileRoots(identity);
-  if (allowed.size === 0) return false;
-  const resolved = root.replace(/\\/g, "/");
-  for (const allowedRoot of allowed) {
-    const base = allowedRoot.replace(/\\/g, "/").replace(/\/$/, "");
-    if (resolved === base || resolved.startsWith(`${base}/`)) return true;
-  }
-  return false;
-}
-
 export async function GET(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
@@ -194,7 +174,7 @@ export async function GET(req: Request) {
     // of it is cheap. Measured on 2026-10-22 with 211 sessions: the session
     // list takes 1492,9-3823,6 ms cold and 0,1-0,2 ms warm, reading the
     // registry 1,8-2,3 ms, `resolveProject` 0,2-0,3 ms (2 git processes) and
-    // `isVisibleTo` 0,4-0,6 ms; 16 git processes in all, 14 of them from the
+    // the visibility filter 0,4-0,6 ms; 16 git processes in all, 14 of them from the
     // session list. The floor of the request is therefore the **session
     // list** — cold ~1498,8 ms, warm ~2,9 ms — and the sizes were 20,5 s
     // on top of it.
@@ -212,11 +192,14 @@ export async function GET(req: Request) {
     startProjectSizeMeasurement(identity);
 
     const all = await buildProjectViews(identity, file);
-    const visibleProjects = (
-      await Promise.all(
-        all.map(async (project) => ((await isVisibleTo(identity, project.root)) ? project : null)),
-      )
-    ).filter((project): project is ProjectView => project !== null);
+    // The same filter the sizes endpoint uses (`lib/projects-guards.ts`): a
+    // folder this account may not see does not appear on the board, and it
+    // does not appear in the sizes either.
+    const visibleRoots = await visibleProjectRoots(
+      identity,
+      all.map((project) => project.root),
+    );
+    const visibleProjects = all.filter((project) => visibleRoots.has(project.root));
 
     return NextResponse.json({
       projects: visibleProjects,

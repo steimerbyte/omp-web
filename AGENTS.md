@@ -453,8 +453,17 @@ TypeScript half type-checks against — keep the two in sync.
   decides on the timestamp, not on the value: a folder that could not be
   measured has a fresh timestamp and `sizeBytes: null`. The card draws that
   apart from "not measured yet" (no timestamp at all) — one is "no size", the
-  other is a placeholder. Seven of the 18 folders of the measured registry
-  have no size, so this is the normal case and not an edge case.
+  other is a placeholder. With the 30 s budget, 16 of the 18 folders of the
+  measured registry have a number and 2 have none (two roots that do not
+  exist on the disk); the "seven without a size" was the state of the *old*
+  10 s budget, not of this one.
+- **Three states of a size, and the card names all three.** *Measured*
+  (`sizeBytes` is a number, `sizeMeasuredAt` set); *measured but incomplete*
+  (`sizeIsLowerBound: true` — `du` could not read part of the tree, so the
+  number is a lower bound and the card shows a "≥"); *not measurable*
+  (`sizeBytes: null` with a timestamp — the attempt happened and produced
+  nothing). A fourth state is the placeholder for a measurement that has not
+  run yet (no timestamp at all).
 - **The guard is shared.** `requireProjectsIdentity` in
   `lib/projects-guards.ts` is the only place that checks the account *and*
   the derived registry path; `app/api/projects/route.ts` and

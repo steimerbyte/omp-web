@@ -1,3 +1,4 @@
+import { getAllowedFileRoots } from "./file-access";
 import { getRequestIdentity, type WebIdentity } from "./request-identity";
 import { getProjectsPath, isProjectsPathAllowed } from "./projects-store";
 
@@ -34,4 +35,47 @@ export function requireProjectsIdentity(req: Request): WebIdentity | null {
   const identity = getRequestIdentity(req.headers);
   if (identity === null) return null;
   return isProjectsPathAllowed(identity, getProjectsPath(identity)) ? identity : null;
+}
+
+/**
+ * The roots of `roots` that this identity may see at all.
+ *
+ * Filtering happens on *this* identity's allowed roots, so a project that
+ * another account added to its own registry does not appear with a path this
+ * account cannot open. Hidden rather than refused: the request itself was
+ * legitimate, and a 403 would confirm that something exists over there.
+ *
+ * ### Why it is shared
+ *
+ * The board (`GET /api/projects`) filters its cards with it, and the sizes
+ * endpoint (`GET /api/projects/sizes`) filters its answer with it. The two
+ * read the same registry, so they have to answer the same question: a
+ * folder that the board does not show must not be reported by the sizes
+ * endpoint either — not its size, not its measurement time, and not as
+ * something the client is still waiting for.
+ *
+ * A copy of the check would be a second answer to the same question, and
+ * `AGENTS.md` is explicit that a guard copied into a route is a guard that
+ * will be out of date in one of the two copies.
+ *
+ * The allow-list is read once per call and cached for five seconds
+ * (`lib/file-access.ts`); the per-root check afterwards is a string
+ * comparison.
+ */
+export async function visibleProjectRoots(
+  identity: WebIdentity,
+  roots: readonly string[],
+): Promise<Set<string>> {
+  const visible = new Set<string>();
+  const allowed = await getAllowedFileRoots(identity);
+  if (allowed.size === 0) return visible;
+
+  const bases = [...allowed].map((root) => root.replace(/\\/g, "/").replace(/\/$/, ""));
+  for (const root of roots) {
+    const resolved = root.replace(/\\/g, "/");
+    if (bases.some((base) => resolved === base || resolved.startsWith(`${base}/`))) {
+      visible.add(root);
+    }
+  }
+  return visible;
 }

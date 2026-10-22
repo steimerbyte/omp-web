@@ -23,10 +23,11 @@ import { mock } from "bun:test";
  *
  * In production the window is 20,5 s wide — one measurement of the 18 roots
  * of a real registry (measured 2026-10-22 on the dev host, the details in
- * `lib/project-size.ts`), and up to about 60 s when the per-folder budget is
- * hit. A test cannot wait for that, and a test that does not control the
- * window tests nothing: it would pass or fail depending on how fast the
- * machine is.
+ * `lib/project-size.ts`), and up to 90 s when the 30 s per-folder budget is
+ * hit in every one of the three serial pool rounds (a calculation from the
+ * constants, not a measurement). A test cannot wait for that, and a test
+ * that does not control the window tests nothing: it would pass or fail
+ * depending on how fast the machine is.
  *
  * So the measurement is replaced by a promise the test holds open. The fake
  * module below stands in for `lib/project-size.ts` — the only thing the

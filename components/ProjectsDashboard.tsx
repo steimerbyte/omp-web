@@ -55,6 +55,8 @@ export function ProjectsDashboard({
   const [notice, setNotice] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
+  /** The last poll of the sizes failed. The board says so. */
+  const [sizeError, setSizeError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,11 +89,17 @@ export function ProjectsDashboard({
    * Only the two size fields are written. The priority, the counter, the
    * status and the name stay exactly as they were, and a project whose sizes
    * did not change keeps its object identity — so React does not redraw its
-   * card at all. That is what keeps the cursor where the user put it: the
-   * board is not re-fetched, and a card that has nothing to do with the sizes
-   * is not touched.
+   * card at all.
+   *
+   * The focus stays where the user put it because the **cards keep their DOM
+   * node**: the grid keys them by `project.root`
+   * (`components/projects/ProjectGrid.tsx`), and React reconciles by that
+   * key. The object identity is not what does it — a new object with the same
+   * root is the same card.
    */
   const applySizes = useCallback((sizes: ProjectSizeEntry[]) => {
+    // A poll that worked clears the error of the one before it.
+    setSizeError(false);
     setProjects((current) => {
       if (current === null) return current;
       const byRoot = new Map(sizes.map((size) => [size.root, size]));
@@ -114,17 +122,29 @@ export function ProjectsDashboard({
     });
   }, []);
 
+  /**
+   * A poll failed.
+   *
+   * The poll itself continues — the next request may work — but the cards
+   * must not sit on "Measuring..." for two minutes without saying why. The
+   * state is visible on the board (an alert) and on the cards themselves.
+   */
+  const handleSizeError = useCallback(() => {
+    setSizeError(true);
+  }, []);
+
   // The poll starts once the board is there: the sizes have cards to land on
   // from the first poll on. It ends by itself when the server says the
   // answer is final, and the hook's cleanup stops it when the dashboard goes
   // away. The project count goes with it: the poll window has to outlast the
   // measurement, and the worst case of that measurement grows with the number
   // of projects (`lib/project-size-poll.ts`).
-  const restartSizePolling = useProjectSizes(
-    applySizes,
-    projects !== null,
-    projects?.length ?? 0,
-  );
+  const restartSizePolling = useProjectSizes({
+    onSizes: applySizes,
+    onError: handleSizeError,
+    enabled: projects !== null,
+    projectCount: projects?.length ?? 0,
+  });
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -284,6 +304,12 @@ export function ProjectsDashboard({
           </Reveal>
         ) : null}
 
+        {sizeError ? (
+          <Reveal role="alert" style={{ fontSize: 12, color: "var(--danger)", padding: "7px 0" }}>
+            {t("projects.sizeErrorNotice")}
+          </Reveal>
+        ) : null}
+
         <PriorityFilterBar
           priorities={priorities}
           activeId={activePriority}
@@ -302,6 +328,7 @@ export function ProjectsDashboard({
           <ProjectGrid
             projects={visible}
             priorities={priorities}
+            sizeError={sizeError}
             onTodosChange={handleTodosChange}
             onOpen={(project) => onOpenProject(project.root)}
             onDelete={(project) => {

@@ -227,7 +227,10 @@ export interface ProjectSizesResponse {
  * honest accounting for the registry above is:
  *
  * - one run costs 20,5 s of `du` (eight processes in parallel); a cold run
- *   with the 30 s per-folder budget about 60 s;
+ *   with the 30 s per-folder budget up to 90 s (three serial pool rounds of
+ *   30 s — a calculation from the constants, not a measurement: the four
+ *   slowest folders of the measured registry were killed at 10 s, so their
+ *   real duration is unknown);
  * - a dashboard that is open costs one run: 20,5 s of 300 s, **6,8 %**;
  * - a dashboard that is **closed** costs nothing at all — no request comes
  *   in, no run starts. A TTL cannot create load on its own.

@@ -53,6 +53,7 @@ export function ProjectCard({
   project,
   priorityColor,
   priorityName,
+  sizeError,
   onTodosChange,
   onOpen,
   onDelete,
@@ -68,6 +69,14 @@ export function ProjectCard({
    * account actually has.
    */
   priorityName: string;
+  /**
+   * The last poll of the sizes failed.
+   *
+   * A card that waits for a number which is not coming has to name the
+   * reason. Without this the card would sit on "Measuring..." for two
+   * minutes and the user would never learn why.
+   */
+  sizeError?: boolean;
   onTodosChange: (root: string, openTodos: number) => void;
   onOpen: (project: ProjectView) => void;
   onDelete: (project: ProjectView) => void;
@@ -223,17 +232,23 @@ export function ProjectCard({
             }}
             title={sizeTitle}
           >
-            {/* Three different facts, three different answers. A folder that
+            {/* Four different facts, four different answers. A folder that
                 has not been measured *yet* is waiting for a number that will
                 come (the measurement runs in the background,
                 `lib/projects-sizes.ts`); a folder whose measurement *failed*
                 has no size, and no number will ever come for it; a folder
                 whose measurement only saw part of the tree has a number that
-                is a lower bound, and the "≥" says so. The first two are both
-                `sizeBytes === null`, so the timestamp is what tells them
-                apart. */}
+                is a lower bound, and the "≥" says so; and a poll that failed
+                means the number is not coming at all right now, which the
+                card has to name instead of waiting in silence. The first
+                two are both `sizeBytes === null`, so the timestamp is what
+                tells them apart. */}
             {formatSize(project.sizeBytes) === null
-              ? (project.sizeMeasuredAt ? t("projects.sizeUnknown") : t("projects.sizePending"))
+              ? sizeError
+                ? t("projects.sizeError")
+                : project.sizeMeasuredAt
+                  ? t("projects.sizeUnknown")
+                  : t("projects.sizePending")
               : project.sizeIsLowerBound
                 ? t("projects.sizeAtLeast", { size: formatSize(project.sizeBytes) ?? "" })
                 : formatSize(project.sizeBytes)}

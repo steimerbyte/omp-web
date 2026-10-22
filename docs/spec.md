@@ -125,10 +125,14 @@ Die Route misst nicht mehr, weil die Messung die Antwort blockierte: `du -sb` je
 |---|---|
 | drei Läufe, identischer Code, identische Pfade | **6,9 s / 14,4 s / 20,5 s** |
 | Pool-Runden (8 je Runde, die Runden sind serial) | 3 |
-| Ordner gesamt / davon gemessen / davon `null` | 18 / 11 / 7 |
+| Ordner gesamt | 18 |
+| davon mit einer Zahl (mit dem 30-s-Budget) | 16, davon 1 als Untergrenze |
+| davon ohne Zahl | 2 (zwei Wurzeln, die es auf der Platte nicht gibt) |
 | Summe der gemessenen Bytes | 51,97 GB |
 
 Die Spanne ist der **Page-Cache des Dateisystems**, nicht der Code: dieselben drei Läufe über dieselben Pfade unterscheiden sich um den Faktor drei. Wer eine Zahl ohne die Spanne nennt, nennt eine halbe Wahrheit.
+
+Die Zeile „11 gemessen, 7 `null`“ aus der Vor-Konfiguration mit dem **10-s-Budget** ist hier bewusst nicht mehr die Zahl: mit 30 s sind es 16 mit einer Zahl und 2 ohne. Die drei Zustände einer Größe sind *gemessen*, *als Untergrenze gemessen* (`sizeIsLowerBound`) und *nicht messbar*; die beiden Wurzeln ohne Zahl sind die dritte Kategorie.
 
 **Was die Messung teuer macht, sind die Inodes, nicht die Bytes.** Über 15 Ordner, mit je einer linearen Anpassung:
 
@@ -180,7 +184,19 @@ Reihenfolge der Guards: `isApiRequestAllowed(req)` (`app/api/projects/sizes/rout
 
 Der Endpunkt löst den Hintergrundlauf selbst aus (`:64`) oder hängt sich an einen laufenden an. Damit beginnt die Messung auch dann, wenn nur dieser Endpunkt aufgerufen wird.
 
-Antwort: `{ sizes: [{ root, sizeBytes, sizeMeasuredAt }], pending }` (`:65`, Typen in `lib/projects-schema.ts:154-171`). `pending` ist `true`, wenn mindestens ein Projekt dieser Registry keine oder eine veraltete Messung hat. `readProjectSizes` (`lib/projects-sizes.ts:181`) liest nur die Registry dieser Identität; fremde Ordner werden nie gemessen.
+Antwort: `{ sizes: [{ root, sizeBytes, sizeMeasuredAt, sizeIsLowerBound }], pending }` (`:67`, Typen in `lib/projects-schema.ts:184-189`). `pending` ist `true`, wenn mindestens ein Projekt dieser Registry keine oder eine veraltete Messung hat.
+
+**Der Endpunkt filtert genauso wie das Board.** `readProjectSizes` (`lib/projects-sizes.ts:200`) liest nur die Registry dieser Identität — und nur die Wurzeln, die diese Identität sehen darf (`visibleProjectRoots`, `lib/projects-guards.ts:65`, derselbe Filter wie im Board). Ohne den Filter hätte der Endpunkt die Größe und den Messzeitpunkt eines Ordners gemeldet, den das Board absichtlich versteckt — und damit dem Konto die Existenz des Ordners verraten. **Der Filter gilt für beides**: für die zurückgegebenen Größen *und* für `pending`. Sonst würde ein Konto mit einer dauerhaft unmessbaren, unsichtbaren Wurzel 60 Polls lang vergeblich warten.
+
+**Was der Filter kostet.** Gemessen am 2026-10-22 gegen den Dev-Server, 30 Requests in 60 s (also der 2-Sekunden-Takt):
+
+| | ohne Filter | mit Filter |
+|---|---|---|
+| Median | 0,0835 s | 0,0840 s |
+| Maximum | 0,106 s | 0,106 s |
+| Summe über 60 s | 2,49 s | 2,54 s |
+
+Der Unterschied ist rund **1,7 ms je Request** — 18 Stringvergleiche gegen die Allowlist. Die Allowlist selbst wird einmal gelesen und ist danach fünf Sekunden gecacht (`lib/file-access.ts:17`); sie greift auf den 30-Sekunden-Cache der Sitzungsliste zu (`lib/session-reader.ts:176`), sodass ein Poll sie nur alle 30 s neu zusammenstellt. Der erste Poll nach dem Ablauf des Sitzungscaches zahlt einen Scan der Sitzungsdateien (bis 3,8 s gemessen) — dieselbe Arbeit, die `GET /api/projects` ohnehin macht.
 
 Eine Randnotiz: der statische Pfadabschnitt `sizes` gewinnt gegen den Catch-all `app/api/projects/[...root]`. Ein Projekt, dessen Wurzel genau `/sizes` wäre, wäre über den Catch-all nicht erreichbar.
 
@@ -306,7 +322,7 @@ Die Regel steht in `lib/project-size-poll.ts`, nicht in der Komponente: der erst
 
 **Nach dem Poll-Ende bleibt der Wert stehen, und die Karte sagt, wie alt er ist.** Der Poll läuft nicht in einem langsameren Takt weiter: das würde wieder serverseitige Messläufe auslösen, also dieselbe `du`-Last wie vorher, nur in einem anderen Takt. Ein Lauf kostet 6,9 s bis 20,5 s acht paralleler `du`-Prozesse; ein Poll jede Minute hieße einen Lauf pro TTL (5 min), solange der Tab offen ist — 6,8 % des Dateisystems, dauerhaft, für eine Zahl, die niemand ansieht. Der alte Code hat bei *jedem* Request gemessen, es ist also trotzdem weit darunter, aber „weit darunter“ ist kein Grund, weiter zu lesen. Die Größe auf der Karte ist damit die der letzten Messung, und die Karte zeigt ihr Alter, sobald sie älter als die TTL ist (`components/projects/ProjectCard.tsx:93-114`, im Label der Metrik: „Size · 2 h ago“). Eine Zahl, die stillschweigend stundenalt ist, liest sich als der aktuelle Stand.
 
-Die Größen werden in die Karten **eingesetzt**, nicht neu geholt (`components/ProjectsDashboard.tsx:94`): `applySizes` schreibt nur `sizeBytes`, `sizeMeasuredAt` und `sizeIsLowerBound`, und ein Projekt, dessen Größe sich nicht geändert hat, behält seine Objektidentität. Eine Karte, die nichts zu tun hat, wird also nicht neu gezeichnet — der Cursor im Suchfeld bleibt, wo der Nutzer ihn hingelegt hat. Nach dem Anlegen eines Projekts wird der Poll neu gestartet (`:232`), weil der neue Ordner eine Messung schuldet.
+Die Größen werden in die Karten **eingesetzt**, nicht neu geholt (`components/ProjectsDashboard.tsx:98`): `applySizes` schreibt nur `sizeBytes`, `sizeMeasuredAt` und `sizeIsLowerBound`, und ein Projekt, dessen Größe sich nicht geändert hat, behält seine Objektidentität — dann gibt es gar kein Neuzeichnen. Das ist aber **nicht** der Grund, warum der Fokus im Suchfeld bleibt: `ProjectCard` ist nicht mit `React.memo` umschlossen. Der Grund ist die **stabile `key={project.root}`** im Raster (`components/projects/ProjectGrid.tsx:154`): React reconciled nach dem Key, also bleibt der DOM-Knoten der Karte derselbe, und der Fokus des Suchfelds wird nicht berührt. Nach dem Anlegen eines Projekts wird der Poll neu gestartet (`:246`), weil der neue Ordner eine Messung schuldet.
 
 Drei Zustände auf der Karte, weil sie drei verschiedene Tatsachen sind (`components/projects/ProjectCard.tsx:205-232`):
 
@@ -498,6 +514,8 @@ Dieser Punkt war der wichtigste offene Punkt des Features (Stand 2026-10-21). Er
 Die Zahlen, die den Punkt ausgelöst haben, bleiben als Vergleich stehen. Die **vollständige Messung** der 18 Wurzeln der echten Registry kostet **6,9 s bis 20,5 s** (drei Läufe am 2026-10-22 über identische Pfade; die Spanne ist der Page-Cache, Kapitel 3.1). Ältere Kalt-Cache-Messungen: 30,7 s bei 18 Projekten (2026-10-21, Browser-Messung, ein Projekt mit 2,7 GB) und 52,0 s für die ganze GET (2026-10-22, erster Request des Tages gegen denselben Dev-Server, `curl -w "%{time_total}"`).
 
 Nach der Umstellung antwortet dieselbe Route in **0,13 s bis 4,39 s** (Median 1,21 s über zehn Requests am 2026-10-22, gemessen gegen denselben Dev-Server); mit laufender Hintergrundmessung 0,69 s bis 1,37 s. Der alte Code antwortete unter denselben Bedingungen mit 5,0 s (warmer Cache, Messung fiel an) bzw. 52,0 s (kalter Cache). Die Messung läuft daneben weiter; mit warmem Metadaten-Cache dauerte ein Lauf dort 5,3 s.
+
+**Derselbe Vorbehalt wie bei den alten Zeiten.** Diese Zahlen stammen aus derselben Messumgebung wie die 30,7 s und die 52,0 s (lokaler Dev-Server, 2026-10-22, `curl -w "%{time_total}"`, ein angemeldeter Request nach dem Aufwärmen der Route) und haben denselben Vorbehalt: sie sind **nicht nachreproduzierbar**. Der Boden des Requests ist die Sessionliste (Kapitel 3.1), und die hängt am Cache der Sitzungsdateien; die Spanne von 0,13 s bis 4,39 s ist deshalb Cache, nicht Code. In der Produktion wurde die Wartezeit nicht nachgemessen.
 
 ### Weitere offene Punkte
 

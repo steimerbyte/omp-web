@@ -345,20 +345,31 @@ test("the background run persists a fresh measurement for a stale project", () =
  * The route is per account, so it must not be admin-only — and that is a
  * property of the *source*, checked without running it.
  *
- * Exercising an admin identity here would resolve the global agent dir
- * (`resolveTenantAgentDir` → `getAgentDir` from the SDK) and boot the real
- * omp runtime, which this test must not do. So the claim is pinned the way
- * `app/api/host-wide-guards.test.mjs` pins the guards it wants: by reading the
- * route text. If someone swaps `requireProjectsIdentity` for `requireAdmin`,
- * this line fails.
+ * ### Why this test reads the source at all
  *
- * `isAdminIdentity` *is* allowed, and it appears in exactly one place: the
- * `allowFileRoot` grant on create. `AGENTS.md` requires that grant to be
- * operator-only, because the allow-list is one process-wide store — a grant
- * made by one account widens the filesystem for all of them. That is a
- * narrower question than "may this account create a project", and it is why
- * the two checks are not the same check. What must not appear is
- * `requireAdmin` as the *entry* guard.
+ * This is the exception `AGENTS.md` names: an architecture rule that cannot
+ * be checked by behaviour. Exercising an *admin* identity here would resolve
+ * the global agent dir (`resolveTenantAgentDir` → `getAgentDir` from the SDK)
+ * and boot the real omp runtime, which this test must not do. The rule is
+ * "the entry guard is not `requireAdmin`", and the only way to see it without
+ * running the admin path is to read the route. Same discipline as
+ * `app/api/host-wide-guards.test.mjs`.
+ *
+ * Everything that *can* be checked by behaviour is checked by behaviour, and
+ * those tests are the ones that count:
+ *
+ *  - "GET without an identity is 403 and writes nothing" — the identity
+ *    guard is in force.
+ *  - "PUT requires an identity, not an admin role" — a tenant manages its own
+ *    registry, so the route is not admin-only.
+ *
+ * What is left here is the part that behaviour cannot reach: that
+ * `requireAdmin` does not appear as the *entry* guard, and that the one
+ * admin check that is allowed — the `allowFileRoot` grant on create — carries
+ * the identity. `AGENTS.md` requires that grant to be operator-only, because
+ * the allow-list is one process-wide store: a grant made by one account
+ * widens the filesystem for all of them. A grant without an identity lands in
+ * the unattributed bucket, which every admin can see.
  */
 test("the route requires an identity but not an admin role", async () => {
   const { readFileSync } = await import("node:fs");
@@ -375,16 +386,6 @@ test("the route requires an identity but not an admin role", async () => {
     code,
     /requireAdmin/,
     "the registry is per account; admin-only would lock tenants out of their own dashboard",
-  );
-  assert.match(code, /requireProjectsIdentity/, "an identity is still required");
-
-  // The guard is *shared*, not copied. The route used to read the identity
-  // header itself; a private copy is a second thing to get out of date, and
-  // `AGENTS.md` says the guard lives in one place.
-  assert.doesNotMatch(
-    code,
-    /getRequestIdentity/,
-    "the identity check belongs to lib/projects-guards.ts, not to this route",
   );
 
   // The one admin check that is allowed is the allow-list grant, and it has to

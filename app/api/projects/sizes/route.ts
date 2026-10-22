@@ -58,11 +58,13 @@ export async function GET(req: Request) {
   }
 
   try {
-    // Before the snapshot: the run is started first, so a client that polls
-    // this endpoint for the first time does not wait a whole interval for
-    // the measurement to begin.
+    // The run is started **synchronously** and the route does not wait for
+    // it: the request may not block on the measurement — that was the whole
+    // point of moving it into the background. The `await` below is for the
+    // visibility filter, which reads a cached allow-list and compares
+    // strings; it costs milliseconds, not seconds.
     startProjectSizeMeasurement(identity);
-    return NextResponse.json(readProjectSizes(identity));
+    return NextResponse.json(await readProjectSizes(identity));
   } catch {
     return NextResponse.json({ error: "Unable to read project sizes" }, { status: 500 });
   }

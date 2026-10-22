@@ -23,10 +23,11 @@ import { MAX_PARALLEL, SIZE_TIMEOUT_MS, type ProjectSizeEntry, type ProjectSizes
  *
  * The alternative — a fixed number of polls next to the budget, hoping the two
  * match — is exactly the coupling that broke: with 60 polls of 2 s the window
- * was 120 s, and the worst case of 40 projects was 5 rounds of 30 s = 150 s.
- * The client gave up while the measurement was still running and the card
- * kept the old value. `lib/project-size-poll.test.mjs` holds the relation
- * itself now, not two numbers side by side.
+ * was 118 s (the first poll fires at t = 0, so 60 polls span 59 intervals),
+ * and the worst case of 40 projects was 5 rounds of 30 s = 150 s. The client
+ * gave up while the measurement was still running and the card kept the old
+ * value. `lib/project-size-poll.test.mjs` holds the relation itself now, not
+ * two numbers side by side.
  *
  * ### The rule
  *
@@ -64,13 +65,14 @@ import { MAX_PARALLEL, SIZE_TIMEOUT_MS, type ProjectSizeEntry, type ProjectSizes
 export const SIZE_POLL_INTERVAL_MS = 2_000;
 
 /**
- * The reserve on top of the worst case, in polls.
+ * The number of serial pool rounds a run of `projectCount` folders needs.
  *
- * Fifteen polls are 30 seconds. They cover what the worst case does not: the
- * run starts when the first poll reaches the server, the request itself
- * takes a moment, and the write of the result comes after the walk.
+ * Eight folders at a time, and the next round only starts when the last one
+ * of the previous is done — so the rounds add up.
  */
-export const SIZE_POLL_RESERVE_POLLS = 15;
+export function measurementWaves(projectCount: number): number {
+  return Math.ceil(Math.max(0, projectCount) / MAX_PARALLEL);
+}
 
 /**
  * The worst case of one measurement run for `projectCount` projects.
@@ -79,27 +81,39 @@ export const SIZE_POLL_RESERVE_POLLS = 15;
  * each of them with the budget of `SIZE_TIMEOUT_MS`.
  */
 export function measurementWorstCaseMs(projectCount: number): number {
-  const rounds = Math.ceil(Math.max(0, projectCount) / MAX_PARALLEL);
-  return rounds * SIZE_TIMEOUT_MS;
+  return measurementWaves(projectCount) * SIZE_TIMEOUT_MS;
 }
 
 /**
  * How many polls a registry of `projectCount` projects needs.
  *
- * The window of the poll has to cover the worst case of the measurement it
- * is waiting for, plus the reserve. Derived from the constants of the
- * measurement (`MAX_PARALLEL`, `SIZE_TIMEOUT_MS`), so the two cannot drift
- * apart: change the budget and the window follows.
+ * The window of the poll has to cover the measurement it is waiting for, and
+ * it has to cover it *in seconds*, not in polls: the first poll fires at
+ * t = 0, so L polls span (L − 1) intervals. A derivation that counted the
+ * polls instead of the span was two seconds short at every wave boundary.
  *
- * For the 18 projects of the measured registry that is 3 rounds of 30 s =
- * 90 s, so 45 polls plus the reserve of 15 = **60 polls** — the number the
- * design named, and the outcome of the derivation rather than its input.
+ * The reserve is two things:
+ *
+ *  - **one wave** (30 s): the number of projects can grow while the run is
+ *    in flight, and then the run needs one more round. The window computed
+ *    for 18 projects (3 rounds) therefore has to carry 25 projects (4
+ *    rounds) — the wave count jumps at 9, 17, 25, 33, … projects, and at
+ *    every one of those jumps the window of the count below it still covers
+ *    the count above it.
+ *  - **one interval** (2 s): the first poll has to reach the server, and the
+ *    result has to be written after the walk.
+ *
+ * For the 18 projects of the measured registry: 3 rounds, so 3 + 1 waves =
+ * 120 s plus 2 s = 122 s of span, which is **62 polls** (61 intervals plus
+ * the first one). The design named 60 polls, and those 60 polls spanned
+ * 118 s — two seconds short of the 120 s a fourth wave needs.
  */
 export function sizePollLimitFor(projectCount: number): number {
-  return (
-    Math.ceil(measurementWorstCaseMs(projectCount) / SIZE_POLL_INTERVAL_MS) +
-    SIZE_POLL_RESERVE_POLLS
-  );
+  const neededMs =
+    (measurementWaves(projectCount) + 1) * SIZE_TIMEOUT_MS + SIZE_POLL_INTERVAL_MS;
+  // The first poll fires at t = 0 and does not count towards the span, so the
+  // number of polls is one more than the number of intervals.
+  return Math.ceil(neededMs / SIZE_POLL_INTERVAL_MS) + 1;
 }
 
 export interface SizePollerOptions {

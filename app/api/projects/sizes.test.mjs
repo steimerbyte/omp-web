@@ -19,23 +19,41 @@ import test from "node:test";
  * wait for than one that takes a minute.
  */
 
-const TENANT = { host: "localhost", "x-omp-user": "alice" };
 const ANON = { host: "localhost" };
-const alice = { username: "alice", isAdmin: false };
-const PROJECT_ROOT = "/tmp/omp-web-sizes-project";
 
 const route = await import("./sizes/route.ts");
 const { getProjectsPath, writeProjectsFile } = await import("@/lib/projects-store.ts");
+
+/**
+ * A fresh identity and a fresh home per test.
+ *
+ * The allow-roots cache is keyed by the identity and lives five seconds, so
+ * tests that share a username would hand each other the previous test's temp
+ * root — and the endpoint would report nothing for a reason that has nothing
+ * to do with the case under test. Same reasoning as
+ * `app/api/projects/delete-route.test.mjs`.
+ */
+let identityCounter = 0;
 
 function withHome(fn) {
   const previous = process.env.OMP_WEB_HOME_ROOT;
   const root = mkdtempSync(join(tmpdir(), "omp-web-sizes-"));
   process.env.OMP_WEB_HOME_ROOT = root;
+
+  identityCounter += 1;
+  const identity = { username: `alice${identityCounter}`, isAdmin: false };
+  const headers = { host: "localhost", "x-omp-user": identity.username };
+  // The account's home is `<root>/<username>` and the home is in the
+  // allow-list, so a folder below it is visible to that account. A folder
+  // outside it is not — and the endpoint must not report it.
+  const visibleRoot = join(root, identity.username, "workspace", "project");
+  const hiddenRoot = join(root, "elsewhere", "foreign-project");
+
   const restore = () => {
     if (previous === undefined) delete process.env.OMP_WEB_HOME_ROOT;
     else process.env.OMP_WEB_HOME_ROOT = previous;
   };
-  const result = fn(root);
+  const result = fn({ identity, headers, visibleRoot, hiddenRoot, root });
   if (result && typeof result.then === "function") {
     return result.then(
       (value) => {
@@ -55,8 +73,8 @@ function withHome(fn) {
   return result;
 }
 
-function request(url, { method = "GET", headers = TENANT, body } = {}) {
-  return new Request(`http://${headers.host ?? "localhost"}${url}`, {
+function request(url, { method = "GET", headers, body } = {}) {
+  return new Request(`http://${headers?.host ?? "localhost"}${url}`, {
     method,
     headers: {
       ...headers,
@@ -66,43 +84,57 @@ function request(url, { method = "GET", headers = TENANT, body } = {}) {
   });
 }
 
-function writeRegistry(project) {
-  writeProjectsFile(alice, {
-    schemaVersion: 1,
-    projects: [project],
-    priorities: [],
-  });
+function writeRegistry(identity, projects) {
+  writeProjectsFile(identity, { schemaVersion: 1, projects, priorities: [] });
 }
 
-function readRegistry() {
-  return JSON.parse(readFileSync(getProjectsPath(alice), "utf8"));
+function readRegistry(identity) {
+  return JSON.parse(readFileSync(getProjectsPath(identity), "utf8"));
 }
 
-async function waitForRegistry(predicate, timeoutMs = 5_000) {
+async function waitForRegistry(identity, predicate, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const file = readRegistry();
+    const file = readRegistry(identity);
     if (predicate(file)) return file;
     if (Date.now() > deadline) throw new Error(`the registry did not change within ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
 
+/** A project with a fresh measurement of `sizeBytes`. */
+function measured(root, sizeBytes, measuredAt = new Date().toISOString()) {
+  return {
+    root,
+    priority: "now",
+    openTodos: 0,
+    status: "yellow",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastTouchedAt: "2026-01-01T00:00:00.000Z",
+    sizeBytes,
+    sizeMeasuredAt: measuredAt,
+  };
+}
+
 // --------------------------------------------------------------- guards --
 
 test("GET /api/projects/sizes without an identity is 403 and writes nothing", () =>
-  withHome(async () => {
+  withHome(async ({ identity }) => {
     const response = await route.GET(request("/api/projects/sizes", { headers: ANON }));
     assert.equal(response.status, 403);
     const { existsSync } = await import("node:fs");
-    assert.equal(existsSync(getProjectsPath(alice)), false, "a refused request must not create a registry");
+    assert.equal(
+      existsSync(getProjectsPath(identity)),
+      false,
+      "a refused request must not create a registry",
+    );
   }));
 
 test("GET /api/projects/sizes refuses a cross-site request", () =>
-  withHome(async () => {
+  withHome(async ({ headers }) => {
     const response = await route.GET(
       request("/api/projects/sizes", {
-        headers: { ...TENANT, origin: "http://evil.example", "sec-fetch-site": "cross-site" },
+        headers: { ...headers, origin: "http://evil.example", "sec-fetch-site": "cross-site" },
       }),
     );
     assert.equal(response.status, 403);
@@ -116,50 +148,59 @@ test("an admin header alone is not an identity", () =>
     assert.equal(response.status, 403);
   }));
 
-test("the sizes route uses the shared guard instead of a copy of it", async () => {
-  const { readFileSync } = await import("node:fs");
-  const source = readFileSync(new URL("./sizes/route.ts", import.meta.url), "utf8");
-  // Only the code is asserted, not the prose: the comments explain the
-  // guard chain and would match a naive scan.
-  const code = source
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//"))
-    .join("\n");
+// ----------------------------------------------------------- visibility --
 
-  assert.match(code, /requireProjectsIdentity/, "the shared guard is used");
-  assert.doesNotMatch(
-    code,
-    /getRequestIdentity/,
-    "the identity check belongs to lib/projects-guards.ts, not to this route",
-  );
-  assert.doesNotMatch(
-    code,
-    /requireAdmin/,
-    "the sizes are per account; admin-only would lock tenants out of their own dashboard",
-  );
-});
+test("the endpoint reports only the folders the account may see", () =>
+  withHome(async ({ identity, headers, visibleRoot, hiddenRoot }) => {
+    // Two folders in one registry: one inside the account's own home, one
+    // outside it. The board shows only the first one, so the sizes endpoint
+    // must not report the second one either — not its size, not its
+    // measurement time, not its existence.
+    writeRegistry(identity, [measured(visibleRoot, 4711), measured(hiddenRoot, 9999)]);
+
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+
+    assert.deepEqual(
+      body.sizes.map((size) => size.root),
+      [visibleRoot],
+      "a folder the account may not see is not reported",
+    );
+    assert.equal(
+      body.sizes.some((size) => size.sizeBytes === 9999),
+      false,
+      "its size is not reported either",
+    );
+  }));
+
+test("a hidden folder that owes a measurement does not keep the client polling", () =>
+  withHome(async ({ identity, headers, visibleRoot, hiddenRoot }) => {
+    // The visible folder is fresh, the hidden one is stale. `pending` is
+    // computed over the same set the endpoint answers, so the client does
+    // not poll for two minutes for a number it will never be shown.
+    writeRegistry(identity, [
+      measured(visibleRoot, 4711),
+      measured(hiddenRoot, 1, "2026-01-01T00:00:00.000Z"),
+    ]);
+
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
+    const body = await response.json();
+    assert.equal(body.pending, false, "the client waits for what it can see");
+  }));
 
 // --------------------------------------------------------- the answer --
 
 test("the endpoint answers with the sizes and the pending flag", () =>
-  withHome(async () => {
-    writeRegistry({
-      root: PROJECT_ROOT,
-      priority: "now",
-      openTodos: 0,
-      status: "yellow",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      lastTouchedAt: "2026-01-01T00:00:00.000Z",
-      sizeBytes: 4711,
-      sizeMeasuredAt: new Date().toISOString(),
-    });
+  withHome(async ({ identity, headers, visibleRoot }) => {
+    writeRegistry(identity, [measured(visibleRoot, 4711)]);
 
-    const response = await route.GET(request("/api/projects/sizes"));
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(Array.isArray(body.sizes), true, "sizes is an array");
     assert.equal(body.sizes.length, 1);
-    assert.equal(body.sizes[0].root, PROJECT_ROOT);
+    assert.equal(body.sizes[0].root, visibleRoot);
     assert.equal(body.sizes[0].sizeBytes, 4711);
     assert.equal(typeof body.sizes[0].sizeMeasuredAt, "string");
     assert.equal(body.sizes[0].sizeIsLowerBound, false, "a complete measurement is not a lower bound");
@@ -167,17 +208,19 @@ test("the endpoint answers with the sizes and the pending flag", () =>
   }));
 
 test("a project that was never measured is pending", () =>
-  withHome(async () => {
-    writeRegistry({
-      root: PROJECT_ROOT,
-      priority: "now",
-      openTodos: 0,
-      status: "yellow",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      lastTouchedAt: "2026-01-01T00:00:00.000Z",
-    });
+  withHome(async ({ identity, headers, visibleRoot }) => {
+    writeRegistry(identity, [
+      {
+        root: visibleRoot,
+        priority: "now",
+        openTodos: 0,
+        status: "yellow",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastTouchedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
 
-    const response = await route.GET(request("/api/projects/sizes"));
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
     const body = await response.json();
     assert.equal(body.pending, true, "the client has to keep polling");
     assert.equal(body.sizes[0].sizeBytes, null, "no size has been measured yet");
@@ -186,19 +229,10 @@ test("a project that was never measured is pending", () =>
   }));
 
 test("the endpoint starts the measurement itself", () =>
-  withHome(async () => {
-    writeRegistry({
-      root: PROJECT_ROOT,
-      priority: "now",
-      openTodos: 0,
-      status: "yellow",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      lastTouchedAt: "2026-01-01T00:00:00.000Z",
-      sizeBytes: 1,
-      sizeMeasuredAt: "2026-01-01T00:00:00.000Z",
-    });
+  withHome(async ({ identity, headers, visibleRoot }) => {
+    writeRegistry(identity, [measured(visibleRoot, 1, "2026-01-01T00:00:00.000Z")]);
 
-    const response = await route.GET(request("/api/projects/sizes"));
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
     assert.equal(response.status, 200);
     assert.equal((await response.json()).pending, true);
 
@@ -206,28 +240,20 @@ test("the endpoint starts the measurement itself", () =>
     // proof that the endpoint triggers the run — the client only ever calls
     // this endpoint.
     const file = await waitForRegistry(
+      identity,
       (stored) => stored.projects[0].sizeMeasuredAt !== "2026-01-01T00:00:00.000Z",
     );
     assert.notEqual(file.projects[0].sizeMeasuredAt, "2026-01-01T00:00:00.000Z");
   }));
 
 test("a measurement that failed is not pending any more", () =>
-  withHome(async () => {
+  withHome(async ({ identity, headers, visibleRoot }) => {
     // A folder that cannot be measured: the attempt happened, the answer is
     // "no size", and the client must stop waiting for a number that will
     // not arrive.
-    writeRegistry({
-      root: PROJECT_ROOT,
-      priority: "now",
-      openTodos: 0,
-      status: "yellow",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      lastTouchedAt: "2026-01-01T00:00:00.000Z",
-      sizeBytes: null,
-      sizeMeasuredAt: new Date().toISOString(),
-    });
+    writeRegistry(identity, [measured(visibleRoot, null)]);
 
-    const response = await route.GET(request("/api/projects/sizes"));
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
     const body = await response.json();
     assert.equal(body.pending, false, "a failed measurement is an answer, not a promise");
     assert.equal(body.sizes[0].sizeBytes, null);
@@ -235,24 +261,15 @@ test("a measurement that failed is not pending any more", () =>
   }));
 
 test("the endpoint measures only this identity's projects", () =>
-  withHome(async () => {
+  withHome(async ({ headers }) => {
     const bob = { username: "bob", isAdmin: false };
     writeProjectsFile(bob, {
       schemaVersion: 1,
-      projects: [
-        {
-          root: "/tmp/omp-web-sizes-bob",
-          priority: "now",
-          openTodos: 0,
-          status: "yellow",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          lastTouchedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
+      projects: [measured("/tmp/omp-web-sizes-bob", 1)],
       priorities: [],
     });
 
-    const response = await route.GET(request("/api/projects/sizes"));
+    const response = await route.GET(request("/api/projects/sizes", { headers }));
     const body = await response.json();
     assert.deepEqual(
       body.sizes.map((size) => size.root),

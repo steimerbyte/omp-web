@@ -105,6 +105,8 @@ export const zhCNLocale: LocalePlugin = {
     "projects.sizePending": "正在测量...",
     "projects.sizeAtLeast": "≥ {size}",
     "projects.sizeLowerBound": "至少这么大：文件夹的一部分无法读取。",
+    "projects.sizeError": "大小出错",
+    "projects.sizeErrorNotice": "无法加载文件夹大小。",
     "projects.open": "打开",
     "projects.delete": "删除项目",
     "projects.delete.title": "确定删除该项目？",

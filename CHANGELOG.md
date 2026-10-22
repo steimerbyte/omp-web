@@ -127,7 +127,8 @@ afterwards — but it wrote back the registry it had read *at the start* of the
 request. A `PUT` in between, a changed priority, a todo counter or a status,
 was silently overwritten by that stale snapshot. The window was as wide as the
 measurement: 20,5 s for the 18 roots of a real registry (measured 2026-10-22),
-and up to about 60 s when the per-folder budget of 30 s was hit.
+and up to 90 s when the 30 s per-folder budget is hit in all three serial pool
+rounds (a calculation from the constants, not a measurement).
 
 The measurement now runs in the background, and the run reads the registry
 **again** immediately before it writes and applies the measurement to that
@@ -555,11 +556,16 @@ walked **nine times** — nine passes over 487.348 entries. That is also the
 argument for the traversal that was rejected: one pass instead of nine saves
 not bytes but inode traversals.
 
-**"No size" is the normal case, and the card says which one it is.** A folder
-that could not be measured is not "not measured yet": the attempt happened,
-the answer is "no size", and the next attempt is due when its TTL expires.
-The card draws the two apart: "Measuring..." while the number is still owed,
-"Size unavailable" when there will never be one.
+**"No size" is an answer, and the card says which one it is.** A folder that
+could not be measured is not "not measured yet": the attempt happened, the
+answer is "no size", and the next attempt is due when its TTL expires. The
+card draws the states apart: "Measuring..." while the number is still owed,
+"Size unavailable" when there will never be one, and a "≥" when the number
+is a lower bound because `du` could not read part of the tree.
+
+With the 30 s budget, **16 of the 18 folders of the measured registry have a
+number and 2 have none** (two roots that do not exist on the disk). "Seven
+without a size" was the state of the old 10 s budget, not of this one.
 
 **A folder with an unreadable subdirectory kept the number `du` had computed
 and threw it away.** `du` cannot list one subdirectory, prints the error on
@@ -606,6 +612,38 @@ warm, reading the registry 1,8-2,3 ms, `resolveProject` 0,2-0,3 ms (2 git
 processes), `isVisibleTo` 0,4-0,6 ms; 16 git processes in all, 14 of them from
 the session list. The floor of `GET /api/projects` is the session list — cold
 ~1498,8 ms, warm ~2,9 ms — and the sizes were 20,5 s on top of it.
+
+**The sizes endpoint answered about folders the board hides.** `GET
+/api/projects` filters its cards to the folders the account may see, and
+`GET /api/projects/sizes` did not: it read the same registry and reported
+the size and the measurement time of every root in it, including the ones the
+board deliberately hides — and the client could not tell that the folder
+exists at all. The filter now lives in one place (`visibleProjectRoots`,
+`lib/projects-guards.ts`) and both routes use it. It also applies to
+`pending`: a hidden folder that owes a measurement no longer keeps the client
+polling for two minutes for a number it will never be shown. Measured cost:
+about 1,7 ms per request (30 requests in 60 s against the dev server: median
+0,0840 s with the filter, 0,0835 s without).
+
+**The poll window was two seconds short at every wave boundary.** The window
+has to outlast the measurement it waits for, and the worst case of a
+measurement is `ceil(projects / 8) * 30 s` because the pool rounds are serial.
+The derivation counted the polls instead of the span — the first poll fires
+at t = 0, so 60 polls cover 59 intervals, 118 s, not 120 s. At 25 projects
+the run needs 4 rounds (120 s) and the client gave up while it was still
+running; nothing noticed, because `pending` was never asked again. The window
+is now derived from the span, with a reserve of one whole wave (the project
+count can grow while the run is in flight) and one interval: 18 projects get
+**62 polls** (122 s of span) instead of 60 (118 s). The test holds the
+relation itself, including the wave boundaries — the wave count jumps at 9,
+17, 25, 33, … projects, and at every one of those the window of the count
+below still carries the count above.
+
+**A failing poll said nothing.** The poller reported its errors to an
+`onError` that nobody had passed, so a 500 from the sizes endpoint produced
+60 silent polls over two minutes and cards that sat on "Measuring..." with no
+explanation. The dashboard now hears the error: the board shows it and the
+cards name it instead of waiting in silence.
 
 **The sizes on the cards overlap, and that is not a bug.** `du -sb` on a
 parent counts the bytes of its children: `workspace` (20,37 GB) contains the

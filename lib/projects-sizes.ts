@@ -1,4 +1,5 @@
 import { measureProjectSizes } from "./project-size";
+import { visibleProjectRoots } from "./projects-guards";
 import {
   applySizeMeasurements,
   isSizeMeasurementStale,
@@ -180,12 +181,37 @@ export function isProjectSizeMeasurementRunning(identity: WebIdentity): boolean 
  * and the next attempt is due when its TTL expires. Without that
  * distinction the client would poll for two minutes against a folder that
  * will never have a size.
+ *
+ * ### The filter, and why `pending` follows it
+ *
+ * Only the folders this identity may see are reported — the same filter the
+ * board uses (`visibleProjectRoots`, `lib/projects-guards.ts`). Without it
+ * the endpoint would answer the size and the measurement time of a folder
+ * that the board deliberately hides, and the client would learn that the
+ * folder exists at all.
+ *
+ * `pending` is computed over the **same** set. A folder that is invisible
+ * and stale would otherwise keep the client polling for two minutes for a
+ * number it will never be shown.
+ *
+ * The function is asynchronous because of that filter. The allow-list is
+ * read once and cached for five seconds (`lib/file-access.ts`); the
+ * per-folder check after that is a string comparison.
  */
-export function readProjectSizes(identity: WebIdentity, now = Date.now()): ProjectSizesResponse {
+export async function readProjectSizes(
+  identity: WebIdentity,
+  now = Date.now(),
+): Promise<ProjectSizesResponse> {
   const file = readProjectsFile(identity);
   const projects = file?.projects ?? [];
 
-  const sizes: ProjectSizeEntry[] = projects.map((project) => ({
+  const visible = await visibleProjectRoots(
+    identity,
+    projects.map((project) => project.root),
+  );
+  const shown = projects.filter((project) => visible.has(project.root));
+
+  const sizes: ProjectSizeEntry[] = shown.map((project) => ({
     root: project.root,
     sizeBytes: project.sizeBytes ?? null,
     sizeMeasuredAt: project.sizeMeasuredAt ?? null,
@@ -194,6 +220,6 @@ export function readProjectSizes(identity: WebIdentity, now = Date.now()): Proje
 
   return {
     sizes,
-    pending: projects.some((project) => isSizeMeasurementStale(project, now)),
+    pending: shown.some((project) => isSizeMeasurementStale(project, now)),
   };
 }

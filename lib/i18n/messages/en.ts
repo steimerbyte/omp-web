@@ -105,6 +105,8 @@ export const enLocale: LocalePlugin = {
     "projects.sizePending": "Measuring...",
     "projects.sizeAtLeast": "≥ {size}",
     "projects.sizeLowerBound": "At least this size: part of the folder could not be read.",
+    "projects.sizeError": "Size error",
+    "projects.sizeErrorNotice": "The folder sizes could not be loaded.",
     "projects.open": "Open",
     "projects.delete": "Delete project",
     "projects.delete.title": "Delete this project?",
