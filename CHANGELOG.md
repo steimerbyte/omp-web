@@ -487,10 +487,12 @@ branch is gone.
 **The dashboard measured the folder sizes inside the request, and the board was
 empty for twenty seconds.** `GET /api/projects` ran `du -sb` per project before
 it answered — eight at a time. One measurement of the 18 roots of a real
-registry takes **20,5 s** (measured 2026-10-22 on the dev host: 3 pool rounds,
-11 of 18 folders measured, 7 without a size, 51,97 GB in the measured folders),
-and the endpoint answered only after it. The board showed nothing at all for
-those seconds: not a spinner, not a partial board.
+registry takes **6,9 s to 20,5 s** (three runs over identical paths on
+2026-10-22 on the dev host: 3 pool rounds, 11 of 18 folders measured, 7
+without a size, 51,97 GB in the measured folders; the spread is the page cache
+of the filesystem, not the code), and the endpoint answered only after it. The
+board showed nothing at all for those seconds: not a spinner, not a partial
+board.
 
 The measurement runs in the background now (`lib/projects-sizes.ts`). The
 request answers with the last known size at once, the run replaces it when it
@@ -501,17 +503,24 @@ process per project. The same route answers in 0,13 s to 4,39 s now (median
 a background measurement is running. The old code answered in 5,0 s with a warm
 cache and 52,0 s with a cold one.
 
-**The size cache expired faster than it could be filled.** `SIZE_TTL_MS` was
-30 seconds against a measurement that takes 20,5 s, so every request found the
-previous result already expired and started a new `du` swarm — per request and
-per open tab. It is five minutes now. The run is not on a timer but
-request-triggered, so the load is not "every TTL" but "every time somebody
-opens the dashboard": one run costs 20,5 s of eight parallel `du` processes,
-6,8 % of the five minutes, and a closed dashboard costs nothing at all,
-because no request comes in and no run starts. With the old 30 s it would have
-been 68 % on every open inside a minute. The number stands in the comment
-above the constant, with the measurement and the calculation, and
-`lib/projects-schema.test.mjs` asserts the same value.
+**The size cache expired faster than it could be filled — and it never
+expiryed at all.** `SIZE_TTL_MS` was 30 seconds against a measurement that
+takes 6,9 s to 20,5 s, so every request found the previous result already
+expired and started a new `du` swarm — per request and per open tab. It is
+five minutes now. The run is not on a timer but request-triggered, so the load
+is not "every TTL" but "every time somebody opens the dashboard": one run
+costs up to 20,5 s of eight parallel `du` processes, 6,8 % of the five
+minutes, and a closed dashboard costs nothing at all, because no request comes
+in and no run starts. With the old 30 s it would have been 68 % on every open
+inside a minute. The number stands in the comment above the constant, with the
+measurement and the calculation, and `lib/projects-schema.test.mjs` asserts the
+same value.
+
+The old rule that decided this was worse than the TTL: "no size" counted as
+"stale", and seven of the eighteen folders have no size. So `stale.length` was
+never zero, the TTL was never reached, and every single request measured
+again. The rule now looks at the timestamp — a measurement that failed has a
+timestamp, and it is an answer, not a promise.
 
 **The four biggest folders had no size at all, and now they do.** The
 per-folder budget was 10 seconds, and in the measurement above four of the 18
@@ -520,20 +529,83 @@ roots hit it: `workspace/omp-web` (10 115,9 ms), `workspace/AGENT`
 the project that was being worked on. The budget used to protect the *request*,
 which waited for the measurement; nobody waits for it any more, so the budget
 now only bounds the background work, and what it costs is the size of the
-biggest folders. It is 30 seconds now, which turns a cold run from 20,5 s into
-about 60 s — still inside the client's poll window — while a warm run is
-unaffected (0,16-4,81 s per folder). The number is asserted in
-`lib/project-size.test.mjs`.
+biggest folders. It is 30 seconds now, which turns a cold run of 18 roots
+into up to 90 s (three serial pool rounds of 30 s) — the client's poll window
+covers that, and it is derived from the budget rather than guessed next to it
+— while a warm run is unaffected (0,16-4,81 s per folder). **16 of the 18
+folders have a number now**; the two that have none are roots that do not
+exist on the disk, and one of the sixteen is a lower bound. The number is
+asserted in `lib/project-size.test.mjs`.
 
-**"No size" is the normal case, and the card says which one it is.** Seven of
-the 18 folders have no size: four by timeout, three by error (two roots do not
-exist on the disk, `/tmp` fails in `du`). A folder that could not be measured
-is not "not measured yet": the attempt happened, the answer is "no size", and
-the next attempt is due when its TTL expires. The rule that decides this looks
-at the timestamp, not at the value — the old one (`sizeBytes === null` means
-stale) retried such a folder on *every* request, which is what produced the
-permanent `du` swarm. The card draws the two apart: "Measuring..." while the
-number is still owed, "Size unavailable" when there will never be one.
+**What makes the measurement expensive is the number of tree entries, not the
+number of bytes.** The comment in `lib/project-size.ts` used to say that a
+2,4 GB folder takes visibly longer to measure than a 40 MB one. Measured over
+15 folders on 2026-10-22, with a linear fit each:
+
+```
+t(Bytes)  = 924,95 ms + 2,085e-7 ms/Byte * S      r2 = 0,334
+t(Inodes) = 270,13 ms + 0,0212 ms/Inode * I        r2 = 0,919
+```
+
+`tmp` holds 20,82 GB and is measured in 0,52 s, because it has 27.518 tree
+entries. `omp-web` holds 2,41 GB and needs 4,47 s, because it has 131.766.
+`du` walks the tree and stats the entries; it does not read the contents. And
+because 11 of the 18 roots lie inside other roots, the workspace tree is
+walked **nine times** — nine passes over 487.348 entries. That is also the
+argument for the traversal that was rejected: one pass instead of nine saves
+not bytes but inode traversals.
+
+**"No size" is the normal case, and the card says which one it is.** A folder
+that could not be measured is not "not measured yet": the attempt happened,
+the answer is "no size", and the next attempt is due when its TTL expires.
+The card draws the two apart: "Measuring..." while the number is still owed,
+"Size unavailable" when there will never be one.
+
+**A folder with an unreadable subdirectory kept the number `du` had computed
+and threw it away.** `du` cannot list one subdirectory, prints the error on
+stderr and exits 1 — and still prints the total of what it could read.
+`execFile` throws on the non-zero exit and throws the stdout away with it, so
+every folder with one unreadable subdirectory lost its size even though `du`
+had measured it; `/tmp` was only the everyday case. On this host `du -sb
+/tmp` exits 1, prints `16830164\t/tmp` on stdout and the permission error on
+stderr. The number is kept now,
+and it is kept as what it is: a **lower bound**, because the unreadable part
+was not counted. The registry carries that as its own field
+(`sizeIsLowerBound`), and the card shows a "≥" and a tooltip. A number that
+looks exact and is not would be worse than no number.
+
+**The poll window is derived from the measurement, it does not stand next to
+it.** The poll has to outlast the measurement it waits for, and the worst case
+of a measurement is `ceil(projects / 8) * 30 s`, because the pool rounds are
+serial. With a fixed 60 polls of 2 s the window was 120 s and the worst case
+of 40 projects was 150 s: the client gave up while the measurement was still
+running, and the card kept the old value — and nothing noticed, because the
+two numbers were tested separately. The window is now a function of the
+project count (`sizePollLimitFor`), derived from the same constants the
+measurement uses, and `lib/project-size-poll.test.mjs` holds the *relation*:
+it derives the worst case from `MAX_PARALLEL` and `SIZE_TIMEOUT_MS` and
+checks that the window covers it. For the 18 projects of the measured
+registry that is 3 rounds of 30 s = 90 s = 45 polls plus the reserve of 15 =
+60 polls — the number the design named, as the outcome of the derivation
+rather than its input.
+
+**After the poll ends, the size stands, and the card says how old it is.** The
+poll does not continue in a slower rhythm: that would trigger server-side
+measurement runs again, so the same `du` load as before, only in another
+cadence. One run costs 6,9 s to 20,5 s of eight parallel `du` processes; a
+poll every minute would mean one run per TTL for as long as the tab is open —
+6,8 % of the filesystem, continuously, for a number nobody is looking at. The
+old code measured on *every* request, so this is still far below that, but
+"far below" is not a reason to keep reading. The size on the card is
+therefore the size of the last measurement, and once it is older than the TTL
+the metric says so ("Size · 2 h ago").
+
+**The rest of the request was never the expensive part.** Measured with 211
+sessions on 2026-10-22: the session list 1492,9-3823,6 ms cold and 0,1-0,2 ms
+warm, reading the registry 1,8-2,3 ms, `resolveProject` 0,2-0,3 ms (2 git
+processes), `isVisibleTo` 0,4-0,6 ms; 16 git processes in all, 14 of them from
+the session list. The floor of `GET /api/projects` is the session list — cold
+~1498,8 ms, warm ~2,9 ms — and the sizes were 20,5 s on top of it.
 
 **The sizes on the cards overlap, and that is not a bug.** `du -sb` on a
 parent counts the bytes of its children: `workspace` (20,37 GB) contains the

@@ -162,6 +162,7 @@ test("the endpoint answers with the sizes and the pending flag", () =>
     assert.equal(body.sizes[0].root, PROJECT_ROOT);
     assert.equal(body.sizes[0].sizeBytes, 4711);
     assert.equal(typeof body.sizes[0].sizeMeasuredAt, "string");
+    assert.equal(body.sizes[0].sizeIsLowerBound, false, "a complete measurement is not a lower bound");
     assert.equal(body.pending, false, "a fresh measurement is nothing to wait for");
   }));
 
@@ -181,6 +182,7 @@ test("a project that was never measured is pending", () =>
     assert.equal(body.pending, true, "the client has to keep polling");
     assert.equal(body.sizes[0].sizeBytes, null, "no size has been measured yet");
     assert.equal(body.sizes[0].sizeMeasuredAt, null, "and no measurement was made yet");
+    assert.equal(body.sizes[0].sizeIsLowerBound, false, "there is no number to bound");
   }));
 
 test("the endpoint starts the measurement itself", () =>

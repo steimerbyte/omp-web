@@ -58,7 +58,7 @@ mock.module("@/lib/project-size", () => ({
     measurementCalls += 1;
     gate?.markStarted();
     await gate?.finished;
-    return new Map(roots.map((root) => [root, 4242]));
+    return new Map(roots.map((root) => [root, { bytes: 4242, partial: false }]));
   },
 }));
 

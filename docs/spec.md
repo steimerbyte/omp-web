@@ -81,6 +81,7 @@ Die ausgelieferte Oberfläche bietet keine Bedienung zum Umbenennen. Die Fähigk
 | `openTodos` (Todos) | Registry, ein Zähler, kein Array (`lib/projects-schema.ts:87`) |
 | `chatCount` | Zählung der Sitzungen dieses Kontos mit diesem `projectRoot`/`cwd` (`app/api/projects/route.ts:102-115`) |
 | `sizeBytes` (Größe) | `du -sb` je Ordner, `lib/project-size.ts`; das Feld liegt in der Registry (`lib/projects-schema.ts`). **Die Größen überlappen**: ein Parent enthält die Bytes seiner Children, die Summe der Karten ist doppelt gezählt (Kapitel 3.1) |
+| `sizeIsLowerBound` | `true`, wenn `du` nur einen Teil des Baums lesen konnte und die Zahl eine Untergrenze ist (Kapitel 3.1); die Karte zeigt dann ein „≥“ |
 | `branch` | `resolveProject(root)`, `app/api/projects/route.ts:131`; `null` bei einem Ordner ohne Repository |
 | `isGit` | `branch !== null \|\| isWorktree` (`app/api/projects/route.ts:138`) |
 | `lastActivityAt` | das spätere von `lastTouchedAt` und `lastSessionAt` (`app/api/projects/route.ts:123-126`) |
@@ -122,30 +123,52 @@ Die Route misst nicht mehr, weil die Messung die Antwort blockierte: `du -sb` je
 
 | | |
 |---|---|
-| Gesamtzeit der vollständigen Messung | **20,5 s** |
+| drei Läufe, identischer Code, identische Pfade | **6,9 s / 14,4 s / 20,5 s** |
 | Pool-Runden (8 je Runde, die Runden sind serial) | 3 |
 | Ordner gesamt / davon gemessen / davon `null` | 18 / 11 / 7 |
 | Summe der gemessenen Bytes | 51,97 GB |
 
-Die vier Ordner, die das 10-Sekunden-Budget rissen und `null` lieferten: `workspace/omp-web` (10 115,9 ms), `workspace/AGENT` (10 032,5 ms), `tmp` (10 006,8 ms), `workspace` (10 004,7 ms). Die anderen drei `null` sind Fehler: zwei Wurzeln existieren auf der Platte nicht, `/tmp` läuft in einen `du`-Fehler. **7 von 18 Karten zeigen also keine Größe** — das ist der Normalfall, nicht der Randfall.
+Die Spanne ist der **Page-Cache des Dateisystems**, nicht der Code: dieselben drei Läufe über dieselben Pfade unterscheiden sich um den Faktor drei. Wer eine Zahl ohne die Spanne nennt, nennt eine halbe Wahrheit.
 
-**Was die Messung teuer macht, ist die Verschachtelung, nicht die Ordnergröße.** 11 der 18 Wurzeln liegen *innerhalb* anderer Wurzeln: `<home>/workspace` enthält 8 weitere Projektwurzeln, `<home>/.omp` enthält `.omp/plugins`. `du -sb` traversiert den Workspace-Baum dadurch **9 Mal**. Die teuersten Einzelmessungen sind die Parent-Bäume (`workspace` 10,0 s, `AGENT` 10,0 s, `tmp` 10,1 s), nicht die Child-Projekte: `01_PROJEKTE/ki-hardware-calculator-react` (191 MB) brauchte 9,2 s, weil es auf demselben 9p-Mount liegt und die acht parallelen `du`-Prozesse sich dort in die Quere kommen. Die Einzelmessung direkt danach: 1,15 s, 1,26 s, 0,16 s und 4,81 s — der Unterschied ist der Metadaten-Cache des Mounts, nicht der Code. Die vollständige Rechnung steht im Kopfkommentar von `lib/project-size.ts`.
+**Was die Messung teuer macht, sind die Inodes, nicht die Bytes.** Über 15 Ordner, mit je einer linearen Anpassung:
 
-**Das Budget je Ordner ist von 10 s auf 30 s gestiegen.** Bei 10 s lieferten die vier größten Ordner gar nichts, darunter das Projekt, an dem gerade gearbeitet wird. Das Budget schützte früher den *Request* — der wartete auf die Messung. Das tut es nicht mehr: die Messung läuft im Hintergrund, es wartet niemand. Was es noch schützt, ist die Hintergrundlast, und was es kostet, ist die Größe der größten Ordner. Bei 30 s kostet ein kalter Lauf rund 60 s statt 20,5 s (zwei der drei Runden treffen das Budget); das Pollfenster des Clients (60 Polls à 2 s = 120 s) deckt das. Ein warmer Lauf ist nicht betroffen (0,16-4,81 s je Ordner). Die Konstante ist `SIZE_TIMEOUT_MS = 30_000` (`lib/project-size.ts`), getestet in `lib/project-size.test.mjs`.
+```
+t(Bytes)  = 924,95 ms + 2,085e-7 ms/Byte * S      r2 = 0,334
+t(Inodes) = 270,13 ms + 0,0212 ms/Inode * I        r2 = 0,919
+```
 
-**Die Größen überlappen.** `du -sb` auf einem Parent zählt die Bytes der Children mit: `workspace` (20,37 GB) enthält die Bytes der 8 Projektwurzeln darunter, `.omp` (4,95 GB) enthält `.omp/plugins` (1,21 GB). **Die Summe der auf den Karten angezeigten Größen ist damit doppelt gezählt** und ist als Gesamtzahl nicht sinnvoll. Das ist die bestehende Semantik und sie bleibt hier stehen: die Karte zeigt die Größe *des Ordners*, und ein Ordner, der andere Ordner enthält, ist absichtlich größer als die Summe seiner Teile. Ein Traversal über den ganzen Baum (`du -sb --max-depth=1`) würde den Kostentreiber beseitigen, ändert aber, was die Zahl *bedeutet* — eine Entscheidung über die Semantik der Karte, keine Refaktorisierung.
+Die Inode-Zahl erklärt die Dauer, die Byte-Zahl fast nicht. Sechs Belege aus derselben Messung:
+
+| Ordner | Bytes | Inodes | Zeit |
+|---|---|---|---|
+| `workspace` | 18,96 GB | 487.348 | 10,43 s |
+| `omp-web` | 2,41 GB | 131.766 | 4,47 s |
+| `.omp` | 4,62 GB | 119.797 | 4,34 s |
+| `AGENT` | 2,84 GB | 142.581 | 1,73 s |
+| `tmp` | 20,82 GB | 27.518 | 0,52 s |
+| `Zed` | 0,000065 GB | 14 | 1,33 s |
+
+`tmp` enthält 20,82 GB und wird in 0,52 s gemessen, weil es 27.518 Tree-Einträge hat. `omp-web` enthält 2,41 GB und braucht 4,47 s, weil es 131.766 hat. `du` traversiert den Baum und statet die Einträge; es liest die Inhalte nicht — die Arbeit ist proportional zur *Zahl der Einträge*, nicht zu ihrer Größe. (`Zed` ist die Ausnahme, die die Regel bestätigt: 14 Einträge auf einem Windows-Mount, dessen Grundkosten 1,3 s sind.)
+
+**Die Verschachtelung vervielfacht die Einträge, nicht nur die Bytes.** 11 der 18 Wurzeln liegen *innerhalb* anderer Wurzeln: `<home>/workspace` enthält 8 weitere Projektwurzeln, `<home>/.omp` enthält `.omp/plugins`. `du -sb` traversiert den Baum unter dem übergebenen Ordner, der Workspace-Baum wird dadurch **9 Mal** traversiert. Was neun Mal traversiert wird, sind 487.348 Tree-Einträge — das ist die Rechnung. Die teuersten Einzelmessungen sind deshalb die Parent-Bäume (`workspace` 10,0 s, `AGENT` 10,0 s, `tmp` 10,1 s), nicht die Child-Projekte: `01_PROJEKTE/ki-hardware-calculator-react` (191 MB) brauchte 9,2 s, weil es auf demselben 9p-Mount liegt und die acht parallelen `du`-Prozesse sich dort in die Quere kommen.
+
+**Das Budget je Ordner ist von 10 s auf 30 s gestiegen.** Bei 10 s lieferten die vier größten Ordner gar nichts: `workspace/omp-web` (10 115,9 ms), `workspace/AGENT` (10 032,5 ms), `tmp` (10 006,8 ms) und `workspace` (10 004,7 ms) — darunter das Projekt, an dem gerade gearbeitet wird. Das Budget schützte früher den *Request* — der wartete auf die Messung. Das tut es nicht mehr: die Messung läuft im Hintergrund, es wartet niemand. Was es noch schützt, ist die Hintergrundlast, und was es kostet, ist die Größe der größten Ordner. Bei 30 s haben **16 von 18** Ordnern eine Zahl: die vier größten werden gemessen, `/tmp` kommt als Untergrenze (siehe unten), und die zwei ohne Zahl sind Wurzeln, die auf der Platte nicht existieren. Die Konstante ist `SIZE_TIMEOUT_MS = 30_000` (`lib/projects-schema.ts`), getestet in `lib/project-size.test.mjs`.
+
+**Ein teilweise gelesener Ordner liefert jetzt eine Untergrenze statt gar nichts.** `du` kann ein Unterverzeichnis nicht lesen, druckt den Fehler auf stderr, beendet sich mit Exit 1 — und druckt trotzdem die Summe des Gelesenen. `execFile` wirft bei Non-Zero-Exit und wirft den stdout mit weg, so ging die Zahl verloren, obwohl `du` sie berechnet hatte. Betroffen war jeder Ordner mit einem unlesbaren Unterverzeichnis, `/tmp` nur als häufigster Fall. Auf diesem Host: `du -sb /tmp` endet mit Exit 1, druckt `16830164\t/tmp` auf stdout und „du: cannot read directory '/tmp/systemd-private-…': Permission denied“ auf stderr. Die Zahl wird jetzt übernommen — als **Untergrenze**, weil der unlesbare Teil nicht mitgezählt wurde. Das Schema trägt das als eigenes Feld (`sizeIsLowerBound`, `lib/projects-schema.ts`), und die Karte zeigt ein „≥“ und einen Tooltip: eine Zahl, die exakt aussieht und es nicht ist, ist schlimmer als keine Zahl.
+
+**Die Größen überlappen.** `du -sb` auf einem Parent zählt die Bytes der Children mit: `workspace` (20,37 GB) enthält die Bytes der 8 Projektwurzeln darunter, `.omp` (4,95 GB) enthält `.omp/plugins` (1,21 GB). **Die Summe der auf den Karten angezeigten Größen ist damit doppelt gezählt** und ist als Gesamtzahl nicht sinnvoll. Das ist die bestehende Semantik und sie bleibt hier stehen: die Karte zeigt die Größe *des Ordners*, und ein Ordner, der andere Ordner enthält, ist absichtlich größer als die Summe seiner Teile. Ein Traversal über den ganzen Baum (`du -sb --max-depth=1`) würde den Kostentreiber beseitigen — es spart nicht Bytes, es spart **Inode-Traversierungen**, neun statt einem —, ändert aber, was die Zahl *bedeutet* (gemeinsame Traversal, gemeinsamer Zeitstempel, Wurzeln außerhalb des Baums trotzdem einzeln). Das ist eine Entscheidung über die Semantik der Karte, keine Refaktorisierung, und sie ist hier nicht getroffen.
 
 Der Hintergrundlauf liegt in `lib/projects-sizes.ts`:
 
 - `startProjectSizeMeasurement(identity)` (`:134`) startet einen Lauf und kehrt sofort zurück. Der Lauf hält eine Sperre auf `globalThis.__ompProjectSizeRuns` (`:86`), **keyed by Registry-Pfad** (`:140`): der Pfad ist die Einheit der contention, denn zwei Admin-Konten teilen eine Registry-Datei (`resolveTenantAgentDir` schickt jeden Admin in das globale Agent-Verzeichnis). Zwei Requests derselben Identität erzeugen **einen** Lauf, zwei Identitäten mit zwei Registrys zwei Läufe. Die Sperre wird in einem `finally` freigegeben.
-- `measureAndStore` (`:99`) liest die Registry **zweimal**: einmal, um festzustellen, was zu messen ist, und einmal unmittelbar vor dem Schreiben. `applySizeMeasurements` (`lib/projects-schema.ts:601`) ändert danach nur `sizeBytes` und `sizeMeasuredAt`.
+- `measureAndStore` (`:99`) liest die Registry **zweimal**: einmal, um festzustellen, was zu messen ist, und einmal unmittelbar vor dem Schreiben. `applySizeMeasurements` (`lib/projects-schema.ts:683`) ändert danach nur `sizeBytes`, `sizeMeasuredAt` und `sizeIsLowerBound`.
 - Fehler werden gefangen und geloggt (`:147-149`). Eine unbehandelte Rejection in einem Next.js-Server nimmt den Prozess mit.
 
 Das zweite Lesen ist der Kern. Ohne es schriebe der Lauf einen Stand zurück, den er zwanzig Sekunden alt gelesen hat — ein `PUT` dazwischen (Priorität, Todo-Zähler, Status) wäre stillschweigend überschrieben worden. Der Test dafür ist `app/api/projects/size-race.test.mjs`; er war gegen den alten Stand rot (`'now' !== 'later'`) und ist gegen den neuen grün.
 
-Die TTL `SIZE_TTL_MS = 5 * 60_000` (`lib/projects-schema.ts:214`) ist fünf Minuten, nicht 30 Sekunden: die alte TTL war **kürzer als die Messung, die sie verteilen sollte** (20,5 s gegen 30 s), also startete der nächste Request einen neuen `du`-Schwarm, während der alte noch lief. Die Lastrechnung: der Lauf wird **nicht** von einer Uhr ausgelöst, sondern von einem Request (`startProjectSizeMeasurement`) — ein Lauf kostet 20,5 s `du` (acht Prozesse parallel), ein geöffnetes Dashboard also 20,5 s von 300 s, **6,8 %**, und ein *geschlossenes* Dashboard kostet nichts, weil kein Request kommt und kein Lauf startet. Mit 30 s TTL wären es 20,5 s von 30 s, **68 %**, bei jedem Öffnen innerhalb einer Minute. Der Wert steht im Kommentar über der Konstante mit der Messung und der Rechnung, und `lib/projects-schema.test.mjs` prüft dieselbe Zahl.
+Die TTL `SIZE_TTL_MS = 5 * 60_000` (`lib/projects-schema.ts:214`) ist fünf Minuten, nicht 30 Sekunden: die alte TTL war **kürzer als die Messung, die sie verteilen sollte** (20,5 s gegen 30 s), also startete der nächste Request einen neuen `du`-Schwarm, während der alte noch lief. Die Lastrechnung: der Lauf wird **nicht** von einer Uhr ausgelöst, sondern von einem Request (`startProjectSizeMeasurement`) — ein Lauf kostet 6,9 s bis 20,5 s `du` (acht Prozesse parallel), ein geöffnetes Dashboard also 20,5 s von 300 s, **6,8 %**, und ein *geschlossenes* Dashboard kostet nichts, weil kein Request kommt und kein Lauf startet. Mit 30 s TTL wären es 20,5 s von 30 s, **68 %**, bei jedem Öffnen innerhalb einer Minute. Der Wert steht im Kommentar über der Konstante mit der Messung und der Rechnung, und `lib/projects-schema.test.mjs` prüft dieselbe Zahl.
 
-`isSizeMeasurementStale` (`lib/projects-schema.ts:627`) entscheidet nach dem **Zeitstempel**, nicht nach dem Wert: ein Ordner, dessen Messung gescheitert ist, hat einen frischen Zeitstempel und `sizeBytes: null`. Das ist eine Antwort („keine Größe“), keine offene Zusage. Die alte Regel (`sizeBytes === null` heißt veraltet) hat denselben Ordner bei **jedem** Request neu gemessen — das war der Grund für den Dauerschwarm.
+`isSizeMeasurementStale` (`lib/projects-schema.ts:627`) entscheidet nach dem **Zeitstempel**, nicht nach dem Wert: ein Ordner, dessen Messung gescheitert ist, hat einen frischen Zeitstempel und `sizeBytes: null`. Das ist eine Antwort („keine Größe“), keine offene Zusage. Die alte Regel (`sizeBytes === null` heißt veraltet) hat denselben Ordner bei **jedem** Request neu gemessen — das war der Grund für den Dauerschwarm, und weil 7 von 18 Ordnern `null` liefern, war `stale.length` im alten Code **immer** größer null: die TTL wurde nie erreicht, der Cache war wirkungslos.
 
 ### GET /api/projects/sizes
 
@@ -275,17 +298,24 @@ Ein Projekt öffnen heißt: zurück in den Chat und den Cwd auf den Projektordne
 
 Das Board fragt die Registry einmal (`GET /api/projects`) und pollt danach die Größen (`GET /api/projects/sizes`).
 
-Die Regel steht in `lib/project-size-poll.ts`, nicht in der Komponente: der erste Poll sofort, danach alle `SIZE_POLL_INTERVAL_MS = 2_000` ms (`:40`), Ende bei `pending: false` oder nach `SIZE_POLL_MAX_POLLS = 60` Polls (`:50`). 60 Polls zu 2 s sind zwei Minuten — länger, als die Messung auf dem Dev-Host braucht (20,5 s, im kalten Fall bis etwa 60 s, Kapitel 3.1), und kurz genug, dass ein offenes Dashboard nicht ewig fragt. `hooks/useProjectSizes.ts:31` bindet die Regel an React: der Poll startet, sobald das Board da ist (die Größen brauchen Karten, auf die sie landen können), und seine Aufräumfunktion stoppt ihn beim Unmount.
+Die Regel steht in `lib/project-size-poll.ts`, nicht in der Komponente: der erste Poll sofort, danach alle `SIZE_POLL_INTERVAL_MS = 2_000` ms (`:44`), Ende bei `pending: false` oder nach dem **abgeleiteten** Limit.
 
-Die Größen werden in die Karten **eingesetzt**, nicht neu geholt (`components/ProjectsDashboard.tsx:94`): `applySizes` schreibt nur `sizeBytes` und `sizeMeasuredAt`, und ein Projekt, dessen Größe sich nicht geändert hat, behält seine Objektidentität. Eine Karte, die nichts zu tun hat, wird also nicht neu gezeichnet — der Cursor im Suchfeld bleibt, wo der Nutzer ihn hingelegt hat. Nach dem Anlegen eines Projekts wird der Poll neu gestartet (`:232`), weil der neue Ordner eine Messung schuldet.
+**Das Poll-Fenster folgt aus der Messung, es steht nicht daneben.** Der Worst Case einer Messung ist `ceil(Projekte / MAX_PARALLEL) * SIZE_TIMEOUT_MS`, weil die Pool-Runden serial laufen — acht Ordner auf einmal, die nächste Runde startet, wenn die letzte der vorigen fertig ist. Das Fenster muss diese Dauer umfassen, also ist es eine Funktion der Projektzahl: `sizePollLimitFor(projectCount)` (`:88`). Zwei feste Zahlen nebeneinander sind genau die Kopplung, die gebrochen hat: mit 60 Polls zu 2 s war das Fenster 120 s, und der Worst Case von 40 Projekten waren 5 Runden zu 30 s = 150 s — der Client gab auf, während die Messung noch lief, und die Karte behielt den alten Wert. Für die 18 Projekte der gemessenen Registry sind es 3 Runden zu 30 s = 90 s, also 45 Polls plus 15 Reserve = **60 Polls** — die Zahl, die der Entwurf genannt hat, als *Ergebnis* der Herleitung und nicht als Eingabe. `lib/project-size-poll.test.mjs` prüft die Beziehung selbst: es leitet den Worst Case aus `MAX_PARALLEL` und `SIZE_TIMEOUT_MS` ab und vergleicht ihn mit dem Fenster.
 
-Zwei Zustände auf der Karte, weil sie zwei verschiedene Tatsachen sind (`components/projects/ProjectCard.tsx:205-225`):
+`hooks/useProjectSizes.ts:31` bindet die Regel an React: der Poll startet, sobald das Board da ist (die Größen brauchen Karten, auf die sie landen können), und seine Aufräumfunktion stoppt ihn beim Unmount.
 
-| Zustand | `sizeBytes` | `sizeMeasuredAt` | Anzeige |
-|---|---|---|---|
-| gemessen | Zahl | Zeitstempel | die Größe |
-| nicht messbar | `null` | Zeitstempel | „Size unavailable“ (`projects.sizeUnknown`) |
-| noch nicht gemessen | `null` | keiner | „Measuring...“ (`projects.sizePending`) |
+**Nach dem Poll-Ende bleibt der Wert stehen, und die Karte sagt, wie alt er ist.** Der Poll läuft nicht in einem langsameren Takt weiter: das würde wieder serverseitige Messläufe auslösen, also dieselbe `du`-Last wie vorher, nur in einem anderen Takt. Ein Lauf kostet 6,9 s bis 20,5 s acht paralleler `du`-Prozesse; ein Poll jede Minute hieße einen Lauf pro TTL (5 min), solange der Tab offen ist — 6,8 % des Dateisystems, dauerhaft, für eine Zahl, die niemand ansieht. Der alte Code hat bei *jedem* Request gemessen, es ist also trotzdem weit darunter, aber „weit darunter“ ist kein Grund, weiter zu lesen. Die Größe auf der Karte ist damit die der letzten Messung, und die Karte zeigt ihr Alter, sobald sie älter als die TTL ist (`components/projects/ProjectCard.tsx:93-114`, im Label der Metrik: „Size · 2 h ago“). Eine Zahl, die stillschweigend stundenalt ist, liest sich als der aktuelle Stand.
+
+Die Größen werden in die Karten **eingesetzt**, nicht neu geholt (`components/ProjectsDashboard.tsx:94`): `applySizes` schreibt nur `sizeBytes`, `sizeMeasuredAt` und `sizeIsLowerBound`, und ein Projekt, dessen Größe sich nicht geändert hat, behält seine Objektidentität. Eine Karte, die nichts zu tun hat, wird also nicht neu gezeichnet — der Cursor im Suchfeld bleibt, wo der Nutzer ihn hingelegt hat. Nach dem Anlegen eines Projekts wird der Poll neu gestartet (`:232`), weil der neue Ordner eine Messung schuldet.
+
+Drei Zustände auf der Karte, weil sie drei verschiedene Tatsachen sind (`components/projects/ProjectCard.tsx:205-232`):
+
+| Zustand | `sizeBytes` | `sizeMeasuredAt` | `sizeIsLowerBound` | Anzeige |
+|---|---|---|---|---|
+| gemessen | Zahl | Zeitstempel | – | die Größe |
+| Untergrenze | Zahl | Zeitstempel | `true` | „≥ 1,86 MB“ (`projects.sizeAtLeast`) mit Tooltip |
+| nicht messbar | `null` | Zeitstempel | – | „Size unavailable“ (`projects.sizeUnknown`) |
+| noch nicht gemessen | `null` | keiner | – | „Measuring...“ (`projects.sizePending`) |
 
 Der Zeitstempel ist das, was die beiden `null`-Fälle unterscheidet: eine gescheiterte Messung hat einen Zeitstempel (sie *wurde* versucht), eine ausstehende noch nicht. Der Wartezustand ist ein Platzhalter und deshalb gedämpfter (`var(--text-dim)`).
 
@@ -465,7 +495,7 @@ Die Schutzregeln selbst stehen in `lib/projects-delete.ts` und sind dort geteste
 
 Dieser Punkt war der wichtigste offene Punkt des Features (Stand 2026-10-21). Er ist geschlossen: die Messung läuft im Hintergrund, die Route antwortet sofort mit dem zuletzt bekannten Stand, und der Client holt die neue Größe über `GET /api/projects/sizes` nach. Kapitel 3.1 beschreibt den Aufbau, Kapitel 4 den Poll.
 
-Die Zahlen, die den Punkt ausgelöst haben, bleiben als Vergleich stehen. Die **vollständige Messung** der 18 Wurzeln der echten Registry kostet **20,5 s** (2026-10-22, Dev-Host, 3 Pool-Runden, 11 von 18 gemessen, 7 ohne Größe; Kapitel 3.1). Ältere Kalt-Cache-Messungen: 30,7 s bei 18 Projekten (2026-10-21, Browser-Messung, ein Projekt mit 2,7 GB) und 52,0 s für die ganze GET (2026-10-22, erster Request des Tages gegen denselben Dev-Server, `curl -w "%{time_total}"`).
+Die Zahlen, die den Punkt ausgelöst haben, bleiben als Vergleich stehen. Die **vollständige Messung** der 18 Wurzeln der echten Registry kostet **6,9 s bis 20,5 s** (drei Läufe am 2026-10-22 über identische Pfade; die Spanne ist der Page-Cache, Kapitel 3.1). Ältere Kalt-Cache-Messungen: 30,7 s bei 18 Projekten (2026-10-21, Browser-Messung, ein Projekt mit 2,7 GB) und 52,0 s für die ganze GET (2026-10-22, erster Request des Tages gegen denselben Dev-Server, `curl -w "%{time_total}"`).
 
 Nach der Umstellung antwortet dieselbe Route in **0,13 s bis 4,39 s** (Median 1,21 s über zehn Requests am 2026-10-22, gemessen gegen denselben Dev-Server); mit laufender Hintergrundmessung 0,69 s bis 1,37 s. Der alte Code antwortete unter denselben Bedingungen mit 5,0 s (warmer Cache, Messung fiel an) bzw. 52,0 s (kalter Cache). Die Messung läuft daneben weiter; mit warmem Metadaten-Cache dauerte ein Lauf dort 5,3 s.
 
@@ -493,11 +523,12 @@ Diese Punkte betreffen die Spezifikation selbst. Befunde, die bewusst nicht beho
 | `app/api/projects/size-race.test.mjs` | die Race zwischen Messung und Schreibzugriff: eine Priorität überlebt den laufenden Messlauf (`:165-194`); der Messlauf schreibt nur die Größenfelder, ein Todo-Zähler und ein Status überleben ihn (`:196-227`); die GET antwortet, während die Messung läuft (`:229-260`); zwei Requests erzeugen **eine** Messung (`:262-280`). Der Messlauf wird über ein Promise gesteuert, das der Test hält — der Test entscheidet das Rennen, nicht die Schnelligkeit der Maschine |
 | `app/api/projects/sizes.test.mjs` | die Guards des neuen Endpunkts: 403 ohne Identität, 403 bei Cross-Site, kein Admin-Header ohne Konto (`:93-117`); der geteilte Guard wird benutzt und nicht kopiert (`:119-140`); Antwortformat und `pending` (`:144-253`) |
 | `lib/projects-schema.test.mjs` | die TTL ist fünf Minuten (`SIZE_TTL_MS === 300_000`), eine frische Messung wird nicht wiederholt, eine abgelaufene schon, eine gescheiterte Messung wartet bis zu ihrer TTL (`:23-66`); eine Messung ändert nur die Größenfelder (`:68-111`) |
-| `lib/project-size-poll.test.mjs` | Intervall 2 s und Grenze 60 Polls, Ende bei `pending: false`, Ende nach der Grenze, ein Fehler beendet den Poll nicht, `stop()` räumt den Timer ab (`:69-210`) |
+| `lib/project-size-poll.test.mjs` | Intervall 2 s, Ende bei `pending: false`, Ende nach der Grenze, ein Fehler beendet den Poll nicht, `stop()` räumt den Timer ab (`:69-230`); **die Kopplung**: das Poll-Fenster muss den aus den Messkonstanten abgeleiteten Worst Case umfassen (`:79-99`), und 18 Projekte ergeben die 60 Polls des Entwurfs (`:101-107`) |
+| `components/projects/ProjectCard.size-state.test.mjs` | die drei Zustände der Größe auf der Karte: „Measuring...“, „Size unavailable“ und die Untergrenze mit „≥“ samt Tooltip; eine frische Messung trägt kein Alter, eine abgelaufene schon (`:149-207`) |
 | `app/api/projects/delete-route.test.mjs` | Schutzprüfung vor jedem Schreibzugriff, 403 ohne Identität, Traversal erreicht keinen geschützten Ordner, Abbruch beim Fehlschlag eines Chat-Löschens, Vorschau und Bestätigungsschwelle (`:108-560`) |
 | `lib/projects-delete.test.mjs` | die Schutzregeln selbst, segmentweise statt als String-Präfix, und die Tiefe, bei der Projekte beginnen (`:34-336`) |
 | `lib/projects-store.test.mjs` | Registry pro Konto, Pfad in der eigenen Home, `null` ist nicht „leer“, beschädigter Inhalt wird nicht überschrieben, atomares Schreiben, Übernahme idempotent (`:49-217`) |
-| `lib/project-size.test.mjs` | `null` statt `0`, Shell-Metazeichen und führender Bindestrich werden nicht ausgeführt, Gleichzeitigkeitsgrenze und Budget (`:38-171`) |
+| `lib/project-size.test.mjs` | `null` statt `0`, Shell-Metazeichen und führender Bindestrich werden nicht ausgeführt, Gleichzeitigkeitsgrenze und Budget (`:42-190`); **eine teilweise gelesene Struktur behält die von `du` berechnete Summe als Untergrenze** (`:114-153`), und ein Lauf ohne verwertbare Summe ist `null` und keine Untergrenze (`:155-166`) |
 
 ### Was kein Test hält, und warum
 

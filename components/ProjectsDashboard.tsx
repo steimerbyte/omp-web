@@ -117,8 +117,14 @@ export function ProjectsDashboard({
   // The poll starts once the board is there: the sizes have cards to land on
   // from the first poll on. It ends by itself when the server says the
   // answer is final, and the hook's cleanup stops it when the dashboard goes
-  // away.
-  const restartSizePolling = useProjectSizes(applySizes, projects !== null);
+  // away. The project count goes with it: the poll window has to outlast the
+  // measurement, and the worst case of that measurement grows with the number
+  // of projects (`lib/project-size-poll.ts`).
+  const restartSizePolling = useProjectSizes(
+    applySizes,
+    projects !== null,
+    projects?.length ?? 0,
+  );
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();

@@ -1,4 +1,4 @@
-import type { ProjectSizeEntry, ProjectSizesResponse } from "./projects-schema";
+import { MAX_PARALLEL, SIZE_TIMEOUT_MS, type ProjectSizeEntry, type ProjectSizesResponse } from "./projects-schema";
 
 /**
  * The polling of the folder sizes, as a piece of logic instead of a piece of
@@ -8,9 +8,25 @@ import type { ProjectSizeEntry, ProjectSizesResponse } from "./projects-schema";
  *
  * The dashboard is a React component with a dozen moving parts; a test that
  * mounts it has to mount all of them. The polling *rule* — every two seconds,
- * until the server says the answer is final, at most sixty times — is a rule
- * about time and about a flag, and it can be stated without a DOM. So it
- * lives here, and `hooks/useProjectSizes.ts` binds it to React.
+ * until the server says the answer is final — is a rule about time and about
+ * a flag, and it can be stated without a DOM. So it lives here, and
+ * `hooks/useProjectSizes.ts` binds it to React.
+ *
+ * ### The window is derived, not guessed
+ *
+ * The poll has to outlast the measurement it is waiting for. The worst case
+ * of a measurement is `ceil(projects / MAX_PARALLEL) * SIZE_TIMEOUT_MS`,
+ * because the pool rounds are **serial** — eight folders at a time, and the
+ * next round only starts when the last one of the previous is done. So the
+ * window has to be a function of the project count, and it is:
+ * `sizePollLimitFor(projectCount)`.
+ *
+ * The alternative — a fixed number of polls next to the budget, hoping the two
+ * match — is exactly the coupling that broke: with 60 polls of 2 s the window
+ * was 120 s, and the worst case of 40 projects was 5 rounds of 30 s = 150 s.
+ * The client gave up while the measurement was still running and the card
+ * kept the old value. `lib/project-size-poll.test.mjs` holds the relation
+ * itself now, not two numbers side by side.
  *
  * ### The rule
  *
@@ -21,33 +37,70 @@ import type { ProjectSizeEntry, ProjectSizesResponse } from "./projects-schema";
  * - The poll ends when the server answers `pending: false` — the sizes are
  *   final, and polling further would be asking a question whose answer
  *   cannot change.
- * - And it ends after `SIZE_POLL_MAX_POLLS` polls, whatever the server says.
- *   A poll that never ends is a timer that outlives the tab, and a user who
- *   leaves the dashboard open all day would keep the server busy for nothing.
- *   After the limit the cards show what they have.
+ * - And it ends after the derived limit, whatever the server says. A poll
+ *   that never ends is a timer that outlives the tab, and a user who leaves
+ *   the dashboard open all day would keep the server busy for nothing. After
+ *   the limit the cards show what they have.
  *
- * ### Two seconds
+ * ### After the poll ends, the value stands
  *
- * The measurement itself takes 20,5 s for the 18 roots of a real registry
- * (measured 2026-10-22 on the dev host, the details in
- * `lib/project-size.ts`), so the poll interval is not about freshness — it
- * is about not asking the server more often than a human can notice. Two
- * seconds means the number appears on the card within two seconds of the
- * measurement landing, and the endpoint it hits reads one small JSON file.
+ * The poll does **not** continue in a slower rhythm, and that is a decision:
+ * a slow poll would trigger server-side measurement runs again, and the whole
+ * point of moving the measurement into the background was to stop reading the
+ * disk continuously. A run costs 6,9 s to 20,5 s of eight parallel `du`
+ * processes; a poll every minute would mean one run per TTL (5 min) for as
+ * long as the tab is open — 6,8 % of the filesystem, forever, for a number
+ * that nobody is looking at. The old code measured on *every* request, so
+ * this is still far below that, but "far below" is not a reason to keep
+ * reading.
+ *
+ * So the size on the card is the size of the last measurement, and the card
+ * says how old that measurement is once it is older than the TTL
+ * (`components/projects/ProjectCard.tsx`). A fresh number needs the next
+ * dashboard, not a timer.
  */
 
 /** The gap between two polls. */
 export const SIZE_POLL_INTERVAL_MS = 2_000;
 
 /**
- * How many polls at most, per polling cycle.
+ * The reserve on top of the worst case, in polls.
  *
- * Sixty polls at two seconds is two minutes — longer than the measurement
- * needs on the dev host (20,5 s for 18 folders, and about 60 s for a cold
- * run that hits the 30 s per-folder budget, measured 2026-10-22), and short
- * enough that a dashboard nobody looks at stops asking.
+ * Fifteen polls are 30 seconds. They cover what the worst case does not: the
+ * run starts when the first poll reaches the server, the request itself
+ * takes a moment, and the write of the result comes after the walk.
  */
-export const SIZE_POLL_MAX_POLLS = 60;
+export const SIZE_POLL_RESERVE_POLLS = 15;
+
+/**
+ * The worst case of one measurement run for `projectCount` projects.
+ *
+ * The pool rounds are serial, so the rounds add up: eight folders at a time,
+ * each of them with the budget of `SIZE_TIMEOUT_MS`.
+ */
+export function measurementWorstCaseMs(projectCount: number): number {
+  const rounds = Math.ceil(Math.max(0, projectCount) / MAX_PARALLEL);
+  return rounds * SIZE_TIMEOUT_MS;
+}
+
+/**
+ * How many polls a registry of `projectCount` projects needs.
+ *
+ * The window of the poll has to cover the worst case of the measurement it
+ * is waiting for, plus the reserve. Derived from the constants of the
+ * measurement (`MAX_PARALLEL`, `SIZE_TIMEOUT_MS`), so the two cannot drift
+ * apart: change the budget and the window follows.
+ *
+ * For the 18 projects of the measured registry that is 3 rounds of 30 s =
+ * 90 s, so 45 polls plus the reserve of 15 = **60 polls** — the number the
+ * design named, and the outcome of the derivation rather than its input.
+ */
+export function sizePollLimitFor(projectCount: number): number {
+  return (
+    Math.ceil(measurementWorstCaseMs(projectCount) / SIZE_POLL_INTERVAL_MS) +
+    SIZE_POLL_RESERVE_POLLS
+  );
+}
 
 export interface SizePollerOptions {
   /** Ask the server for the current sizes. */
@@ -56,8 +109,12 @@ export interface SizePollerOptions {
   onSizes: (sizes: ProjectSizeEntry[]) => void;
   /** A failed request. The poll continues; the next one may work. */
   onError?: (error: unknown) => void;
+  /**
+   * How many projects the registry holds. The poll window is derived from it
+   * together with the measurement constants — see `sizePollLimitFor`.
+   */
+  projectCount: number;
   intervalMs?: number;
-  maxPolls?: number;
   /** Injectable, so a test can drive the clock. */
   setTimer?: (callback: () => void, delayMs: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -75,18 +132,16 @@ export interface SizePoller {
   restart(): void;
 }
 
-/** The handle a timer hands back. Named here, because the timer is injectable. */
-type TimerHandle = Parameters<typeof clearTimeout>[0];
-
 export function startSizePoller({
   fetchSizes,
   onSizes,
   onError,
+  projectCount,
   intervalMs = SIZE_POLL_INTERVAL_MS,
-  maxPolls = SIZE_POLL_MAX_POLLS,
   setTimer = (callback, delayMs) => setTimeout(callback, delayMs),
-  clearTimer = (handle) => clearTimeout(handle as TimerHandle),
+  clearTimer = (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
 }: SizePollerOptions): SizePoller {
+  const maxPolls = sizePollLimitFor(projectCount);
   let polls = 0;
   let stopped = false;
   let inFlight = false;

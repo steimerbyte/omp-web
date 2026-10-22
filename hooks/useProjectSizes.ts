@@ -31,6 +31,7 @@ import type { ProjectSizeEntry, ProjectSizesResponse } from "@/lib/projects-sche
 export function useProjectSizes(
   onSizes: (sizes: ProjectSizeEntry[]) => void,
   enabled = true,
+  projectCount = 0,
 ): () => void {
   const pollerRef = useRef<SizePoller | null>(null);
 
@@ -51,6 +52,10 @@ export function useProjectSizes(
         return { sizes: body.sizes, pending: body.pending };
       },
       onSizes,
+      // The window of the poll is derived from the number of projects: it has
+      // to outlast the measurement it waits for, and the worst case of that
+      // measurement grows with the project count.
+      projectCount,
     });
     pollerRef.current = poller;
 
@@ -58,7 +63,7 @@ export function useProjectSizes(
       poller.stop();
       pollerRef.current = null;
     };
-  }, [enabled, onSizes]);
+  }, [enabled, onSizes, projectCount]);
 
   // A stable handle: the caller puts it in a dependency list or hands it to
   // a button, and a new function identity on every render would restart the

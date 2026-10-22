@@ -5,7 +5,7 @@ import { Pressable } from "@/components/motion/Pressable";
 import { useI18n } from "@/hooks/useI18n";
 import type { TranslationParams } from "@/lib/i18n/types";
 import { TodoStepper } from "./TodoStepper";
-import type { PriorityColorValue, ProjectView } from "@/lib/projects-schema";
+import { SIZE_TTL_MS, type PriorityColorValue, type ProjectView } from "@/lib/projects-schema";
 
 /** The translator `useI18n()` hands out, for helpers that format outside JSX. */
 type Translate = (key: string, params?: TranslationParams) => string;
@@ -89,6 +89,15 @@ export function ProjectCard({
       : project.status === "yellow"
         ? t("projects.status.yellow")
         : t("projects.status.green");
+
+  const sizeAge = sizeAgeLabel(t, project.sizeMeasuredAt);
+  const sizeLabel =
+    sizeAge === null
+      ? t("projects.metric.size")
+      : t("projects.metric.sizeWithAge", { age: sizeAge });
+  // The tooltip explains the "≥": the number is what `du` could read, not
+  // necessarily the whole folder.
+  const sizeTitle = project.sizeIsLowerBound ? t("projects.sizeLowerBound") : undefined;
 
   return (
     <Enter
@@ -202,7 +211,7 @@ export function ProjectCard({
             onChange={(next) => onTodosChange(project.root, Math.max(0, next))}
           />
         </Metric>
-        <Metric label={t("projects.metric.size")}>
+        <Metric label={sizeLabel}>
           <span
             style={{
               fontVariantNumeric: "tabular-nums",
@@ -212,15 +221,22 @@ export function ProjectCard({
                 ? "var(--text-dim)"
                 : "var(--text)",
             }}
+            title={sizeTitle}
           >
-            {/* Two different facts, two different answers. A folder that has
-                not been measured *yet* is waiting for a number that will come
-                (the measurement runs in the background, `lib/projects-sizes.ts`);
-                a folder whose measurement *failed* has no size, and no number
-                will ever come for it. Both are `sizeBytes === null`, so the
-                timestamp is what tells them apart. */}
-            {formatSize(project.sizeBytes) ??
-              (project.sizeMeasuredAt ? t("projects.sizeUnknown") : t("projects.sizePending"))}
+            {/* Three different facts, three different answers. A folder that
+                has not been measured *yet* is waiting for a number that will
+                come (the measurement runs in the background,
+                `lib/projects-sizes.ts`); a folder whose measurement *failed*
+                has no size, and no number will ever come for it; a folder
+                whose measurement only saw part of the tree has a number that
+                is a lower bound, and the "≥" says so. The first two are both
+                `sizeBytes === null`, so the timestamp is what tells them
+                apart. */}
+            {formatSize(project.sizeBytes) === null
+              ? (project.sizeMeasuredAt ? t("projects.sizeUnknown") : t("projects.sizePending"))
+              : project.sizeIsLowerBound
+                ? t("projects.sizeAtLeast", { size: formatSize(project.sizeBytes) ?? "" })
+                : formatSize(project.sizeBytes)}
           </span>
         </Metric>
         <Metric label={t("projects.metric.last")}>
@@ -288,8 +304,22 @@ export function ProjectCard({
 function Metric({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-      <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{label}</span>
-      <span style={{ fontSize: 12, color: "var(--text)" }}>{children}</span>
+      {/* The label carries the age of the size measurement now and then. It
+          must not wrap: a second line would push the card past
+          `PROJECT_CARD_HEIGHT`, and that height is a constant the grid and
+          the skeleton both reserve. */}
+      <span
+        style={{
+          fontSize: 10,
+          color: "var(--text-dim)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ fontSize: 12, color: "var(--text)", whiteSpace: "nowrap" }}>{children}</span>
     </div>
   );
 }
@@ -347,6 +377,22 @@ function formatSize(bytes: number | null | undefined): string | null {
     unit += 1;
   }
   return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * The age of the size measurement, or `null` while it is still fresh.
+ *
+ * The poll ends when the server says the answer is final
+ * (`lib/project-size-poll.ts`), so the number on the card is the number of
+ * the last measurement — and on a dashboard that stays open it gets older
+ * without anything changing on the screen. A number that is silently hours
+ * old reads as the current state, so the card says how old it is once it is
+ * older than the TTL.
+ */
+function sizeAgeLabel(t: Translate, measuredAt: string | undefined): string | null {
+  if (measuredAt === undefined) return null;
+  if (Date.now() - Date.parse(measuredAt) < SIZE_TTL_MS) return null;
+  return relativeTime(t, measuredAt);
 }
 
 /**

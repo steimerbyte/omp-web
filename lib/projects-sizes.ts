@@ -4,6 +4,7 @@ import {
   isSizeMeasurementStale,
   type ProjectSizeEntry,
   type ProjectSizesResponse,
+  type SizeMeasurement,
 } from "./projects-schema";
 import { getProjectsPath, readProjectsFile, writeProjectsFile } from "./projects-store";
 import type { WebIdentity } from "./request-identity";
@@ -15,11 +16,12 @@ import type { WebIdentity } from "./request-identity";
  *
  * `GET /api/projects` used to measure every stale folder *before* it
  * answered. `du -sb` per folder, eight at a time: one measurement of the 18
- * roots of a real registry takes **20,5 s** (measured 2026-10-22 on the dev
- * host — the details, the numbers of the folders without a size and the
- * reason the run is expensive, are in `lib/project-size.ts`), and the
+ * roots of a real registry takes **6,9 s to 20,5 s** (three runs over the
+ * same paths on 2026-10-22 on the dev host; the spread is the page cache of
+ * the filesystem, the details, the numbers of the folders without a size and
+ * the reason the run is expensive are in `lib/project-size.ts`), and the
  * endpoint answered only after it. The board showed nothing at all for those
- * twenty seconds — not a spinner, not a partial board: nothing.
+ * seconds — not a spinner, not a partial board: nothing.
  *
  * So the measurement moved here, out of the request. What is left in the
  * request is the answer to "how big is this folder", and that answer is
@@ -38,11 +40,12 @@ import type { WebIdentity } from "./request-identity";
  *
  * ### The write is the dangerous part
  *
- * A measurement run takes 20,5 s — up to about 60 s when the per-folder
- * budget of 30 s is hit. Writing the result back at the end of that run
- * means writing a file that was read twenty seconds ago — and a `PUT` in
- * between (a changed priority, a todo counter, a status) is silently
- * overwritten. That is data loss, not cosmetics.
+ * A measurement run takes 6,9 s to 20,5 s — up to 90 s when the per-folder
+ * budget of 30 s is hit, because the pool rounds of 18 roots are serial
+ * (three rounds of 30 s). Writing the result back at the end of that run
+ * means writing a file that was read seconds ago — and a `PUT` in between (a
+ * changed priority, a todo counter, a status) is silently overwritten. That
+ * is data loss, not cosmetics.
  *
  * So the run reads the registry **again**, immediately before the write, and
  * applies the measurement to *that* state (`applySizeMeasurements` touches
@@ -68,7 +71,7 @@ import type { WebIdentity } from "./request-identity";
  */
 
 /** How a set of roots is measured. Injectable so a test can hold a run open. */
-export type SizeMeasurer = (roots: readonly string[]) => Promise<Map<string, number | null>>;
+export type SizeMeasurer = (roots: readonly string[]) => Promise<Map<string, SizeMeasurement>>;
 
 declare global {
   /**
@@ -186,6 +189,7 @@ export function readProjectSizes(identity: WebIdentity, now = Date.now()): Proje
     root: project.root,
     sizeBytes: project.sizeBytes ?? null,
     sizeMeasuredAt: project.sizeMeasuredAt ?? null,
+    sizeIsLowerBound: project.sizeIsLowerBound === true,
   }));
 
   return {

@@ -410,20 +410,45 @@ TypeScript half type-checks against — keep the two in sync.
   registry file. A module-level `Map` would be empty again after the dev
   server's hot reload, and a second run would start while the first was still
   measuring. The lock is released in a `finally`.
-- **The expensive thing is the nesting, not the folder size.** 11 of the 18
-  roots of a real registry lie inside other roots, so `du -sb` walks the
-  workspace tree nine times. The comment in `lib/project-size.ts` holds the
+- **The expensive thing is the number of tree entries, not the number of
+  bytes.** Measured over 15 folders on 2026-10-22: the byte count explains
+  the duration of a `du -sb` with r2 = 0,334, the inode count with r2 = 0,919
+  (`tmp`: 20,82 GB and 0,52 s at 27.518 entries; `omp-web`: 2,41 GB and
+  4,47 s at 131.766). `du` stats the entries, it does not read the contents.
+  On top of that 11 of the 18 roots of a real registry lie inside other
+  roots, so the workspace tree is walked nine times — nine passes over
+  487.348 entries. The comment in `lib/project-size.ts` holds the
   measurement; do not believe an older version of it ("a 2.4 GB folder takes
   visibly longer to measure than a 40 MB one" — measured and wrong).
+- **A folder with an unreadable subdirectory keeps the number `du` computed,
+  as a lower bound.** `du` exits 1 and still prints the total of what it
+  could read; `execFile` throws that stdout away with the error. The number
+  is kept now, and it is a *lower bound* — the registry says so
+  (`sizeIsLowerBound`) and the card shows a "≥". A number that looks exact
+  and is not is worse than no number.
 - **The sizes overlap.** A parent's size contains its children's bytes, so
   the sum of the sizes on the cards is counted twice. That is the existing
   semantics and it stays; `docs/spec.md` says so for the reader.
 - **The TTL has to be longer than the measurement.** `SIZE_TTL_MS` was 30 s
-  against a measurement that takes 20,5 s, so every request found the
-  previous result expired and started a new `du` swarm. It is five minutes
-  now; the number, the measurement and the duty-cycle calculation are in the
-  comment above the constant, and `lib/projects-schema.test.mjs` asserts the
-  same value.
+  against a measurement that takes 6,9 s to 20,5 s, so every request found
+  the previous result expired and started a new `du` swarm. It is five
+  minutes now; the number, the measurement and the duty-cycle calculation
+  are in the comment above the constant, and `lib/projects-schema.test.mjs`
+  asserts the same value. The run is **request-triggered**, not on a timer:
+  a closed dashboard costs nothing, and a TTL cannot create load on its own.
+- **The poll window is derived from the measurement, it is not a second
+  number.** The worst case of a measurement is `ceil(projects / MAX_PARALLEL)
+  * SIZE_TIMEOUT_MS`, because the pool rounds are serial, and the poll has to
+  outlast it: `sizePollLimitFor(projectCount)` in
+  `lib/project-size-poll.ts`. Two fixed numbers next to each other is how
+  this broke — a 120 s window against a 150 s worst case at 40 projects.
+  `lib/project-size-poll.test.mjs` derives the worst case from the constants
+  and checks the relation.
+- **After the poll ends, the size stands, and the card shows its age.** A
+  slower poll would trigger measurement runs again — the same `du` load in
+  another cadence (one run per TTL = 6,8 % of the filesystem, for as long as
+  the tab is open). So the card says how old the number is once it is older
+  than the TTL.
 - **A failed measurement is an answer, not a promise.** `isSizeMeasurementStale`
   decides on the timestamp, not on the value: a folder that could not be
   measured has a fresh timestamp and `sizeBytes: null`. The card draws that

@@ -185,10 +185,19 @@ export async function GET(req: Request) {
     const file = loadOrAdopt(identity, sessionRoots);
 
     // The folder sizes are *not* measured here any more. They used to be,
-    // and one measurement of the 18 roots of a real registry takes 20,5 s
-    // (measured 2026-10-22 on the dev host, the details in
-    // `lib/project-size.ts`) — twenty seconds of nothing on the screen,
-    // because the request could not answer before the measurement was done.
+    // and one measurement of the 18 roots of a real registry takes 6,9 s to
+    // 20,5 s (measured 2026-10-22 on the dev host, the details in
+    // `lib/project-size.ts`) — seconds of nothing on the screen, because
+    // the request could not answer before the measurement was done.
+    //
+    // The measurement was the expensive part of this request, and the rest
+    // of it is cheap. Measured on 2026-10-22 with 211 sessions: the session
+    // list takes 1492,9-3823,6 ms cold and 0,1-0,2 ms warm, reading the
+    // registry 1,8-2,3 ms, `resolveProject` 0,2-0,3 ms (2 git processes) and
+    // `isVisibleTo` 0,4-0,6 ms; 16 git processes in all, 14 of them from the
+    // session list. The floor of the request is therefore the **session
+    // list** — cold ~1498,8 ms, warm ~2,9 ms — and the sizes were 20,5 s
+    // on top of it.
     //
     // The measurement runs in the background now
     // (`lib/projects-sizes.ts`): this request ships the last known sizes,

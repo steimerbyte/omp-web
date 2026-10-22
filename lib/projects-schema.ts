@@ -103,6 +103,33 @@ export interface ProjectMeta {
   sizeBytes?: number | null;
   /** ISO timestamp of the last successful measurement, for the TTL. */
   sizeMeasuredAt?: string;
+  /**
+   * `true` when `sizeBytes` is a **lower bound** rather than the size.
+   *
+   * `du` walks the tree and stats the entries; it does not read the contents.
+   * When it cannot read a subdirectory it prints an error and exits 1 — and it
+   * still prints the total of what it *could* read. That total is a lower
+   * bound, and the card has to say so: a number that claims to be exact and
+   * is not is worse than no number.
+   *
+   * The field exists because the two cases are different facts: a folder that
+   * was measured completely and a folder whose measurement only saw part of
+   * the tree are not the same answer, and only the second one carries a
+   * "≥" on the card.
+   */
+  sizeIsLowerBound?: boolean;
+}
+
+/**
+ * One measurement of one folder.
+ *
+ * `bytes: null` is the answer "no size" — the folder is gone, unreadable, or
+ * the measurement ran out of time. `partial: true` says that a number came
+ * back but that it is a lower bound (see `sizeIsLowerBound`).
+ */
+export interface SizeMeasurement {
+  bytes: number | null;
+  partial: boolean;
 }
 
 /** The on-disk file. One per account, one object. */
@@ -145,16 +172,19 @@ export const PROJECTS_SCHEMA_VERSION = 1 as const;
 /**
  * One project's size, as the polling endpoint ships it.
  *
- * The three fields are the whole answer: which folder, how big it was, and
- * when that was measured. `sizeBytes: null` with a `sizeMeasuredAt` means
- * "measured, and there is no size"; `sizeBytes: null` without one means
- * "not measured yet". The card draws those two apart, because they are
- * different facts — one is a placeholder, the other is an answer.
+ * The four fields are the whole answer: which folder, how big it was, when
+ * that was measured, and whether the number is exact. `sizeBytes: null` with
+ * a `sizeMeasuredAt` means "measured, and there is no size";
+ * `sizeBytes: null` without one means "not measured yet". The card draws
+ * those two apart, because they are different facts — one is a placeholder,
+ * the other is an answer. `sizeIsLowerBound` is the third distinction: a
+ * number that only saw part of the tree.
  */
 export interface ProjectSizeEntry {
   root: string;
   sizeBytes: number | null;
   sizeMeasuredAt: string | null;
+  sizeIsLowerBound: boolean;
 }
 
 /**
@@ -212,6 +242,51 @@ export interface ProjectSizesResponse {
  * five minutes"), so this comment and the constant cannot drift apart.
  */
 export const SIZE_TTL_MS = 5 * 60_000;
+
+/**
+ * The budget of one folder measurement, in milliseconds.
+ *
+ * 30 seconds. The old value was 10, and at 10 the four biggest folders of
+ * the registry delivered **nothing**: they were killed at 10,0-10,1 s
+ * (measured 2026-10-22, the numbers in `lib/project-size.ts`), among them the
+ * project that was being worked on. The budget used to protect the *request*
+ * — the request waited for the measurement. It does not any more: the
+ * measurement runs in the background and nobody waits for it. So what the
+ * budget buys now is the bound on the background work, and what it costs is
+ * the size of the biggest folders.
+ *
+ * At 30 s a cold run costs about 90 s instead of 20,5 s (three serial pool
+ * rounds of 18 roots hit the cap), which the client's poll window still
+ * covers — it is derived from this number, see `lib/project-size-poll.ts`. A
+ * warm run is unaffected: the same four folders took 0,16-4,81 s.
+ *
+ * The number is asserted by `lib/project-size.test.mjs` ("the documented
+ * budget bounds the background run"), so this comment and the constant cannot
+ * drift apart.
+ */
+export const SIZE_TIMEOUT_MS = 30_000;
+
+/**
+ * How many `du` processes run at once.
+ *
+ * Eight is a compromise: each one is I/O-bound on a different tree, so raising
+ * this buys little past a handful, while a higher number multiplies the worst
+ * case for a run. The cost of a run is bounded at
+ * `ceil(count / MAX_PARALLEL) * SIZE_TIMEOUT_MS` regardless of how many
+ * projects exist.
+ *
+ * It is worth knowing what these eight do to each other: because 11 of the
+ * 18 roots of a real registry lie inside other roots, the eight processes are
+ * often walking the *same* tree at the same time. That is why the child
+ * `01_PROJEKTE/ki-hardware-calculator-react` (191 MB) needed 9,2 s in the
+ * measurement above while its parent `workspace` was being walked as well.
+ *
+ * The constants live here and not in `lib/project-size.ts` because the
+ * browser needs them too: the poll window is derived from them (see
+ * `lib/project-size-poll.ts`), and that module must not import a module that
+ * spawns processes.
+ */
+export const MAX_PARALLEL = 8;
 
 /**
  * The defaults, in sort order. These are the `en` strings — there is no `de`
@@ -390,6 +465,7 @@ export function normalizeProjectMeta(value: unknown, now = new Date()): ProjectM
     adopted: raw.adopted === true ? true : undefined,
     sizeBytes,
     sizeMeasuredAt: isIsoTimestamp(raw.sizeMeasuredAt) ? raw.sizeMeasuredAt : undefined,
+    sizeIsLowerBound: raw.sizeIsLowerBound === true ? true : undefined,
   };
 }
 
@@ -597,16 +673,29 @@ export function applyProjectPatches(
   });
 }
 
-/** Persisted measurements, written by the route, never by a client. */
+/**
+ * Persisted measurements, written by the route, never by a client.
+ *
+ * Only the size fields are touched. That is the whole point of the function:
+ * the run that calls it may have started before the user changed a priority,
+ * and the priority has to survive the measurement.
+ */
 export function applySizeMeasurements(
   projects: readonly ProjectMeta[],
-  measurements: ReadonlyMap<string, number | null>,
+  measurements: ReadonlyMap<string, SizeMeasurement>,
   measuredAt: string,
 ): ProjectMeta[] {
   return projects.map((project) => {
-    if (!measurements.has(project.root)) return project;
-    const sizeBytes = measurements.get(project.root) ?? null;
-    return { ...project, sizeBytes, sizeMeasuredAt: measuredAt };
+    const measurement = measurements.get(project.root);
+    if (measurement === undefined) return project;
+    return {
+      ...project,
+      sizeBytes: measurement.bytes,
+      sizeMeasuredAt: measuredAt,
+      // `undefined` rather than `false`: the field says something only when
+      // it has something to say.
+      sizeIsLowerBound: measurement.partial ? true : undefined,
+    };
   });
 }
 
