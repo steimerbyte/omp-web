@@ -14,7 +14,7 @@
   This is an independent distribution now — see <a href="#provenance">Provenance</a>.
 </p>
 
-The web view for [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi). omp-web reads the sessions the `omp` CLI already writes and gives you a browser workspace for session browsing, real-time chat, model roles, provider configuration, skill management, and project file preview.
+The web view for [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi). omp-web reads the sessions the `omp` CLI already writes and gives you a browser workspace for session browsing, real-time chat, a projects dashboard, model roles, provider configuration, skill management, and project file preview.
 
 It is not a separate agent: omp-web runs omp's own SDK in-process, against the same `~/.omp/agent` directory, so a session started in the terminal continues in the browser and back again.
 
@@ -38,6 +38,13 @@ hands the tree back. The window portals out of the sidebar so it is a real
 overlay instead of a panel clipped to half the screen on a phone. Write
 operations — create, rename, move, copy, delete, upload — go through a guard
 that was not there before.
+
+**A projects dashboard.** A board of the account's project folders, grouped by
+category, with the folder size, the chat count, the open todos and the last
+activity on each card. Folders can be created and deleted from the board. The
+registry lives per account, the browser never writes it, and the folder sizes
+are measured in the background rather than inside the request. The API and the
+measured numbers: [docs/spec.md](./docs/spec.md).
 
 **A terminal next to the chat.** A PTY-backed shell in a browser tab, session-scoped,
 with input, resize, and a stream. On mobile the layout switches to a 90vh overlay
@@ -275,11 +282,116 @@ bunx omp-web
 
 Requests to loopback addresses are never proxied, so a local provider (Ollama, LM Studio, llama.cpp) keeps working with a proxy configured. Note that Bun does **not** currently honour `NO_PROXY` for other hosts.
 
+## Projects dashboard
+
+A second view next to the chat, reachable from the sidebar: the account's
+project folders as cards, grouped by category, with a search field over the
+category strip.
+
+Each card carries the folder path, the size, the chat count, the open todo
+counter and the last activity; a project that is a git repository also shows
+its branch. Creating a project creates the folder — the folder *is* the
+project, not a label for one — and deleting it removes the folder with
+everything in it.
+
+The registry is per account: `omp-web-projects.json` in the account's own agent
+directory. The server writes it, atomically and with mode `0600`; the browser
+only sends patches. A corrupt file is read as an empty but existing registry
+and is not overwritten, because a seed over a damaged state would destroy work
+the user cannot even see.
+
+Deleting is the sharp edge of the feature, so it is guarded server-side. The
+omp runtime directories, an ancestor of the home and any account's home
+directory are refused, by resolved path and for every identity — the rule does
+not depend on what the caller's home happens to be. The reason comes back
+with the answer, so the UI can say "this is the running installation's own
+state" instead of "pick a different folder". A folder with ten or more chats
+needs a confirmation that repeats the chat count, and a count that no longer
+matches is refused as stale rather than silently accepted.
+
+**The folder sizes are measured in the background.** `GET /api/projects` used to
+run `du -sb` per project inside the request, and the board was empty for those
+seconds. The route now answers at once with the last known size, the
+measurement runs behind it, and the client picks the new number up from
+`GET /api/projects/sizes` — a cheap endpoint that reads one small JSON file
+instead of starting a git process per project. Measured over the 18 roots of a
+real registry on 2026-10-22, the measurement takes **6.9 s to 20.5 s**; the
+same route answers in **0.13 s to 4.39 s** (median 1.21 s over ten requests),
+against 5.0 s with a warm cache and 52.0 s with a cold one before the change.
+
+The background run re-reads the registry immediately before it writes, and
+applies only `sizeBytes` and `sizeMeasuredAt`. Without that second read it
+would write back a snapshot taken up to twenty seconds earlier and silently
+overwrite whatever the user had changed in the meantime — a priority, a todo
+counter, a status.
+
+A folder that `du` could only read partly keeps the number `du` computed, as a
+lower bound: the card shows a "≥", because a number that looks exact and is
+not is worse than no number. The sizes also overlap — a parent's size contains
+its children's bytes — so the sum on the cards is counted twice. A size is
+refreshed when it is older than **five minutes**; the measurement is
+request-triggered, so a dashboard nobody has open costs nothing.
+
+The board does not jump while it loads. The skeleton and the real grid ask for
+the same column rule and reserve the same card box, so the first card stands
+where it will stand, and the category strip scrolls sideways instead of
+wrapping, because the category names are account data whose width is not known
+before the answer arrives. The path on a card is isolated as left-to-right
+inside a right-to-left box, so it truncates at the start and the identifying
+end of the path stays on screen.
+
+The API:
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/projects` | the registry, the derived project views and the categories |
+| `PUT /api/projects` | patch the registry: rename a category, set a priority or a todo counter |
+| `POST /api/projects` | create a project, which means creating its folder |
+| `GET /api/projects/sizes` | the cheap poll: the last known sizes and a `pending` flag |
+| `GET /api/projects/[...root]` | preview one project: chat count, entry count, whether a confirmation is required |
+| `DELETE /api/projects/[...root]` | delete one project, behind the guards above |
+
+Full specification, with the measured numbers and the open points:
+[docs/spec.md](./docs/spec.md).
+
+## Animations
+
+**Settings → Animations** holds the global animation intensity — Full, Reduced
+or Off — and the gradient border of the chat input. Both are surface
+preferences with no server side, so they live in `localStorage`
+(`omp-animations` and `omp-gradient-border`), next to the theme and the sound
+switch, and deliberately not in `/api/settings`: that route projects a schema
+out of a pinned package, so a new path there would mean patching a foreign
+dependency for a value the server never reads.
+
+**The gradient border** is a ring around the composer bar whose colours turn
+while an agent is working, and which is gone the moment the agent stops. It
+is a new look, so it is **off by default**. The defaults are a **6 px** ring, a
+**2.4 s** turn, the **Omphie** palette (amber, green, blue, violet) and a glow
+at **0.25** with a **4 px** blur; the panel offers four colour pickers, five
+presets, sliders for the width, the rotation speed and the glow, and two ways
+of turning the gradient. A second palette, Omphie Light, carries the same
+hues with enough depth to read as a line on a white surface — the first
+palette's green reached 1.34:1 against white, which is invisible as a line.
+
+The ring is a band, not a frame: it lies outside the bar, covers the one pixel
+border the bar has, and reaches **no pixel into the padding** the text lives
+in, at any width. The bar's box is the same with and without it, measured.
+The rotation runs only while an *agent* is working — a running shell command
+does not light it up, because the busy state of the surface and the state of
+the agent are not the same thing.
+
+The settings window itself scrolls its content rather than cutting it off. Its
+grid row is bounded to the window height and the body scrolls inside it, so
+every control stays reachable on a small viewport instead of sitting below
+the bottom edge.
+
 ## Features
 
 - **Pick work back up**: browse previous omp conversations by project without digging through terminal history or session paths.
+- **See the projects at a glance**: a dashboard of the account's project folders, grouped by category, with size, chat count, open todos and last activity on every card — and the sizes measured in the background, so the board is never blank waiting for a measurement.
 - **Share the server safely**: real per-account access — an admin creates accounts, each gets its own home, config, sessions, and terminals, and file access is a per-account root set rather than one process-wide allowlist.
-- **Work in the files**: create, rename, move, copy, delete, and upload from the browser, each behind a write guard that is checked against the account, not just the path.
+- **Work in the files**: create, rename, move, copy, delete, and upload from the browser, each behind a write guard that is checked against the account, not just the path. On a phone the tree no longer draws a separator line straight through its own rows.
 - **Open the tree in its own window**: the explorer portal-renders out of the sidebar as a real overlay, and the tree is the window's first tab rather than a fixed column.
 - **Route by role**: assign and switch models per scope of work — the roles omp already uses for subagents, plan mode, and commits.
 - **Try different directions safely**: continue from an earlier message or fork a session into a separate route.
@@ -292,6 +404,7 @@ Requests to loopback addresses are never proxied, so a local provider (Ollama, L
 - **Configure less from the terminal**: manage providers, logins/API keys, model tests, plugins, and skill switches from the web UI.
 - **Lock it down properly**: browser sign-in with a configurable username, hashed-at-rest credentials, and a one-time console code for recovery.
 - **Use the interface in your language**: switch between the supported UI languages from the top bar.
+- **Set the motion level**: Full, Reduced or Off for every moving surface, plus an optional rotating gradient border on the chat input while an agent is working.
 
 ## Screenshots
 
@@ -324,6 +437,7 @@ Requests to loopback addresses are never proxied, so a local provider (Ollama, L
 - **Project trust**: opening a repository in a browser tab must not run its code, so omp-web gates a project's `.omp/extensions`, `.omp/hooks`, `.omp/tools` and `.mcp.json` behind an explicit trust decision. Skills and rules are data and load either way. See [Project trust](./docs/project-trust.md).
 - **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
 - **Git worktrees**: see [Worktrees in omp-web](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
+- **Projects registry**: the dashboard keeps `omp-web-projects.json` in the account's own agent directory (mode `0600`, written atomically by the server). The browser never writes the file; it sends patches.
 - **Forks vs in-session branches**: Fork creates a new `.jsonl` file. "Edit from here" creates another branch inside the same session file.
 - **Skills**: the skill installer shells out to `npx skills add --agent claude-code`, which writes the `.claude/skills` layout omp discovers by default.
 - **Internationalization**: see [Internationalization](./docs/i18n.md) for using translations and adding languages or UI text.
@@ -424,19 +538,32 @@ app/
     cwd/browse/     # browsable server directory listing
     cwd/validate/   # custom working directory validation
     default-cwd/    # omp default working directory lookup
+    display-settings/ # the omp settings that change how the client renders
     files/          # file listing, reading, preview, and watching
     file-actions/   # create, rename, move, copy, delete, upload
+    file-index/     # a fuzzy index of a directory, for fast file search
+    git/            # status and diff for the working tree
+      diff/
+      status/
     home/           # current user home directory
     whoami/         # the caller's identity, as the proxy resolved it
     model-roles/    # read/write omp's modelRoles (default/smol/slow/plan/…)
     models/         # available models, default model, thinking levels, roles
     models-config/  # read/write models.yml and test models
+    mcp/            # read/write the MCP server configuration
     plugins/        # omp plugin install/remove/enable/disable
+    projects/       # the projects dashboard registry
+      sizes/        # the cheap size poll the dashboard reads
+      [...root]/    # one project: preview and delete
+    quick-phrases/  # the account's composer phrase list
+    project-trust/  # the trust decisions for a project's executable resources
     sessions/       # session reads, rename, delete, context, HTML export
     settings/       # web settings, including the access panel
     skills/         # skill listing, search, install, enable/disable
     system-stats/   # live CPU, RAM and load readings
     terminal/       # PTY-backed shell sessions: create, stream, write input
+    theme/          # the omp theme mapping for the current directory
+    updates/        # self-update of the running server
     web-access/     # credential check, sign-in, and the recovery code
       login/        # POST sign-in, sets the session cookie
       recovery/     # trade a recovery code for a new password
@@ -463,6 +590,11 @@ components/
   SystemStatsBadge.tsx # live CPU/RAM readout with a sparkline popover
   TerminalDropdown.tsx  # terminal tab selector in the top bar
   TerminalViewer.tsx    # xterm.js surface fed by the PTY stream
+  ProjectsDashboard.tsx # the projects board: fetch, sizes, delete state
+  projects/           # the board's parts: cards, grid, category strip, dialogs
+  AnimationsConfig.tsx # the motion level and the gradient border panel
+  GradientBorderConfig.tsx # colours, width, speed and glow of the chat ring
+  motion/             # the animation primitives, the motion mode, the ring rules
 lib/
   directory-browser.ts # directory normalization and safe listing helpers
   file-access.ts      # file read safety boundary, scoped per account
@@ -479,6 +611,13 @@ lib/
   normalize.ts        # normalizes toolCall field names
   omp-runtime.ts      # shared Settings + AuthStorage + ModelRegistry
   omp-types.ts        # structural view of omp's AgentSession
+  projects-schema.ts  # the shape of the projects registry and its validation
+  projects-store.ts   # the per-account registry file
+  projects-guards.ts  # the shared identity guard of the projects routes
+  projects-delete.ts  # which folders may never be deleted
+  project-size.ts     # du -sb for one or many folders, bounded in parallel
+  project-size-poll.ts # the rule of the size poll: interval, limit, end
+  projects-sizes.ts   # the background size measurement and its in-flight lock
   project-trust.ts    # gates a project's executable resources
   request-security.ts # host allowlist and cross-site request rejection
   rpc-manager.ts      # AgentSessionWrapper lifecycle and global registry
@@ -491,6 +630,7 @@ hooks/
   useAgentSession.ts  # session loading, command sending, SSE state machine
   useAudio.ts         # completion sound
   useDragDrop.ts      # image drag/drop
+  useProjectSizes.ts  # React binding for the size poll
   useTheme.ts         # theme switching
 bin/
   omp-web.js          # CLI entrypoint; re-executes the server under Bun
