@@ -101,6 +101,7 @@ export const enLocale: LocalePlugin = {
     "projects.emptyHint": "Create a project, or pick a folder as your workspace.",
     "projects.error": "Projects could not be loaded",
     "projects.sizeUnknown": "Size unavailable",
+    "projects.sizePending": "Measuring...",
     "projects.open": "Open",
     "projects.delete": "Delete project",
     "projects.delete.title": "Delete this project?",

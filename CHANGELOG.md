@@ -121,6 +121,22 @@ stretched onto the bounded row, and `.nav` measures `clientHeight` 730 against
 
 ### Data loss
 
+**A change made while the folder sizes were measured was lost.** `GET
+/api/projects` measured the sizes inside the request and wrote the result back
+afterwards — but it wrote back the registry it had read *at the start* of the
+request. A `PUT` in between, a changed priority, a todo counter or a status,
+was silently overwritten by that stale snapshot. The window was as wide as the
+measurement: 20,5 s for the 18 roots of a real registry (measured 2026-10-22),
+and up to about 60 s when the per-folder budget of 30 s was hit.
+
+The measurement now runs in the background, and the run reads the registry
+**again** immediately before it writes and applies the measurement to that
+state — `applySizeMeasurements` touches `sizeBytes` and `sizeMeasuredAt` and
+nothing else. The window between read and write is milliseconds instead of
+twenty seconds, and a project that was deleted in between is not written back
+at all. The regression test was written first and was red against the old code
+(`'now' !== 'later'`): `app/api/projects/size-race.test.mjs`.
+
 **Deleting a project could destroy the omp installation.** On 2026-10-20 a test
 ran `DELETE /api/projects/home/steimerbyte/.omp` against the dev server and lost
 130 chats. `isProtectedProjectRoot` did not fire, and the reason was structural:
@@ -467,6 +483,68 @@ their place without a second hardcoded inset, and the dead archive-specific
 branch is gone.
 
 ### Projects
+
+**The dashboard measured the folder sizes inside the request, and the board was
+empty for twenty seconds.** `GET /api/projects` ran `du -sb` per project before
+it answered — eight at a time. One measurement of the 18 roots of a real
+registry takes **20,5 s** (measured 2026-10-22 on the dev host: 3 pool rounds,
+11 of 18 folders measured, 7 without a size, 51,97 GB in the measured folders),
+and the endpoint answered only after it. The board showed nothing at all for
+those seconds: not a spinner, not a partial board.
+
+The measurement runs in the background now (`lib/projects-sizes.ts`). The
+request answers with the last known size at once, the run replaces it when it
+is done, and the client picks it up from the new `GET /api/projects/sizes` — a
+cheap endpoint that reads one small JSON file instead of starting a git
+process per project. The same route answers in 0,13 s to 4,39 s now (median
+1,21 s over ten requests, same server, same registry), 0,69 s to 1,37 s while
+a background measurement is running. The old code answered in 5,0 s with a warm
+cache and 52,0 s with a cold one.
+
+**The size cache expired faster than it could be filled.** `SIZE_TTL_MS` was
+30 seconds against a measurement that takes 20,5 s, so every request found the
+previous result already expired and started a new `du` swarm — per request and
+per open tab. It is five minutes now. The run is not on a timer but
+request-triggered, so the load is not "every TTL" but "every time somebody
+opens the dashboard": one run costs 20,5 s of eight parallel `du` processes,
+6,8 % of the five minutes, and a closed dashboard costs nothing at all,
+because no request comes in and no run starts. With the old 30 s it would have
+been 68 % on every open inside a minute. The number stands in the comment
+above the constant, with the measurement and the calculation, and
+`lib/projects-schema.test.mjs` asserts the same value.
+
+**The four biggest folders had no size at all, and now they do.** The
+per-folder budget was 10 seconds, and in the measurement above four of the 18
+roots hit it: `workspace/omp-web` (10 115,9 ms), `workspace/AGENT`
+(10 032,5 ms), `tmp` (10 006,8 ms) and `workspace` (10 004,7 ms) — among them
+the project that was being worked on. The budget used to protect the *request*,
+which waited for the measurement; nobody waits for it any more, so the budget
+now only bounds the background work, and what it costs is the size of the
+biggest folders. It is 30 seconds now, which turns a cold run from 20,5 s into
+about 60 s — still inside the client's poll window — while a warm run is
+unaffected (0,16-4,81 s per folder). The number is asserted in
+`lib/project-size.test.mjs`.
+
+**"No size" is the normal case, and the card says which one it is.** Seven of
+the 18 folders have no size: four by timeout, three by error (two roots do not
+exist on the disk, `/tmp` fails in `du`). A folder that could not be measured
+is not "not measured yet": the attempt happened, the answer is "no size", and
+the next attempt is due when its TTL expires. The rule that decides this looks
+at the timestamp, not at the value — the old one (`sizeBytes === null` means
+stale) retried such a folder on *every* request, which is what produced the
+permanent `du` swarm. The card draws the two apart: "Measuring..." while the
+number is still owed, "Size unavailable" when there will never be one.
+
+**The sizes on the cards overlap, and that is not a bug.** `du -sb` on a
+parent counts the bytes of its children: `workspace` (20,37 GB) contains the
+bytes of the 8 project roots below it, and `.omp` (4,95 GB) contains
+`.omp/plugins` (1,21 GB). The sum of the sizes on the cards is therefore
+counted twice and is not a total of anything. The semantics stay as they are —
+the card shows the size of *that folder* — and `docs/spec.md` says so now for
+the reader. A single traversal for the whole tree (`du -sb --max-depth=1`)
+would remove the cost driver: the tree is walked nine times, because 11 of the
+18 roots lie inside other roots. It would change what the number *means*,
+though, which is a decision about the card and not a refactoring.
 
 **A project view instead of a folder browser.** A new top-level view lists the
 projects an account works on, with size, priority and todo progress, and can

@@ -101,6 +101,7 @@ export const zhCNLocale: LocalePlugin = {
     "projects.emptyHint": "新建一个项目，或先选择一个工作目录。",
     "projects.error": "无法加载项目",
     "projects.sizeUnknown": "无法获取大小",
+    "projects.sizePending": "正在测量...",
     "projects.open": "打开",
     "projects.delete": "删除项目",
     "projects.delete.title": "确定删除该项目？",

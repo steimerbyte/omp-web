@@ -4,17 +4,16 @@ import { join } from "node:path";
 import { getAllowedFileRoots } from "@/lib/file-access";
 import { allowFileRoot } from "@/lib/allowed-roots";
 import { listAllSessions } from "@/lib/session-reader";
-import { getRequestIdentity, getUserHome, isAdminIdentity, type WebIdentity } from "@/lib/request-identity";
+import { getUserHome, isAdminIdentity, type WebIdentity } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { isPathWithinRoots } from "@/lib/path-security";
 import { resolveProject, initRepository } from "@/lib/worktree";
 import { isProtectedProjectRoot } from "@/lib/projects-delete";
+import { requireProjectsIdentity } from "@/lib/projects-guards";
 import {
   DEFAULT_PRIORITIES,
   applyProjectPatches,
-  applySizeMeasurements,
   isPriorityId,
-  isSizeMeasurementStale,
   isValidProjectFolderName,
   mergePriorityPatches,
   mergeProjectPatches,
@@ -26,11 +25,9 @@ import {
   type ProjectView,
   type ProjectsFile,
 } from "@/lib/projects-schema";
-import { measureProjectSizes } from "@/lib/project-size";
+import { startProjectSizeMeasurement } from "@/lib/projects-sizes";
 import {
   adoptProjects,
-  getProjectsPath,
-  isProjectsPathAllowed,
   readProjectsFile,
   writeProjectsFile,
 } from "@/lib/projects-store";
@@ -52,21 +49,17 @@ export const dynamic = "force-dynamic";
  * host-wide is the allow-list grant that project creation implies, and that
  * one is handled by the create path, not here.
  *
- * The guards below are `requireIdentity` from `lib/request-identity.ts` — not
- * an inline `identity.isAdmin`, and not a private copy of the check. See the
- * note at `app/api/web-access/route.ts`: on 12.10.2026 a route skipped its
- * guard with a comment claiming the proxy had covered it, and that gap is how
- * `bob` turned the password lock off.
+ * ### The guard is shared, not copied
+ *
+ * The identity check is `requireProjectsIdentity` from
+ * `lib/projects-guards.ts` — not an inline `identity.isAdmin`, and not a
+ * private copy of the check. The second route that needed it,
+ * `GET /api/projects/sizes`, uses the same function; a copy would be a
+ * second thing to get wrong, and `AGENTS.md` is explicit about that. See
+ * the note at `app/api/web-access/route.ts`: on 12.10.2026 a route skipped
+ * its guard with a comment claiming the proxy had covered it, and that gap
+ * is how `bob` turned the password lock off.
  */
-function requireIdentity(req: Request): WebIdentity | null {
-  const identity = getRequestIdentity(req.headers);
-  if (identity === null) return null;
-  // The derived path is checked against the account's own home before any
-  // directory is touched — the same second layer
-  // `isQuickPhrasesPathAllowed` adds, catching an identity whose
-  // `OMP_WEB_HOME_ROOT` points somewhere foreign.
-  return isProjectsPathAllowed(identity, getProjectsPath(identity)) ? identity : null;
-}
 
 /**
  * Load the registry, adopting the folders that already exist on disk.
@@ -174,7 +167,7 @@ export async function GET(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
-  const identity = requireIdentity(req);
+  const identity = requireProjectsIdentity(req);
   if (identity === null) {
     return NextResponse.json({ error: "Access denied" }, { status: 403 });
   }
@@ -191,24 +184,25 @@ export async function GET(req: Request) {
 
     const file = loadOrAdopt(identity, sessionRoots);
 
-    // Measure synchronously, bounded per project and capped in parallel
-    // (`lib/project-size.ts`). Deferred measurement was rejected: a value that
-    // arrives on a poll nobody triggers is a value that never arrives. A folder
-    // that cannot be measured within the budget reports `null` and the card
-    // simply shows no size — honest, rather than a number that is not there yet.
-    const stale = file.projects.filter((project) => isSizeMeasurementStale(project));
-    const measurements =
-      stale.length > 0 ? await measureProjectSizes(stale.map((project) => project.root)) : new Map();
-    const measuredAt = new Date().toISOString();
-    const withSizes = applySizeMeasurements(file.projects, measurements, measuredAt);
+    // The folder sizes are *not* measured here any more. They used to be,
+    // and one measurement of the 18 roots of a real registry takes 20,5 s
+    // (measured 2026-10-22 on the dev host, the details in
+    // `lib/project-size.ts`) — twenty seconds of nothing on the screen,
+    // because the request could not answer before the measurement was done.
+    //
+    // The measurement runs in the background now
+    // (`lib/projects-sizes.ts`): this request ships the last known sizes,
+    // the run replaces them when it is done, and the client picks them up
+    // from `GET /api/projects/sizes`.
+    //
+    // The deferred measurement was rejected once, and the reason is worth
+    // keeping: "a value that arrives on a poll nobody triggers is a value
+    // that never arrives". That rejection was of the *missing trigger*, not
+    // of deferral. Nobody triggered the poll then; the poll exists now, and
+    // the sizes endpoint triggers the run itself, so the value does arrive.
+    startProjectSizeMeasurement(identity);
 
-    // Only persist when something was actually measured, so a GET that found
-    // everything cached does not rewrite the file on every poll.
-    if (stale.length > 0) {
-      writeProjectsFile(identity, { ...file, projects: withSizes });
-    }
-
-    const all = await buildProjectViews(identity, { ...file, projects: withSizes });
+    const all = await buildProjectViews(identity, file);
     const visibleProjects = (
       await Promise.all(
         all.map(async (project) => ((await isVisibleTo(identity, project.root)) ? project : null)),
@@ -229,7 +223,7 @@ export async function PUT(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
-  const identity = requireIdentity(req);
+  const identity = requireProjectsIdentity(req);
   if (identity === null) {
     return NextResponse.json({ error: "Access denied" }, { status: 403 });
   }
@@ -275,7 +269,7 @@ export async function PUT(req: Request) {
  *
  * ### The guard chain, and the order it runs in
  *
- * `isApiRequestAllowed` → `requireIdentity` → `hasJsonContentType` → name
+ * `isApiRequestAllowed` → `requireProjectsIdentity` → `hasJsonContentType` → name
  * validation → path check → protection check → existence check → `mkdir`.
  *
  * The first three are byte-for-byte the chain PUT runs, and deliberately:
@@ -319,7 +313,7 @@ export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
-  const identity = requireIdentity(req);
+  const identity = requireProjectsIdentity(req);
   if (identity === null) {
     return NextResponse.json({ error: "Access denied" }, { status: 403 });
   }

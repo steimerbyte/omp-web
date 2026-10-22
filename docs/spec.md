@@ -1,6 +1,6 @@
 # Projects-Feature — Spezifikation
 
-Stand 2026-10-21, Commit `ed92611` auf `main`. Deployed auf agent-pc und in der Produktion verifiziert.
+Stand 2026-10-22, Commit `7620bf4` auf `main` plus der Commit, der die Größenmessung in den Hintergrund legt. **Nicht deployed** — dieser Stand ist im Repo belegt (Tests und Messung gegen den lokalen Dev-Server), im Betrieb noch nicht verifiziert.
 
 Dieses Dokument beschreibt, was ausgeliefert ist. Es ist keine Planung und kein Arbeitsbericht. Der Plan, gegen den die Umsetzung gebaut wurde, steht in `docs/plans/projects-dashboard-plan.md` und sagt zu Recht „Status: Plan, nicht implementiert“ — dieses Dokument ersetzt ihn nicht, es beschreibt das Ergebnis.
 
@@ -14,11 +14,11 @@ Ausgeliefert ist:
 
 - die Dashboard-Ansicht selbst (Kopfzeile, Kategorie-Chips mit Suche, Kartenraster nach Kategorie, Dialog für Anlegen, Dialog für Löschen),
 - eine Registry pro Konto, in der die Projekte und die Kategorienamen liegen,
-- die API-Routen `GET/PUT/POST /api/projects` und `GET/DELETE /api/projects/[...root]`,
+- die API-Routen `GET/PUT/POST /api/projects`, `GET /api/projects/sizes` und `GET/DELETE /api/projects/[...root]`,
 - die Anbindung an die Seitenleiste und den Datei-Explorer,
 - die Layout-Korrekturen, die in Kapitel 5 beschrieben sind.
 
-Der Stand ist Commit `ed92611` auf `main`. Der Commit ist deployed auf agent-pc und in der Produktion.
+Der Stand ist Commit `7620bf4` auf `main` plus dem Hintergrundlauf für die Größenmessung (Kapitel 3.1). Der Commit `ed92611` ist deployed auf agent-pc und in der Produktion; der Hintergrundlauf ist es nicht.
 
 Es gab zwei getrennte Messserien, mit zwei verschiedenen Chromium-Builds:
 
@@ -32,7 +32,7 @@ Die Regeln wurden gegen den Vorzustand geprüft, in zwei getrennten Negativprobe
 - Die **CSS-Negativprobe** ist ein Test-Nachweis. In `components/SettingsConfig.layout.test.mjs` wurde die Deklaration `grid-template-rows` entfernt und durch andere Formen ersetzt (`auto`, `minmax(auto, 1fr)`, die festen 967px, ein Mobile-Block mit `auto`). Je Fall das Ergebnis: 1 pass, 1 FAIL; beim korrekten Wert `minmax(0, 1fr)` dagegen 2 pass, 0 fail. Der Test erkennt den Fehler also.
 - Die **Browser-Negativkontrolle** wurde in der Produktion ausgeführt. Die alte Regel `grid-template-rows: auto` wurde clientseitig in die laufende Seite injiziert. Ergebnis: Zeile 967px gegen `clientHeight` 826px, fünf Knöpfe ohne scrollbaren Vorfahren, nach dem Scrollen aller Container noch zwölf unterhalb der Fensterunterkante, der Tasks-Knopf nicht mehr `fullyVisible`, und `elementFromPoint` traf wieder das Backdrop statt des Knopfes. Der Detektor schlug also an, im Browser, gegen den Produktivbetrieb.
 
-Kapitel 9 benennt, was offen ist. Der wichtigste offene Punkt ist die Wartezeit von `GET /api/projects`; er gehört dort und nicht hierher.
+Kapitel 9 benennt, was offen ist. Der wichtigste offene Punkt — die Wartezeit von `GET /api/projects` — ist geschlossen und steht dort als „Erledigt“ mit den Zahlen, die ihn ausgelöst haben.
 
 ---
 
@@ -80,7 +80,7 @@ Die ausgelieferte Oberfläche bietet keine Bedienung zum Umbenennen. Die Fähigk
 | `priority` | Registry (`lib/projects-schema.ts:82`) |
 | `openTodos` (Todos) | Registry, ein Zähler, kein Array (`lib/projects-schema.ts:87`) |
 | `chatCount` | Zählung der Sitzungen dieses Kontos mit diesem `projectRoot`/`cwd` (`app/api/projects/route.ts:102-115`) |
-| `sizeBytes` (Größe) | `du -sb` je Ordner, `lib/project-size.ts:71-93`; das Feld liegt in der Registry (`lib/projects-schema.ts:103`) |
+| `sizeBytes` (Größe) | `du -sb` je Ordner, `lib/project-size.ts`; das Feld liegt in der Registry (`lib/projects-schema.ts`). **Die Größen überlappen**: ein Parent enthält die Bytes seiner Children, die Summe der Karten ist doppelt gezählt (Kapitel 3.1) |
 | `branch` | `resolveProject(root)`, `app/api/projects/route.ts:131`; `null` bei einem Ordner ohne Repository |
 | `isGit` | `branch !== null \|\| isWorktree` (`app/api/projects/route.ts:138`) |
 | `lastActivityAt` | das spätere von `lastTouchedAt` und `lastSessionAt` (`app/api/projects/route.ts:123-126`) |
@@ -101,20 +101,71 @@ Zweck: die Registry lesen, mit allem ableitbaren, und die Sichtbarkeit auf diese
 
 Reihenfolge der Guards:
 
-1. `isApiRequestAllowed(req)` (`app/api/projects/route.ts:174`) — Herkunft des Requests, vor allem anderen. Antwort: `403 Untrusted API request`.
-2. `requireIdentity(req)` (`app/api/projects/route.ts:177`, Definition `:61-69`) — `getRequestIdentity` (`lib/request-identity.ts:40`) und danach `isProjectsPathAllowed(identity, getProjectsPath(identity))`. Antwort: `403 Access denied`.
+1. `isApiRequestAllowed(req)` (`app/api/projects/route.ts:167`) — Herkunft des Requests, vor allem anderen. Antwort: `403 Untrusted API request`.
+2. `requireProjectsIdentity(req)` (`app/api/projects/route.ts:170`, Definition `lib/projects-guards.ts:33`) — `getRequestIdentity` (`lib/request-identity.ts:40`) und danach `isProjectsPathAllowed(identity, getProjectsPath(identity))`. Antwort: `403 Access denied`.
 
-Danach: `loadOrAdopt` (`:192`), die Größenmessung (`:199-209`), `buildProjectViews` (`:211`) und die Sichtbarkeitsfilterung über `isVisibleTo` (`:162-171`, `:212-216`).
+Der Guard ist **geteilt**, nicht kopiert: `lib/projects-guards.ts` ist die einzige Stelle, die den Kontopfad prüft, und `GET /api/projects/sizes` benutzt dieselbe Funktion. Eine Kopie in der Route wäre eine zweite Sache, die veralten kann.
 
-Fehler: `403` für beide Guard-Fälle, `500 Unable to read projects` bei einem unerwarteten Fehler (`:223-225`).
+Danach: `loadOrAdopt` (`:185`), der Start des Hintergrundlaufs (`:203`, siehe 3.1), `buildProjectViews` (`:205`) und die Sichtbarkeitsfilterung über `isVisibleTo` (`:155-164`, `:206-210`).
 
-Antwort: `{ projects, priorities, home }` (`:218-222`).
+Die Route misst **nicht** mehr. Sie liefert den zuletzt bekannten Stand; ein Projekt, das noch nie gemessen wurde, hat `sizeBytes: null` und `sizeMeasuredAt: undefined`.
+
+Fehler: `403` für beide Guard-Fälle, `500 Unable to read projects` bei einem unerwarteten Fehler (`:217-219`).
+
+Antwort: `{ projects, priorities, home }` (`:212-216`).
+
+### 3.1 Die Größenmessung läuft im Hintergrund
+
+Die Route misst nicht mehr, weil die Messung die Antwort blockierte: `du -sb` je Ordner, acht parallel.
+
+**Die Messung, gemessen.** Am 2026-10-22 auf dem Dev-Host (Intel i5-1335U, WSL2, Bun 1.4.0, Next 16.2.12) gegen die 18 echten Wurzeln der Registry dieses Kontos:
+
+| | |
+|---|---|
+| Gesamtzeit der vollständigen Messung | **20,5 s** |
+| Pool-Runden (8 je Runde, die Runden sind serial) | 3 |
+| Ordner gesamt / davon gemessen / davon `null` | 18 / 11 / 7 |
+| Summe der gemessenen Bytes | 51,97 GB |
+
+Die vier Ordner, die das 10-Sekunden-Budget rissen und `null` lieferten: `workspace/omp-web` (10 115,9 ms), `workspace/AGENT` (10 032,5 ms), `tmp` (10 006,8 ms), `workspace` (10 004,7 ms). Die anderen drei `null` sind Fehler: zwei Wurzeln existieren auf der Platte nicht, `/tmp` läuft in einen `du`-Fehler. **7 von 18 Karten zeigen also keine Größe** — das ist der Normalfall, nicht der Randfall.
+
+**Was die Messung teuer macht, ist die Verschachtelung, nicht die Ordnergröße.** 11 der 18 Wurzeln liegen *innerhalb* anderer Wurzeln: `<home>/workspace` enthält 8 weitere Projektwurzeln, `<home>/.omp` enthält `.omp/plugins`. `du -sb` traversiert den Workspace-Baum dadurch **9 Mal**. Die teuersten Einzelmessungen sind die Parent-Bäume (`workspace` 10,0 s, `AGENT` 10,0 s, `tmp` 10,1 s), nicht die Child-Projekte: `01_PROJEKTE/ki-hardware-calculator-react` (191 MB) brauchte 9,2 s, weil es auf demselben 9p-Mount liegt und die acht parallelen `du`-Prozesse sich dort in die Quere kommen. Die Einzelmessung direkt danach: 1,15 s, 1,26 s, 0,16 s und 4,81 s — der Unterschied ist der Metadaten-Cache des Mounts, nicht der Code. Die vollständige Rechnung steht im Kopfkommentar von `lib/project-size.ts`.
+
+**Das Budget je Ordner ist von 10 s auf 30 s gestiegen.** Bei 10 s lieferten die vier größten Ordner gar nichts, darunter das Projekt, an dem gerade gearbeitet wird. Das Budget schützte früher den *Request* — der wartete auf die Messung. Das tut es nicht mehr: die Messung läuft im Hintergrund, es wartet niemand. Was es noch schützt, ist die Hintergrundlast, und was es kostet, ist die Größe der größten Ordner. Bei 30 s kostet ein kalter Lauf rund 60 s statt 20,5 s (zwei der drei Runden treffen das Budget); das Pollfenster des Clients (60 Polls à 2 s = 120 s) deckt das. Ein warmer Lauf ist nicht betroffen (0,16-4,81 s je Ordner). Die Konstante ist `SIZE_TIMEOUT_MS = 30_000` (`lib/project-size.ts`), getestet in `lib/project-size.test.mjs`.
+
+**Die Größen überlappen.** `du -sb` auf einem Parent zählt die Bytes der Children mit: `workspace` (20,37 GB) enthält die Bytes der 8 Projektwurzeln darunter, `.omp` (4,95 GB) enthält `.omp/plugins` (1,21 GB). **Die Summe der auf den Karten angezeigten Größen ist damit doppelt gezählt** und ist als Gesamtzahl nicht sinnvoll. Das ist die bestehende Semantik und sie bleibt hier stehen: die Karte zeigt die Größe *des Ordners*, und ein Ordner, der andere Ordner enthält, ist absichtlich größer als die Summe seiner Teile. Ein Traversal über den ganzen Baum (`du -sb --max-depth=1`) würde den Kostentreiber beseitigen, ändert aber, was die Zahl *bedeutet* — eine Entscheidung über die Semantik der Karte, keine Refaktorisierung.
+
+Der Hintergrundlauf liegt in `lib/projects-sizes.ts`:
+
+- `startProjectSizeMeasurement(identity)` (`:134`) startet einen Lauf und kehrt sofort zurück. Der Lauf hält eine Sperre auf `globalThis.__ompProjectSizeRuns` (`:86`), **keyed by Registry-Pfad** (`:140`): der Pfad ist die Einheit der contention, denn zwei Admin-Konten teilen eine Registry-Datei (`resolveTenantAgentDir` schickt jeden Admin in das globale Agent-Verzeichnis). Zwei Requests derselben Identität erzeugen **einen** Lauf, zwei Identitäten mit zwei Registrys zwei Läufe. Die Sperre wird in einem `finally` freigegeben.
+- `measureAndStore` (`:99`) liest die Registry **zweimal**: einmal, um festzustellen, was zu messen ist, und einmal unmittelbar vor dem Schreiben. `applySizeMeasurements` (`lib/projects-schema.ts:601`) ändert danach nur `sizeBytes` und `sizeMeasuredAt`.
+- Fehler werden gefangen und geloggt (`:147-149`). Eine unbehandelte Rejection in einem Next.js-Server nimmt den Prozess mit.
+
+Das zweite Lesen ist der Kern. Ohne es schriebe der Lauf einen Stand zurück, den er zwanzig Sekunden alt gelesen hat — ein `PUT` dazwischen (Priorität, Todo-Zähler, Status) wäre stillschweigend überschrieben worden. Der Test dafür ist `app/api/projects/size-race.test.mjs`; er war gegen den alten Stand rot (`'now' !== 'later'`) und ist gegen den neuen grün.
+
+Die TTL `SIZE_TTL_MS = 5 * 60_000` (`lib/projects-schema.ts:214`) ist fünf Minuten, nicht 30 Sekunden: die alte TTL war **kürzer als die Messung, die sie verteilen sollte** (20,5 s gegen 30 s), also startete der nächste Request einen neuen `du`-Schwarm, während der alte noch lief. Die Lastrechnung: der Lauf wird **nicht** von einer Uhr ausgelöst, sondern von einem Request (`startProjectSizeMeasurement`) — ein Lauf kostet 20,5 s `du` (acht Prozesse parallel), ein geöffnetes Dashboard also 20,5 s von 300 s, **6,8 %**, und ein *geschlossenes* Dashboard kostet nichts, weil kein Request kommt und kein Lauf startet. Mit 30 s TTL wären es 20,5 s von 30 s, **68 %**, bei jedem Öffnen innerhalb einer Minute. Der Wert steht im Kommentar über der Konstante mit der Messung und der Rechnung, und `lib/projects-schema.test.mjs` prüft dieselbe Zahl.
+
+`isSizeMeasurementStale` (`lib/projects-schema.ts:627`) entscheidet nach dem **Zeitstempel**, nicht nach dem Wert: ein Ordner, dessen Messung gescheitert ist, hat einen frischen Zeitstempel und `sizeBytes: null`. Das ist eine Antwort („keine Größe“), keine offene Zusage. Die alte Regel (`sizeBytes === null` heißt veraltet) hat denselben Ordner bei **jedem** Request neu gemessen — das war der Grund für den Dauerschwarm.
+
+### GET /api/projects/sizes
+
+Zweck: die Größen billig abfragen, damit der Client sie abholen kann, ohne die teure Route zu fragen.
+
+Warum ein eigener Endpunkt: `GET /api/projects` ruft je Projekt `resolveProject` auf, und das startet einen **Git-Prozess**. 30 Polls über 18 Projekte wären 540 Git-Aufrufe. Dieser Endpunkt liest eine kleine JSON-Datei.
+
+Reihenfolge der Guards: `isApiRequestAllowed(req)` (`app/api/projects/sizes/route.ts:52`) → `requireProjectsIdentity(req)` (`:55`, geteilt, `lib/projects-guards.ts:33`) → Antwort `403` in beiden Fällen. Der Endpunkt **schreibt** — der Hintergrundlauf legt die Messungen in der Registry ab —, also läuft er die Kette des Schreibpfads.
+
+Der Endpunkt löst den Hintergrundlauf selbst aus (`:64`) oder hängt sich an einen laufenden an. Damit beginnt die Messung auch dann, wenn nur dieser Endpunkt aufgerufen wird.
+
+Antwort: `{ sizes: [{ root, sizeBytes, sizeMeasuredAt }], pending }` (`:65`, Typen in `lib/projects-schema.ts:154-171`). `pending` ist `true`, wenn mindestens ein Projekt dieser Registry keine oder eine veraltete Messung hat. `readProjectSizes` (`lib/projects-sizes.ts:181`) liest nur die Registry dieser Identität; fremde Ordner werden nie gemessen.
+
+Eine Randnotiz: der statische Pfadabschnitt `sizes` gewinnt gegen den Catch-all `app/api/projects/[...root]`. Ein Projekt, dessen Wurzel genau `/sizes` wäre, wäre über den Catch-all nicht erreichbar.
 
 ### PUT /api/projects
 
 Zweck: einen Zähler, eine Kategorie, eine Statusfarbe oder einen Kategorienamen ändern.
 
-Reihenfolge der Guards: `isApiRequestAllowed` (`:229`), `requireIdentity` (`:232`), `hasJsonContentType` (`:236`, `lib/request-security.ts:121`) — Antwort `415 Content-Type must be application/json`.
+Reihenfolge der Guards: `isApiRequestAllowed` (`:223`), `requireProjectsIdentity` (`:226`), `hasJsonContentType` (`:230`, `lib/request-security.ts:121`) — Antwort `415 Content-Type must be application/json`.
 
 Es ist ein Merge, kein Replace (`app/api/projects/route.ts:249-262`, `mergeProjectPatches` in `lib/projects-schema.ts:433-475`). `root`, `createdAt`, `adopted` und der Größencache gehören dem Server; ein Client kann sie nicht setzen (`lib/projects-schema.ts:404-418`). Ein Projekt, das der Client weglässt, wird nicht gelöscht, sondern behält seinen Eintrag — der Test heißt „omitting a project does not delete it“ (`app/api/projects/route.test.mjs:211`).
 
@@ -219,6 +270,24 @@ Die Seitenleiste hat einen eigenen Knopf, der `setActiveView("projects")` aufruf
 Der automatische Erstlauf-Cwd der Seitenleiste wird abgeschaltet, wenn die URL die Projektansicht nennt (`skipInitialProjectSelection`, `components/AppShell.tsx:197-198`). Ohne das würde die automatische Adoption über `handleCwdChange` die Ansicht verlassen — der Weg zurück in den Chat wäre also ein Nebeneffekt der Adoption und keine bewusste Entscheidung.
 
 Ein Projekt öffnen heißt: zurück in den Chat und den Cwd auf den Projektordner setzen (`components/AppShell.tsx:2022-2024`). Ab dort behandelt die Shell den Ordner wie jeden anderen Cwd — die Seitenleiste zeigt ihn, der Explorer listet ihn, und der Explorer selbst ist über `handleOpenFile` (`components/AppShell.tsx:1172`) erreichbar. Das Dashboard hält keine eigene Dateiliste.
+
+### Der Poll der Größen
+
+Das Board fragt die Registry einmal (`GET /api/projects`) und pollt danach die Größen (`GET /api/projects/sizes`).
+
+Die Regel steht in `lib/project-size-poll.ts`, nicht in der Komponente: der erste Poll sofort, danach alle `SIZE_POLL_INTERVAL_MS = 2_000` ms (`:40`), Ende bei `pending: false` oder nach `SIZE_POLL_MAX_POLLS = 60` Polls (`:50`). 60 Polls zu 2 s sind zwei Minuten — länger, als die Messung auf dem Dev-Host braucht (20,5 s, im kalten Fall bis etwa 60 s, Kapitel 3.1), und kurz genug, dass ein offenes Dashboard nicht ewig fragt. `hooks/useProjectSizes.ts:31` bindet die Regel an React: der Poll startet, sobald das Board da ist (die Größen brauchen Karten, auf die sie landen können), und seine Aufräumfunktion stoppt ihn beim Unmount.
+
+Die Größen werden in die Karten **eingesetzt**, nicht neu geholt (`components/ProjectsDashboard.tsx:94`): `applySizes` schreibt nur `sizeBytes` und `sizeMeasuredAt`, und ein Projekt, dessen Größe sich nicht geändert hat, behält seine Objektidentität. Eine Karte, die nichts zu tun hat, wird also nicht neu gezeichnet — der Cursor im Suchfeld bleibt, wo der Nutzer ihn hingelegt hat. Nach dem Anlegen eines Projekts wird der Poll neu gestartet (`:232`), weil der neue Ordner eine Messung schuldet.
+
+Zwei Zustände auf der Karte, weil sie zwei verschiedene Tatsachen sind (`components/projects/ProjectCard.tsx:205-225`):
+
+| Zustand | `sizeBytes` | `sizeMeasuredAt` | Anzeige |
+|---|---|---|---|
+| gemessen | Zahl | Zeitstempel | die Größe |
+| nicht messbar | `null` | Zeitstempel | „Size unavailable“ (`projects.sizeUnknown`) |
+| noch nicht gemessen | `null` | keiner | „Measuring...“ (`projects.sizePending`) |
+
+Der Zeitstempel ist das, was die beiden `null`-Fälle unterscheidet: eine gescheiterte Messung hat einen Zeitstempel (sie *wurde* versucht), eine ausstehende noch nicht. Der Wartezustand ist ein Platzhalter und deshalb gedämpfter (`var(--text-dim)`).
 
 ---
 
@@ -392,13 +461,13 @@ Die Schutzregeln selbst stehen in `lib/projects-delete.ts` und sind dort geteste
 
 ## 9. Offene Punkte
 
-### Der wichtigste: `GET /api/projects` misst die Ordngrößen synchron
+### Erledigt: `GET /api/projects` misst die Ordngrößen synchron
 
-`GET /api/projects` misst die Größe jedes Projekts mit `du -sb`, bevor es antwortet. Acht Projekte parallel, 10s je Projekt (`SIZE_TIMEOUT_MS = 10_000`, `MAX_PARALLEL = 8`, `lib/project-size.ts:33-43`). Im schlimmsten Fall kostet die Anfrage `ceil(n / 8) * 10s`.
+Dieser Punkt war der wichtigste offene Punkt des Features (Stand 2026-10-21). Er ist geschlossen: die Messung läuft im Hintergrund, die Route antwortet sofort mit dem zuletzt bekannten Stand, und der Client holt die neue Größe über `GET /api/projects/sizes` nach. Kapitel 3.1 beschreibt den Aufbau, Kapitel 4 den Poll.
 
-Gemessen 2026-10-21 lokal, gegen den lokalen Dev-Server: 30,7s bei 18 Projekten und 210 Chats, davon ein Projekt mit 2,7 GB. Zwei Karten zeigten „Size unavailable“ (`lib/i18n/messages/en.ts:103`). Diese Zahlen stehen in keinem Repository-Artefakt; sie stammen aus der Browser-Messung dieser Sitzung und sind nicht nachreproduzierbar. In der Produktion wurde die Wartezeit nicht nachgemessen.
+Die Zahlen, die den Punkt ausgelöst haben, bleiben als Vergleich stehen. Die **vollständige Messung** der 18 Wurzeln der echten Registry kostet **20,5 s** (2026-10-22, Dev-Host, 3 Pool-Runden, 11 von 18 gemessen, 7 ohne Größe; Kapitel 3.1). Ältere Kalt-Cache-Messungen: 30,7 s bei 18 Projekten (2026-10-21, Browser-Messung, ein Projekt mit 2,7 GB) und 52,0 s für die ganze GET (2026-10-22, erster Request des Tages gegen denselben Dev-Server, `curl -w "%{time_total}"`).
 
-Das Board sieht während der Wartezeit inzwischen gleich aus — es wartet aber weiterhin. Nichts in diesem Stand verkürzt die Wartezeit; die Messung aus dem Request herauszunehmen ist eine eigene Arbeit. Die Messung wird erst wiederholt, wenn der Cache älter als `SIZE_TTL_MS = 30_000` ist (`lib/projects-schema.ts:146`, `lib/projects-schema.ts:546-554`).
+Nach der Umstellung antwortet dieselbe Route in **0,13 s bis 4,39 s** (Median 1,21 s über zehn Requests am 2026-10-22, gemessen gegen denselben Dev-Server); mit laufender Hintergrundmessung 0,69 s bis 1,37 s. Der alte Code antwortete unter denselben Bedingungen mit 5,0 s (warmer Cache, Messung fiel an) bzw. 52,0 s (kalter Cache). Die Messung läuft daneben weiter; mit warmem Metadaten-Cache dauerte ein Lauf dort 5,3 s.
 
 ### Weitere offene Punkte
 
@@ -420,7 +489,11 @@ Diese Punkte betreffen die Spezifikation selbst. Befunde, die bewusst nicht beho
 | `components/projects/ProjectCard.path-order.test.mjs` | Pfad-Reihenfolge im RTL-Kasten und das LTR-Isolat, keine Bidi-Steuerzeichen (`:175-230`); Skelett und echtes Raster nennen dieselbe Spaltenregel (`:232-299`); die Kopfzeile nennt im Ladezustand keine Null (`:300-340`); der Chip-Streifen kann nicht umbrechen (`:342-413`) |
 | `components/SettingsConfig.layout.test.mjs` | `.window` bindet seine Grid-Zeile an die Fensterhöhe (`:103-123`); die schmale Viewport-Überschreibung kann die Zeile nicht wieder weiten (`:125-148`) |
 | `components/AppShell.projects-view.test.mjs` | `?view=projects` rendert das Dashboard auch, wenn eine Sitzung da ist (`:254-269`); es überlebt die automatische Cwd-Adoption der Seitenleiste (`:271-284`); der Knopf hält `?view=projects` in der URL (`:286-297`); ohne den Parameter gewinnt der Chat (`:299-311`) |
-| `app/api/projects/route.test.mjs` | Identität statt Admin-Rolle, 415 ohne JSON, 400 bei ungültigem Body, kein Rewrite von `root`/`createdAt`/`adopted`, Weglassen löscht nicht, Umbenennen ja aber kein Umfärben, Erzeugen eines Ordners samt Ablehnung eines existierenden (`:70-632`) |
+| `app/api/projects/route.test.mjs` | Identität statt Admin-Rolle, 415 ohne JSON, 400 bei ungültigem Body, kein Rewrite von `root`/`createdAt`/`adopted`, Weglassen löscht nicht, Umbenennen ja aber kein Umfärben, Erzeugen eines Ordners samt Ablehnung eines existierenden (`:70-632`); der geteilte Guard wird benutzt und nicht kopiert (`:363-392`) |
+| `app/api/projects/size-race.test.mjs` | die Race zwischen Messung und Schreibzugriff: eine Priorität überlebt den laufenden Messlauf (`:165-194`); der Messlauf schreibt nur die Größenfelder, ein Todo-Zähler und ein Status überleben ihn (`:196-227`); die GET antwortet, während die Messung läuft (`:229-260`); zwei Requests erzeugen **eine** Messung (`:262-280`). Der Messlauf wird über ein Promise gesteuert, das der Test hält — der Test entscheidet das Rennen, nicht die Schnelligkeit der Maschine |
+| `app/api/projects/sizes.test.mjs` | die Guards des neuen Endpunkts: 403 ohne Identität, 403 bei Cross-Site, kein Admin-Header ohne Konto (`:93-117`); der geteilte Guard wird benutzt und nicht kopiert (`:119-140`); Antwortformat und `pending` (`:144-253`) |
+| `lib/projects-schema.test.mjs` | die TTL ist fünf Minuten (`SIZE_TTL_MS === 300_000`), eine frische Messung wird nicht wiederholt, eine abgelaufene schon, eine gescheiterte Messung wartet bis zu ihrer TTL (`:23-66`); eine Messung ändert nur die Größenfelder (`:68-111`) |
+| `lib/project-size-poll.test.mjs` | Intervall 2 s und Grenze 60 Polls, Ende bei `pending: false`, Ende nach der Grenze, ein Fehler beendet den Poll nicht, `stop()` räumt den Timer ab (`:69-210`) |
 | `app/api/projects/delete-route.test.mjs` | Schutzprüfung vor jedem Schreibzugriff, 403 ohne Identität, Traversal erreicht keinen geschützten Ordner, Abbruch beim Fehlschlag eines Chat-Löschens, Vorschau und Bestätigungsschwelle (`:108-560`) |
 | `lib/projects-delete.test.mjs` | die Schutzregeln selbst, segmentweise statt als String-Präfix, und die Tiefe, bei der Projekte beginnen (`:34-336`) |
 | `lib/projects-store.test.mjs` | Registry pro Konto, Pfad in der eigenen Home, `null` ist nicht „leer“, beschädigter Inhalt wird nicht überschrieben, atomares Schreiben, Übernahme idempotent (`:49-217`) |

@@ -175,6 +175,11 @@ function installDom(search) {
       });
     }
     if (url.startsWith("/api/sessions")) return json({ sessions: [SESSION] });
+    // The sizes endpoint answers before the projects one: the dashboard
+    // polls it for the folder sizes, and the answer has its own shape.
+    if (url.startsWith("/api/projects/sizes")) {
+      return json({ sizes: [], pending: false });
+    }
     if (url.startsWith("/api/projects")) {
       return json({ projects: [], priorities: [], home: "/home/alice" });
     }

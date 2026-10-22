@@ -297,7 +297,17 @@ test("GET does not rewrite the registry when every size is cached", () => withHo
   assert.equal(readFileSync(getProjectsPath(alice), "utf8"), before, "a fully cached GET writes nothing");
 }));
 
-test("GET persists a fresh measurement for a stale project", () => withHome(async () => {
+/**
+ * The measurement runs in the background now, so the GET no longer writes the
+ * measurement itself — the run does, and the run writes it into the registry
+ * it re-reads right before the write (`lib/projects-sizes.ts`).
+ *
+ * The folder in this test does not exist, so `du` fails at once and the
+ * measurement ends in milliseconds: the test can wait for the write instead
+ * of racing it. The race between a measurement and a *user's* write has its
+ * own test, in `app/api/projects/size-race.test.mjs`.
+ */
+test("the background run persists a fresh measurement for a stale project", () => withHome(async () => {
   const root = "/tmp/omp-web-projects-stale";
   writeProjectsFile(alice, {
     schemaVersion: 1,
@@ -312,11 +322,19 @@ test("GET persists a fresh measurement for a stale project", () => withHome(asyn
   const response = await route.GET(request("/api/projects"));
   assert.equal(response.status, 200, "an unmeasurable folder still answers");
 
-  const onDisk = JSON.parse(readFileSync(getProjectsPath(alice), "utf8"));
-  const measuredAt = onDisk.projects[0].sizeMeasuredAt;
+  // The GET answered before the measurement was done — that is the whole
+  // point of the move. The run writes the result afterwards.
+  const deadline = Date.now() + 5_000;
+  let onDisk = JSON.parse(readFileSync(getProjectsPath(alice), "utf8"));
+  while (onDisk.projects[0].sizeMeasuredAt === "2026-01-01T00:00:00.000Z") {
+    assert.ok(Date.now() < deadline, "the background run did not write a measurement");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    onDisk = JSON.parse(readFileSync(getProjectsPath(alice), "utf8"));
+  }
+
   // A fresh timestamp proves the measurement ran; `null` proves the timeout
   // path is allowed and is not treated as a failure of the request.
-  assert.notEqual(measuredAt, "2026-01-01T00:00:00.000Z", "the stale measurement was replaced");
+  assert.notEqual(onDisk.projects[0].sizeMeasuredAt, "2026-01-01T00:00:00.000Z", "the stale measurement was replaced");
   assert.ok(
     onDisk.projects[0].sizeBytes === null || typeof onDisk.projects[0].sizeBytes === "number",
     "sizeBytes is either a number or an explicit null",
@@ -331,8 +349,8 @@ test("GET persists a fresh measurement for a stale project", () => withHome(asyn
  * (`resolveTenantAgentDir` → `getAgentDir` from the SDK) and boot the real
  * omp runtime, which this test must not do. So the claim is pinned the way
  * `app/api/host-wide-guards.test.mjs` pins the guards it wants: by reading the
- * route text. If someone swaps `requireIdentity` for `requireAdmin`, this line
- * fails.
+ * route text. If someone swaps `requireProjectsIdentity` for `requireAdmin`,
+ * this line fails.
  *
  * `isAdminIdentity` *is* allowed, and it appears in exactly one place: the
  * `allowFileRoot` grant on create. `AGENTS.md` requires that grant to be
@@ -358,7 +376,16 @@ test("the route requires an identity but not an admin role", async () => {
     /requireAdmin/,
     "the registry is per account; admin-only would lock tenants out of their own dashboard",
   );
-  assert.match(code, /requireIdentity/, "an identity is still required");
+  assert.match(code, /requireProjectsIdentity/, "an identity is still required");
+
+  // The guard is *shared*, not copied. The route used to read the identity
+  // header itself; a private copy is a second thing to get out of date, and
+  // `AGENTS.md` says the guard lives in one place.
+  assert.doesNotMatch(
+    code,
+    /getRequestIdentity/,
+    "the identity check belongs to lib/projects-guards.ts, not to this route",
+  );
 
   // The one admin check that is allowed is the allow-list grant, and it has to
   // carry the identity — a grant without one lands in the unattributed bucket,

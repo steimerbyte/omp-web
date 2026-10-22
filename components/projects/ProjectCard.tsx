@@ -203,8 +203,24 @@ export function ProjectCard({
           />
         </Metric>
         <Metric label={t("projects.metric.size")}>
-          <span style={{ fontVariantNumeric: "tabular-nums" }}>
-            {formatSize(project.sizeBytes) ?? t("projects.sizeUnknown")}
+          <span
+            style={{
+              fontVariantNumeric: "tabular-nums",
+              // The waiting state is a placeholder, not a value: it is dimmer
+              // than the two states that carry information.
+              color: project.sizeBytes === null || project.sizeBytes === undefined
+                ? "var(--text-dim)"
+                : "var(--text)",
+            }}
+          >
+            {/* Two different facts, two different answers. A folder that has
+                not been measured *yet* is waiting for a number that will come
+                (the measurement runs in the background, `lib/projects-sizes.ts`);
+                a folder whose measurement *failed* has no size, and no number
+                will ever come for it. Both are `sizeBytes === null`, so the
+                timestamp is what tells them apart. */}
+            {formatSize(project.sizeBytes) ??
+              (project.sizeMeasuredAt ? t("projects.sizeUnknown") : t("projects.sizePending"))}
           </span>
         </Metric>
         <Metric label={t("projects.metric.last")}>

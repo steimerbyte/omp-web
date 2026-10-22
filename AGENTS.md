@@ -88,6 +88,9 @@ app/api/
   models-config/discover/route.ts POST fetch a configured provider's upstream model list
   models-config/test/route.ts     POST test a configured model/provider
   plugins/route.ts                GET/POST omp plugin management
+  projects/route.ts               GET/PUT/POST the projects dashboard registry
+  projects/sizes/route.ts         GET the folder sizes (the cheap poll)
+  projects/[...root]/route.ts     GET/DELETE one project
   quick-phrases/route.ts          GET/PUT the account's composer phrase list
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
   skills/install/route.ts         POST install skills through npx skills add
@@ -106,7 +109,13 @@ lib/
   npx.ts               npx runner used by skill install
   omp-runtime.ts       shared Settings + AuthStorage + ModelRegistry
   omp-types.ts         structural view of omp's AgentSession
+  project-size.ts      du -sb for one or many folders, bounded in parallel
+  project-size-poll.ts the rule of the size poll (interval, limit, end)
   project-trust.ts     gates a project's executable resources
+  projects-guards.ts   the shared identity guard of the projects routes
+  projects-schema.ts   the shape of the projects registry and its validation
+  projects-sizes.ts    the background size measurement and its in-flight lock
+  projects-store.ts    the per-account registry file
   rpc-manager.ts       AgentSessionWrapper + registry + startRpcSession
   session-reader.ts    session listing + path cache + buildSessionContext adapter
   session-system-prompt.ts  SYSTEM.md / APPEND_SYSTEM.md resolution per session cwd
@@ -140,6 +149,7 @@ hooks/
   useAudio.ts         completion sound + browser AudioContext unlock
   useDragDrop.ts      shared drag/drop state
   useIsMobile.ts      responsive breakpoint hook
+  useProjectSizes.ts  React binding for the size poll
   useTheme.ts         theme state
 ```
 
@@ -377,6 +387,60 @@ TypeScript half type-checks against — keep the two in sync.
   click deep instead of costing three rows of transcript height.
 - The button label is user content and is therefore never translated; only the
   settings section's own strings go through i18n.
+
+### The projects dashboard measures in the background
+- `GET /api/projects` does **not** measure folder sizes. It shipped the last
+  known value and left the measurement to a background run
+  (`lib/projects-sizes.ts`), because the measurement used to run inside the
+  request: one measurement of the 18 roots of a real registry takes **20,5 s**
+  (measured 2026-10-22 on the dev host, the details in
+  `lib/project-size.ts`), and the board showed nothing at all for those
+  seconds.
+- **The run re-reads the registry immediately before it writes.** It read the
+  file once to learn *what* to measure and once more to learn what the file
+  *now* says; `applySizeMeasurements` then touches `sizeBytes` and
+  `sizeMeasuredAt` and nothing else. Without the second read the run wrote
+  back a snapshot that was twenty seconds old and silently overwrote whatever
+  the user had changed in the meantime — a changed priority, a todo counter,
+  a status. That was data loss, and `app/api/projects/size-race.test.mjs` was
+  written to reproduce it (it was red against the old code).
+- **One run per registry, not per request.** The lock lives on
+  `globalThis.__ompProjectSizeRuns` and is keyed by the *registry path* — the
+  path is the unit of contention, because two admin accounts share one global
+  registry file. A module-level `Map` would be empty again after the dev
+  server's hot reload, and a second run would start while the first was still
+  measuring. The lock is released in a `finally`.
+- **The expensive thing is the nesting, not the folder size.** 11 of the 18
+  roots of a real registry lie inside other roots, so `du -sb` walks the
+  workspace tree nine times. The comment in `lib/project-size.ts` holds the
+  measurement; do not believe an older version of it ("a 2.4 GB folder takes
+  visibly longer to measure than a 40 MB one" — measured and wrong).
+- **The sizes overlap.** A parent's size contains its children's bytes, so
+  the sum of the sizes on the cards is counted twice. That is the existing
+  semantics and it stays; `docs/spec.md` says so for the reader.
+- **The TTL has to be longer than the measurement.** `SIZE_TTL_MS` was 30 s
+  against a measurement that takes 20,5 s, so every request found the
+  previous result expired and started a new `du` swarm. It is five minutes
+  now; the number, the measurement and the duty-cycle calculation are in the
+  comment above the constant, and `lib/projects-schema.test.mjs` asserts the
+  same value.
+- **A failed measurement is an answer, not a promise.** `isSizeMeasurementStale`
+  decides on the timestamp, not on the value: a folder that could not be
+  measured has a fresh timestamp and `sizeBytes: null`. The card draws that
+  apart from "not measured yet" (no timestamp at all) — one is "no size", the
+  other is a placeholder. Seven of the 18 folders of the measured registry
+  have no size, so this is the normal case and not an edge case.
+- **The guard is shared.** `requireProjectsIdentity` in
+  `lib/projects-guards.ts` is the only place that checks the account *and*
+  the derived registry path; `app/api/projects/route.ts` and
+  `app/api/projects/sizes/route.ts` both call it. A copy in a route is a
+  second thing to get out of date.
+- **The poll is its own endpoint.** `GET /api/projects/sizes` reads one small
+  JSON file; `GET /api/projects` starts a git process per project. 30 polls
+  over 18 projects would be 540 git invocations. The rule of the poll itself
+  (2 s interval, 60 polls at most, ends when the server says `pending:
+  false`) is in `lib/project-size-poll.ts`, not in the component, so it can be
+  tested without a DOM.
 
 ### Animations
 - **`motion` is the only animation source.** The old `.omp-*` classes and their

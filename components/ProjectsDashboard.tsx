@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Reveal } from "@/components/motion/Reveal";
 import { useI18n } from "@/hooks/useI18n";
+import { useProjectSizes } from "@/hooks/useProjectSizes";
 import { ConfirmDialog } from "./projects/ConfirmDialog";
 import { DashboardTopbar } from "./projects/DashboardTopbar";
 import { NewProjectDialog } from "./projects/NewProjectDialog";
 import { PriorityFilterBar } from "./projects/PriorityFilterBar";
 import { ProjectGrid, ProjectGridSkeleton } from "./projects/ProjectGrid";
 import { encodeFilePathForApi } from "@/lib/file-paths";
-import type { PriorityDef, PriorityId, ProjectView } from "@/lib/projects-schema";
+import type { PriorityDef, PriorityId, ProjectSizeEntry, ProjectView } from "@/lib/projects-schema";
 
 /**
  * The projects dashboard.
@@ -79,6 +80,45 @@ export function ProjectsDashboard({
       cancelled = true;
     };
   }, []);
+
+  /**
+   * Put the sizes the poll brought onto the cards.
+   *
+   * Only the two size fields are written. The priority, the counter, the
+   * status and the name stay exactly as they were, and a project whose sizes
+   * did not change keeps its object identity — so React does not redraw its
+   * card at all. That is what keeps the cursor where the user put it: the
+   * board is not re-fetched, and a card that has nothing to do with the sizes
+   * is not touched.
+   */
+  const applySizes = useCallback((sizes: ProjectSizeEntry[]) => {
+    setProjects((current) => {
+      if (current === null) return current;
+      const byRoot = new Map(sizes.map((size) => [size.root, size]));
+      let changed = false;
+      const next = current.map((project) => {
+        const size = byRoot.get(project.root);
+        if (size === undefined) return project;
+        const sizeBytes = size.sizeBytes;
+        const sizeMeasuredAt = size.sizeMeasuredAt ?? undefined;
+        if (
+          (project.sizeBytes ?? null) === sizeBytes &&
+          (project.sizeMeasuredAt ?? null) === (size.sizeMeasuredAt ?? null)
+        ) {
+          return project;
+        }
+        changed = true;
+        return { ...project, sizeBytes, sizeMeasuredAt };
+      });
+      return changed ? next : current;
+    });
+  }, []);
+
+  // The poll starts once the board is there: the sizes have cards to land on
+  // from the first poll on. It ends by itself when the server says the
+  // answer is final, and the hook's cleanup stops it when the dashboard goes
+  // away.
+  const restartSizePolling = useProjectSizes(applySizes, projects !== null);
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -177,8 +217,7 @@ export function ProjectsDashboard({
         setShowNew(false);
         setCreating(false);
         // Re-read the board rather than patching one card in: the new project
-        // has a size only a fresh GET knows, and a value that arrives on a
-        // later request is exactly the deferred answer this design rejected.
+        // has attributes only a fresh GET knows.
         const refreshed = await fetch("/api/projects", { cache: "no-store" }).then((res) =>
           res.ok ? res.json() : null,
         );
@@ -186,12 +225,17 @@ export function ProjectsDashboard({
           setProjects(refreshed.projects);
           setPriorities(refreshed.priorities);
         }
+        // The new folder owes a measurement, and a poll cycle that has
+        // already ended would leave its card waiting for a number that never
+        // comes. The restart asks the sizes endpoint, which starts the
+        // measurement.
+        restartSizePolling();
       } catch {
         setNotice(t("projects.create.failed"));
         setCreating(false);
       }
     },
-    [t],
+    [t, restartSizePolling],
   );
 
   return (

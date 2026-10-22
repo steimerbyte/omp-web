@@ -142,8 +142,76 @@ export interface ProjectView extends ProjectMeta {
 
 export const PROJECTS_SCHEMA_VERSION = 1 as const;
 
-/** How long a measured size is trusted before it is measured again. */
-export const SIZE_TTL_MS = 30_000;
+/**
+ * One project's size, as the polling endpoint ships it.
+ *
+ * The three fields are the whole answer: which folder, how big it was, and
+ * when that was measured. `sizeBytes: null` with a `sizeMeasuredAt` means
+ * "measured, and there is no size"; `sizeBytes: null` without one means
+ * "not measured yet". The card draws those two apart, because they are
+ * different facts — one is a placeholder, the other is an answer.
+ */
+export interface ProjectSizeEntry {
+  root: string;
+  sizeBytes: number | null;
+  sizeMeasuredAt: string | null;
+}
+
+/**
+ * The answer of `GET /api/projects/sizes`.
+ *
+ * `pending` is `true` while at least one project of this identity still owes
+ * a measurement. The client polls while it is `true` and stops when it is
+ * `false` — so the poll always ends, and the endpoint stays cheap enough to
+ * be called every two seconds.
+ */
+export interface ProjectSizesResponse {
+  sizes: ProjectSizeEntry[];
+  pending: boolean;
+}
+
+/**
+ * How long a measured size is trusted before it is measured again.
+ *
+ * Five minutes. The size on a card is *information*, not a measurement that
+ * has to be right to the second: a folder that grew by a megabyte in the
+ * last five minutes does not need a new number, and the number is never the
+ * reason a user opens the dashboard.
+ *
+ * ### The old value was shorter than the measurement
+ *
+ * The old value was 30 s, and one measurement of the 18 roots of a real
+ * registry takes **20,5 s** — measured 2026-10-22 on the dev host (Intel
+ * i5-1335U, WSL2, Bun 1.4.0, Next 16.2.12): 3 pool rounds, 11 of the 18
+ * folders measured, 7 without a size, 51,97 GB in the measured folders. The
+ * details are in `lib/project-size.ts`. With the measurement inside the
+ * request, a TTL below the run time meant that the next request found the
+ * previous result already expired and started a new `du` swarm while the old
+ * one was still running.
+ *
+ * ### The duty cycle, calculated
+ *
+ * The run is **not** on a timer: it is triggered by a request
+ * (`startProjectSizeMeasurement`, `lib/projects-sizes.ts`). So the load is
+ * not "every TTL" but "every time somebody opens the dashboard", and the
+ * honest accounting for the registry above is:
+ *
+ * - one run costs 20,5 s of `du` (eight processes in parallel); a cold run
+ *   with the 30 s per-folder budget about 60 s;
+ * - a dashboard that is open costs one run: 20,5 s of 300 s, **6,8 %**;
+ * - a dashboard that is **closed** costs nothing at all — no request comes
+ *   in, no run starts. A TTL cannot create load on its own.
+ *
+ * With the old 30 s TTL the same run would have been 20,5 s of 30 s —
+ * **68 %** — every time the dashboard was opened again inside a minute.
+ * Five minutes therefore means: a dashboard that is opened again within five
+ * minutes reuses the sizes and costs nothing, and after that the sizes are
+ * measured once more.
+ *
+ * The value is asserted by `lib/projects-schema.test.mjs` ("the size TTL is
+ * five minutes"), so this comment and the constant cannot drift apart.
+ */
+export const SIZE_TTL_MS = 5 * 60_000;
 
 /**
  * The defaults, in sort order. These are the `en` strings — there is no `de`
@@ -542,13 +610,25 @@ export function applySizeMeasurements(
   });
 }
 
-/** `true` when a measurement is older than the TTL and should be retaken. */
+/**
+ * `true` when a measurement is missing or older than the TTL.
+ *
+ * The **timestamp** decides, not the value. A folder that could not be
+ * measured carries a fresh timestamp and a `null` size: that is a measurement
+ * that happened and failed, not a measurement that is missing. The old rule
+ * (`sizeBytes === null` means stale) retried such a folder on *every*
+ * request, which is what produced a `du` swarm every 30 seconds for a folder
+ * that can never be measured. The next attempt is due when its TTL expires.
+ *
+ * The consequence for the client: a project whose measurement failed is not
+ * "pending" any more, so the poll stops and the card shows "no size" instead
+ * of waiting forever for a number that will not arrive.
+ */
 export function isSizeMeasurementStale(
-  project: Pick<ProjectMeta, "sizeBytes" | "sizeMeasuredAt">,
+  project: Pick<ProjectMeta, "sizeMeasuredAt">,
   now = Date.now(),
   ttl = SIZE_TTL_MS,
 ): boolean {
-  if (project.sizeBytes === null || project.sizeBytes === undefined) return true;
   if (!isIsoTimestamp(project.sizeMeasuredAt)) return true;
   return now - Date.parse(project.sizeMeasuredAt) >= ttl;
 }
