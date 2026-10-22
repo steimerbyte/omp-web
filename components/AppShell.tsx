@@ -191,8 +191,9 @@ export function AppShell() {
   // latter two already arm `suppressCwdBumpRef`; this covers the third.
   //
   // The dashboard is the one view that does not want a cwd adopted under it:
-  // it lists its own projects, and the chat underneath stays the empty
-  // welcome state rather than a half-opened session.
+  // the sidebar's automatic adoption counts as "go to the work" and would
+  // switch the view away from the dashboard, so with it suppressed the
+  // dashboard opens no cwd and no session at all.
   const skipInitialProjectSelection =
     initialNavigation.requestedCwd !== null || activeView === "projects";
   // Whether this account may create projects. Creating one widens the file
@@ -742,8 +743,9 @@ export function AppShell() {
     activeProjectRootRef.current = session.projectRoot ?? session.cwd;
     invalidateWorkspaceRestore();
     // Clicking a session is "go to the work". A *restore* (`?session=` in the
-    // URL) is not: the URL may also ask for the dashboard, and the chat it
-    // restores is the layer underneath it.
+    // URL) is not: the URL may also ask for the dashboard, and the restored
+    // session then waits for the user to leave it — the dashboard and the
+    // chat are two branches of one condition, not one above the other.
     if (!isRestore) setActiveView("chat");
     // Re-clicking the already-open session must not remount the chat and
     // re-run the full load/positioning cycle. Only skip when the effective
@@ -1060,9 +1062,23 @@ export function AppShell() {
   // first load (`SessionSidebar`: `getRecentProjects → setSelectedCwd` →
   // `onCwdChange`), so `showChat` is durably true in normal operation; gating
   // on it made this branch unreachable while the sidebar button (which reads
-  // `activeView` directly) still showed the dashboard as pressed. The chat and
-  // the placeholder stay mounted underneath as the state the dashboard falls
-  // back to — they are a layer below, not a veto.
+  // `activeView` directly) still showed the dashboard as pressed.
+  //
+  // The three states are an exclusive branch, not layers: while the dashboard
+  // is up, the chat is not mounted at all. Switching to the dashboard unmounts
+  // `ChatWindow`, switching back mounts it again.
+  //
+  // What survives that unmount is what lives outside the component: the text
+  // in the composer stays in the module-level draft store
+  // (`lib/draft-store.ts`, keyed by the session id) and is read back on the
+  // next mount, and the transcript is reloaded from the server. What does not
+  // survive is the state inside `ChatWindow`: the scroll position of the
+  // message list is gone — the scroll container is a DOM node that the unmount
+  // destroys, and the next mount starts at the bottom again — and with it the
+  // lazily loaded older messages, which start over at the first page.
+  //
+  // Button and branch read the same source, `activeView`, so the pressed
+  // state and the visible view cannot disagree.
   //
   // "Go to the work" is therefore explicit instead: `handleSelectSession`,
   // `handleNewSession` and `handleCwdChange` each switch the view themselves.

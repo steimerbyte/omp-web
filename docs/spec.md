@@ -184,25 +184,41 @@ Die Dashboard-Routen selbst liefern keine Dateien aus. Ein Projekt öffnen heiß
 
 `activeView` ist ein `useState` in `AppShell` (`components/AppShell.tsx:179-181`), gesät aus `?view=`. Die Ansicht ist eine Eigenschaft der Shell, kein Pfad.
 
-Der aktuelle Zustand: `const showProjects = activeView === "projects";` (`components/AppShell.tsx:1069`).
+Der aktuelle Zustand: `const showProjects = activeView === "projects";` (`components/AppShell.tsx:1085`).
 
-Der ursprüngliche Fehler war `activeView === "projects" && !showChat`. `showChat` (`components/AppShell.tsx:1051`) ist `selectedSession !== null || effectiveNewSessionCwd !== null` — und die Seitenleiste adoptiert beim ersten Laden selbst einen Cwd (`getRecentProjects → setSelectedCwd → onCwdChange`). `showChat` ist im Normalbetrieb also dauerhaft wahr, und die Bedingung machte den Zweig unerreichbar, während der Knopf in der Seitenleiste, der den Zustand direkt bekommt (`showProjectsDashboard={activeView === "projects"}`, `components/AppShell.tsx:1163`), den Knopf trotzdem als gedrückt zeichnete. Die Begründung steht in `components/AppShell.tsx:1057-1068`.
+Der ursprüngliche Fehler war `activeView === "projects" && !showChat`. `showChat` (`components/AppShell.tsx:1053`) ist `selectedSession !== null || effectiveNewSessionCwd !== null` — und die Seitenleiste adoptiert beim ersten Laden selbst einen Cwd (`getRecentProjects → setSelectedCwd → onCwdChange`). `showChat` ist im Normalbetrieb also dauerhaft wahr, und die Bedingung machte den Zweig unerreichbar, während der Knopf in der Seitenleiste, der den Zustand direkt bekommt (`showProjectsDashboard={activeView === "projects"}`, `components/AppShell.tsx:1179`), den Knopf trotzdem als gedrückt zeichnete. Die Begründung steht in `components/AppShell.tsx:1059-1084`.
 
-Damit das nicht geschieht, wird der Chat nicht "ausgeblendet", sondern überlagert: der Chat und der Platzhalter bleiben darunter montiert (`components/AppShell.tsx:2011-2012`), die Ansicht ist eine Ebene darüber. Der Weg zurück in den Chat ist explizit: `handleSelectSession`, `handleNewSession` und `handleCwdChange` schalten die Ansicht selbst (`components/AppShell.tsx:1067-1068`).
+Damit das nicht geschieht, hängt die Ansicht an `activeView` allein. Die drei Zustände sind eine exklusive Verzweigung, keine Schichtung: `{showProjects ? <ProjectsDashboard … /> : showChat ? <ChatWindow … /> : …}` (`components/AppShell.tsx:2019-2027`). Solange das Dashboard steht, ist der Chat **nicht montiert** — es gibt keine zweite Ebene, die darunter weiterläuft, und kein Overlay. Der Weg zurück in den Chat ist explizit: `handleSelectSession`, `handleNewSession` und `handleCwdChange` schalten die Ansicht selbst (`components/AppShell.tsx:1083-1084`).
+
+### Was der Wechsel der Ansicht mit dem Chat macht
+
+Weil die Verzweigung exklusiv ist, wird `ChatWindow` beim Wechsel auf das Dashboard unmounted und beim Zurückwechseln neu montiert. Das ist eine vertraglich relevante Eigenschaft, keine Nebensache: wer das nicht weiß, hält den Zustandsverlust beim Viewwechsel für einen Randfall, den man nicht beachten muss.
+
+Was den Unmount überlebt, ist das, was außerhalb der Komponente liegt:
+
+- der **Text im Eingabefeld** überlebt. `ChatInput` führt ihn zwar in `useState` (`components/ChatInput.tsx:469`), spiegelt ihn aber bei jeder Änderung in einen modulweiten Entwurfsspeicher (`lib/draft-store.ts`), geschlüsselt nach der Session-Id (`components/ChatInput.tsx:796-802`, Schlüssel in `components/ChatWindow.tsx:430`). Beim nächsten Mount liest `ChatInput` den Entwurf wieder ein (`components/ChatInput.tsx:469`).
+- der **Verlauf** überlebt ebenfalls, aber nicht aus dem React-Zustand: er wird beim Mount neu vom Server geladen (`hooks/useAgentSession.ts:2097-2099` → `loadSession`, `hooks/useAgentSession.ts:498`).
+
+Was den Unmount **nicht** überlebt, ist der Zustand innerhalb von `ChatWindow`:
+
+- die **Scrollposition der Nachrichtenliste** geht verloren. Der Scrollcontainer ist ein DOM-Knoten der unmounteten Komponente (`components/ChatWindow.tsx:573`), und beim nächsten Mount springt die Liste wieder nach unten (`hooks/useAgentSession.ts:2195-2200`).
+- die **schrittweise nachgeladenen älteren Nachrichten** gehen ebenfalls verloren: der Zähler `visibleCount` beginnt wieder bei der ersten Seite (`components/ChatWindow.tsx:266`).
+
+Der Beweis dafür steht im Test: solange das Dashboard montiert ist, existiert der Composer des Chats nicht im DOM (`components/AppShell.projects-view.test.mjs:254-269`, `:281`).
 
 ### Der URL-Parameter
 
-`?view=projects` steht per `replaceState` in der URL (`components/AppShell.tsx:1077-1081`), nicht per Router-Navigation. Eine Router-Navigation liefe den Server-Komponenten-Baum neu an und remountete die ganze Shell — die geladene Projektliste ginge dabei verloren. Der Wert wird beim ersten Paint gelesen (`lib/initial-navigation.ts:15-24`); nur der exakte Wert `projects` zählt, jeder andere fällt auf `chat` zurück, damit eine unbekannte View-Namen-Zeichenkette keine View auswählen kann.
+`?view=projects` steht per `replaceState` in der URL (`components/AppShell.tsx:1091-1096`), nicht per Router-Navigation. Eine Router-Navigation liefe den Server-Komponenten-Baum neu an und remountete die ganze Shell — die geladene Projektliste ginge dabei verloren. Der Wert wird beim ersten Paint gelesen (`lib/initial-navigation.ts:15-24`); nur der exakte Wert `projects` zählt, jeder andere fällt auf `chat` zurück, damit eine unbekannte View-Namen-Zeichenkette keine View auswählen kann.
 
 Der Test dafür ist „the dashboard button keeps ?view=projects in the URL“ (`components/AppShell.projects-view.test.mjs:286`).
 
 ### Seitenleiste und Datei-Explorer
 
-Die Seitenleiste hat einen eigenen Knopf, der `setActiveView("projects")` aufruft (`components/AppShell.tsx:1162`, `components/SessionSidebar.tsx:1215-1220`). Er liest `activeView` direkt und nicht `showProjects`.
+Die Seitenleiste hat einen eigenen Knopf, der `setActiveView("projects")` aufruft (`components/AppShell.tsx:1178`, `components/SessionSidebar.tsx:1215-1220`). Er liest `activeView` direkt und nicht `showProjects`.
 
-Der automatische Erstlauf-Cwd der Seitenleiste wird abgeschaltet, wenn die URL die Projektansicht nennt (`skipInitialProjectSelection`, `components/AppShell.tsx:197-198`). Ohne das würde der Restore den Chat über die Ansicht legen.
+Der automatische Erstlauf-Cwd der Seitenleiste wird abgeschaltet, wenn die URL die Projektansicht nennt (`skipInitialProjectSelection`, `components/AppShell.tsx:197-198`). Ohne das würde die automatische Adoption über `handleCwdChange` die Ansicht verlassen — der Weg zurück in den Chat wäre also ein Nebeneffekt der Adoption und keine bewusste Entscheidung.
 
-Ein Projekt öffnen heißt: zurück in den Chat und den Cwd auf den Projektordner setzen (`components/AppShell.tsx:2006-2008`). Ab dort behandelt die Shell den Ordner wie jeden anderen Cwd — die Seitenleiste zeigt ihn, der Explorer listet ihn, und der Explorer selbst ist über `handleOpenFile` (`components/AppShell.tsx:1156`) erreichbar. Das Dashboard hält keine eigene Dateiliste.
+Ein Projekt öffnen heißt: zurück in den Chat und den Cwd auf den Projektordner setzen (`components/AppShell.tsx:2022-2024`). Ab dort behandelt die Shell den Ordner wie jeden anderen Cwd — die Seitenleiste zeigt ihn, der Explorer listet ihn, und der Explorer selbst ist über `handleOpenFile` (`components/AppShell.tsx:1172`) erreichbar. Das Dashboard hält keine eigene Dateiliste.
 
 ---
 
