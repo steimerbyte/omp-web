@@ -46,6 +46,25 @@ release API and nothing else, a foreign npm package with a higher version
 yields neither `canInstall: true` nor a foreign release URL, and the module
 names neither the upstream repository nor the npm registry.
 
+### Settings
+
+- Draw the navigation entries that are inactive without a project in the
+  panel's own muted tone. They were the palest thing in the window at 0.36,
+  paler than every other disabled control of the same panel — the switches
+  and the reload hint sit at 0.55, the primary button at 0.5 — so it could
+  not be told whether an entry was disabled or merely set in a thin weight.
+  The contrast against the panel rises from 1.62:1 to 2.16:1 in the light
+  theme and from 1.98:1 to 3.05:1 in the dark one.
+
+- Draw the navigation labels at weight 600. At weight 500 the stem of the
+  monospace glyphs is narrower than a pixel, the browser spreads it over two
+  and mixes it into a lighter grey, so a label was painted in a colour other
+  than the one it asked for — measured rgb(141,141,141) instead of
+  rgb(108,108,108) — and the last letter of a word read like a different
+  one ("Themes" like "Themed"). Nothing was cut off: the label is as wide as
+  its text at every width. At weight 600 the stem is a full pixel and the
+  label reaches its own colour exactly.
+
 ## v0.11.0
 
 ### Layout
