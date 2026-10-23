@@ -133,7 +133,13 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font: 500 12px/1 var(--font-mono);
+  /* The labels are in the monospace stack, and at weight 500 their stems are
+   * thinner than a pixel: the browser spreads such a stem over two pixels and
+   * blends it into a lighter grey, so the label never reaches its own colour
+   * and the last letter of a word reads as a different one ("Themes" as
+   * "Themed"). At weight 600 the stem is a full pixel wide and the label is
+   * drawn in exactly the colour it asks for. */
+  font: 600 12px/1 var(--font-mono);
   text-align: left;
   transition: background .12s ease, color .12s ease;
 }

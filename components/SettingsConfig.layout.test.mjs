@@ -212,6 +212,34 @@ test("the disabled nav labels are no dimmer than the panel's other disabled cont
   }
 });
 
+test("the nav labels are drawn in a weight that reaches their own colour", () => {
+  // Measured in Chromium 152 on 2026-10-23 on the rendered label "Themes" in
+  // the running panel: the darkest pixel of the label against the panel
+  // background, next to the colour the label asks for (--text-muted,
+  // rgb(108,108,108)).
+  //
+  //   12 px / 500   rgb(141,141,141)   the label never reaches its own colour
+  //   12 px / 600   rgb(108,108,108)   exactly --text-muted
+  //
+  // The stem of a monospace glyph is thinner than a pixel at weight 500: the
+  // browser spreads it over two pixels and blends it into a lighter grey,
+  // which is the hairline that made "Themes" read as "Themed". At weight 600
+  // the stem is a full pixel wide, and the label is drawn in exactly the
+  // colour it asks for.
+  //
+  // This is the repair of a defect: the element was drawn in a lighter
+  // colour than its own colour declaration, and it was never cut off.
+  const body = ruleBody(css, ".navButton");
+  assert.equal(
+    declaration(body, "font"),
+    "600 12px/1 var(--font-mono)",
+    "die Navigationsbeschriftung braucht Gewicht 600 — bei 500 wird sie in " +
+    "einer helleren Farbe gezeichnet als der eigenen Farbangabe, und das " +
+    "letzte Zeichen der Monospace-Schrift faellt zwischen den Haarlinien " +
+    "zusammen, sodass das Wort wie ein anderes liest",
+  );
+});
+
 test("the narrow-viewport override cannot widen the row again", () => {
   // The 760px block re-declares .window (width, height, columns, radius). It
   // does not set grid-template-rows at all today, so the bounded row from the
