@@ -38,13 +38,36 @@ git tag -a v0.9.0 -m "v0.9.0"
 git push fork v0.9.0
 ```
 
-Pushing a `v*` tag starts two workflows:
+`gh release create` creates the tag itself when it does not exist yet, and it
+does so through the GitHub API. A tag created through the API does not
+produce a `push` event, so `publish-desktop.yml` — which triggers on
+`on: push: tags: "v*"` — never starts. The order is therefore part of the
+procedure: **push the tag first, then create the release.** Reversed, the
+desktop workflow does not run and the release ends up without artifacts.
+
+In this fork the workflows also have to be enabled once before any of them can
+run: Settings -> Actions -> General -> "Enable Actions". This is a browser
+step; there is no API endpoint for it, and the `actions/permissions` endpoints
+only describe the *action policy*, not the fork's opt-in. Without this opt-in
+no workflow starts at all — including `ci.yml`, which triggers on pushes to
+`main` and on pull requests. As of this writing the fork has no workflow runs
+in its entire history, has no repository secrets configured, and a pushed `v*`
+tag is the only trigger that exists.
+
+Pushing a `v*` tag starts one workflow:
 
 - `publish-desktop.yml` builds macOS (universal) and Windows bundles and uploads
   them to the release. It needs `TAURI_SIGNING_PRIVATE_KEY` and
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` configured; without them the job fails
   and no desktop artifact is produced. The web release is unaffected.
-- `update-omp.yml` checks the pinned omp version upstream.
+
+`update-omp.yml` is not triggered by the tag push. It runs on a schedule
+(`cron: "17 * * * *"`, hourly), on `workflow_dispatch`, and on closed pull
+requests. It does not only check the pinned omp version — it opens a pull
+request: the job "Open omp dependency PR" uses
+`peter-evans/create-pull-request@v7` to create a branch `automation/omp-<version>`
+and open a PR against `main`. The merge is done by hand; the workflow does not
+push to `main` itself.
 
 ## Writing release notes
 
@@ -63,7 +86,28 @@ green:
 ```bash
 gh release view v0.9.0                    # assets present
 git ls-remote --tags fork v0.9.0          # tag points where you expect
+gh run list --workflow publish-desktop.yml   # did the workflow run at all
 ```
+
+An empty asset list is not an edge case, it is the normal outcome of a
+workflow that never ran. Read it as "the workflow did not run", not as "there
+is nothing to publish yet". A release can exist, carry the right notes and
+point at the right tag, and still have zero assets. That is the case for all
+four releases published so far — v0.9.0, v0.10.0, v0.11.0 and v0.12.0 all
+have zero assets, and the fork has zero workflow runs in its entire history,
+so no workflow ran for any of them. For v0.12.0 the trigger is known in
+addition: the tag was created through the GitHub API rather than by
+`git push`, which would have prevented the workflow from starting even with
+execution enabled. `gh run list --workflow publish-desktop.yml` is the check
+that tells the two apart: empty output means the workflow never ran, so the
+missing assets are a trigger problem, not a build problem.
+
+Do not use `workflow_dispatch` on `publish-desktop.yml` as a way to backfill a
+release that is already published without assets. The workflow overwrites the
+release it runs against: it sets the release name to `omp-desktop v<version>`
+and replaces the body with a one-line summary, so the notes written via
+`gh release create --notes-file` are lost. Fix the trigger instead — push the
+tag, and make sure the workflows are enabled in the fork.
 
 Then install it the way a user would — clone, `bun install`, `bun run build`,
 start it — and exercise the multi-account path with two real accounts. A
