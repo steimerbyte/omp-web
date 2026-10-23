@@ -140,7 +140,10 @@
 
 .navButton:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .navButton[data-active="true"] { background: var(--bg-selected); color: var(--text); font-weight: 700; }
-.navButton:disabled { cursor: not-allowed; opacity: .36; }
+/* The entries that need a project are switched off without one, and at 0.36
+ * their labels were the dimmest thing in the panel — dimmer than every other
+ * disabled control in it, and hard to tell apart from a merely thin one. */
+.navButton:disabled { cursor: not-allowed; opacity: .55; }
 .navIcon { width: 15px; height: 15px; flex: 0 0 auto; }
 
 .closeRail {

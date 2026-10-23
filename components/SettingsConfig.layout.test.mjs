@@ -34,6 +34,50 @@ import test from "node:test";
  */
 
 const css = readFileSync(new URL("./SettingsConfig.module.css", import.meta.url), "utf8");
+const globals = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+
+/** The declarations of a block that a selector opens, brace-matched. */
+function blockBody(source, selector) {
+  const start = source.indexOf(selector);
+  assert.notEqual(start, -1, `${selector} nicht gefunden`);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}" && --depth === 0) return source.slice(open + 1, i);
+  }
+  assert.fail(`${selector} ist nicht geschlossen`);
+}
+
+/** A hex colour of a custom property inside a block, as [r, g, b]. */
+function colourOf(block, property) {
+  const m = block.match(new RegExp(`${property}\\s*:\\s*#([0-9a-f]{6})\\s*;`, "i"));
+  assert.ok(m, `${property} nicht gefunden`);
+  const n = Number.parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** The channel value of a linear sRGB colour, per WCAG 2.1. */
+function channel(value) {
+  const c = value / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/** The relative luminance of a colour, per WCAG 2.1. */
+function luminance([r, g, b]) {
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/** The contrast ratio of two opaque colours, per WCAG 2.1. */
+function contrast(a, b) {
+  const [l1, l2] = [luminance(a), luminance(b)];
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+/** The colour a text of `colour` at `alpha` leaves on a background. */
+function composited(colour, background, alpha) {
+  return colour.map((c, i) => c * alpha + background[i] * (1 - alpha));
+}
 
 /**
  * The body of one rule with comments removed, so a comment block can never
@@ -120,6 +164,52 @@ test("the settings window binds its grid row to the window height", () => {
   assert.match(tracks[1], /minmax\(\s*0\s*,\s*1fr\s*\)/,
     `die zweite Spalte muss minmax(0, 1fr) sein, damit sie unter ihre ` +
     `Inhaltsbreite schrumpfen kann; gefunden: ${tracks[1]}`);
+});
+
+test("the disabled nav labels are no dimmer than the panel's other disabled controls", () => {
+  // The number the comment in the stylesheet names, pinned.
+  assert.equal(
+    declaration(ruleBody(css, ".navButton:disabled"), "opacity"),
+    ".55",
+    "die abgeschalteten Eintraege brauchen eine Deckkraft von .55 — bei .36 " +
+    "sind genau ihre Beschriftungen das unlesbarste im Panel",
+  );
+
+  // The outcome, not a magic number: the contrast a disabled nav label reaches
+  // against the panel background, compared with the contrast the faintest
+  // other disabled control of the same panel reaches. The nav labels used to
+  // be the dimmest thing in the panel — 0.36 where the switches and the reload
+  // notice use 0.55 and the primary button 0.5 — and the composited colour
+  // said so: 1.62:1 against 2.00:1 in the light theme, measured in Chromium
+  // 152 on 2026-10-23. The floor comes from the panel's own rules, so it
+  // moves with them instead of being a number I invented.
+  const navOpacity = Number.parseFloat(
+    declaration(ruleBody(css, ".navButton:disabled"), "opacity"),
+  );
+  const others = [...css.matchAll(/([^{}\s]+:disabled)\s*\{([^}]*)\}/g)]
+    .filter(([, selector]) => selector !== ".navButton:disabled")
+    .map(([, , body]) => Number.parseFloat(declaration(body, "opacity")))
+    .filter((value) => Number.isFinite(value));
+  assert.ok(others.length > 0,
+    "das Panel braucht mindestens eine weitere deaktivierte Regel als Vergleich");
+  const floor = Math.min(...others);
+
+  for (const [name, block] of [
+    ["hell", blockBody(globals, ":root {")],
+    ["dunkel", blockBody(globals, "html.dark {")],
+  ]) {
+    const text = colourOf(block, "--text-muted");
+    const background = colourOf(block, "--bg-panel");
+    const reached = contrast(composited(text, background, navOpacity), background);
+    const floorReached = contrast(composited(text, background, floor), background);
+    assert.ok(
+      reached >= floorReached,
+      `im Thema ${name} erreicht die deaktivierte Beschriftung ${reached.toFixed(2)}:1, ` +
+      `die blasseste andere deaktivierte Kontrolle des Panels aber ` +
+      `${floorReached.toFixed(2)}:1 — die Beschriftungen der Navigation dürfen ` +
+      `nicht das blasseste im Panel sein`,
+    );
+  }
 });
 
 test("the narrow-viewport override cannot widen the row again", () => {
