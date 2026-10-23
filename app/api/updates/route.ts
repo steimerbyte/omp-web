@@ -1,22 +1,28 @@
 import { NextResponse } from "next/server";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { requireAdmin } from "@/lib/request-identity";
-import { getOmpWebUpdateStatus, installOmpWebUpdate } from "@/lib/omp-updates";
-import { redactNpxOutput } from "@/lib/npx";
+import { getOmpWebUpdateStatus } from "@/lib/omp-updates";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Nur die POST-Methode aendert etwas, das dem ganzen Host gehoert: sie ruft
- * `installOmpWebUpdate` auf, ein `npx`, das den **laufenden** Server ersetzt.
- * Jedes angemeldete Konto ein Update ausloesen zu lassen heisst, dass ein
- * Mandant den Betreiber zum Installieren einer Version bewegen kann, die er
- * geprueft und freigegeben hat — also Admin.
+ * GET is open, POST is admin-only.
  *
- * GET bleibt offen. `getOmpWebUpdateStatus()` liest die lokale Paketversion und
- * den Git-Zustand, schreibt nichts und legt kein Geheimnis offen; es ist der
- * Status fuer die Update-Anzeige, die jedes Konto sehen darf. Die Route
- * beantwortet damit genau die Frage, die nicht hostweit ist.
+ * POST is the one that would change something that belongs to the whole host,
+ * so it stays behind `requireAdmin()` — a tenant must not be able to move the
+ * operator onto a version the operator has not reviewed.
+ *
+ * GET stays open. `getOmpWebUpdateStatus()` reads the latest release of
+ * *this* repository, compares it with the running version, writes nothing and
+ * exposes no secret; it is the status for the update indicator, which every
+ * account may see. The route answers exactly the question that is not
+ * host-wide.
+ *
+ * This distribution is published as a GitHub release in
+ * `steimerbyte/omp-web` and ships no artifact a route could install, so
+ * there is nothing to install here: the update is taken from the release by
+ * the operator. `POST` therefore always answers 409 with the status, whose
+ * release link points at this repository.
  */
 export async function GET(req: Request) {
   if (!isApiRequestAllowed(req)) {
@@ -46,34 +52,18 @@ export async function POST(req: Request) {
 
   try {
     const status = await getOmpWebUpdateStatus();
-    if (!status.install.canInstall) {
-      return NextResponse.json(
-        {
-          error: "No installable omp-web update is available",
-          status,
-        },
-        { status: 409 },
-      );
-    }
-
-    const result = await installOmpWebUpdate({ manager: status.install.manager });
-    return NextResponse.json({
-      success: true,
-      output: result.output,
-      restartRequired: status.install.restartRequired,
-      installedVersion: status.install.packageVersion,
-      command: status.install.command,
-    });
-  } catch (error: unknown) {
-    const detail = error as { stdout?: string; stderr?: string; message?: string };
-    const output = redactNpxOutput(`${detail.stdout ?? ""}${detail.stderr ?? ""}`).trim();
-    const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       {
-        error: output || message || "Unable to install the update",
+        error: "No installable omp-web update is available",
+        status,
       },
-      { status: 500 },
+      { status: 409 },
+    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json(
+      { error: message || "Unable to check for updates" },
+      { status: 502 },
     );
   }
 }
-

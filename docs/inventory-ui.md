@@ -291,10 +291,10 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
 - **Ort**: `components/SystemStatsBadge.tsx:90-91`, `:217-301`
 
 ### OmpUpdateIndicator — Update-Hinweis
-- **Kann**: Zeigt verfügbare Version, Copy-Befehl, Dialog.
-- **Tastatur**: `Escape` schließt den Dialog (`OmpUpdateIndicator.tsx:83-90`, `document`-Listener).
+- **Kann**: Zeigt verfügbare Version, Release-Link, Dialog.
+- **Tastatur**: `Escape` schließt den Dialog (`OmpUpdateIndicator.tsx:123-137`, `document`-Listener).
 - **Darf nicht**: Kein weiterer belegter Punkt.
-- **Ort**: `components/OmpUpdateIndicator.tsx:83-90`, `:147-252`
+- **Ort**: `components/OmpUpdateIndicator.tsx:51-253`
 
 ### ExtensionStatusBar — Statuszeile der Erweiterungen
 - **Kann**: Einzeilige Statuszeile mit `role="status"`, Beschriftung und Tooltip aus dem Text.

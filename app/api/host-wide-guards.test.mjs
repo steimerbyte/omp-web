@@ -135,8 +135,8 @@ test("the admin gate on POST sits before the content-type check, not after", asy
 
 test("the update status read is not admin-gated", async () => {
   // GET ruft `getOmpWebUpdateStatus()` auf — ein Netzaufruf. Ihn hier
-  // auszufuehren wuerde den Test von npm und dem GitHub-Release-API abhaengig
-  // machen. Geprueft wird deshalb die Quelle: der Guard steht im POST-Abschnitt
+  // auszufuehren wuerde den Test vom GitHub-Release-API abhaengig machen.
+  // Geprueft wird deshalb die Quelle: der Guard steht im POST-Abschnitt
   // und nicht im GET-Abschnitt.
   const source = await readFile(new URL("./updates/route.ts", import.meta.url), "utf-8");
   const getSection = source.slice(
@@ -145,6 +145,13 @@ test("the update status read is not admin-gated", async () => {
   );
   assert.doesNotMatch(getSection, /requireAdmin/, "GET ist eine Lese-Route");
   assert.match(source.slice(source.indexOf("export async function POST")), /requireAdmin/);
+
+  // Die Route startet keinen Prozess. Das Upstream-Release hat sie ueber
+  // `execFile` ein `npm install --global omp-web@latest` ausgefuehrt — das
+  // Paket der Upstream-Linie, ein anderer Build als der laufende. Ein
+  // ausgefuehrter Installationsbefehl gehoert nicht in diese Datei.
+  assert.doesNotMatch(source, /execFile|child_process/, "die Route startet keinen Prozess");
+  assert.doesNotMatch(source, /npm install|bun add|omp-web@latest/, "kein Installationsbefehl");
 });
 
 // --------------------------------------------------------------- api-key --

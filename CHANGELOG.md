@@ -3,6 +3,49 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## Unreleased
+
+### Updates
+
+**The update check compared this fork against the upstream package.** It asked
+`registry.npmjs.org` for the version of `omp-web` and read the latest release
+from `ddallabenetta/omp-web`. Both are the *upstream* distribution: the npm
+package name belongs to the upstream line and the publish workflow is disabled
+in this repository (`docs/release.md`), so the npm `latest` was a version of a
+build nobody here ships. The comparison was therefore against a foreign version
+line — and against a much lower one: the npm `latest` read 0,5,1 on 2026-10-23,
+while this fork's `package.json` says 0,12,0. The result was that
+`updateAvailable` was permanently `false` and the indicator rendered nothing.
+
+The worse half was the other direction. `commandForManager()` built
+`npm install --global omp-web@latest` (and the `bun add` variant of it), and
+`installOmpWebUpdate()` ran that command through `execFile` from
+`POST /api/updates`. The plan's `canInstall` was `true` whenever the foreign
+package happened to be newer, so the one button in the update panel would have
+replaced the running server with the upstream build over the top of it.
+
+The check now reads exactly one source — the latest release of **this**
+repository, `https://api.github.com/repos/steimerbyte/omp-web/releases/latest` —
+and the npm registry is not consulted at all. Every release link that leaves
+the server points at `steimerbyte/omp-web`: a payload whose `html_url` names
+another repository has that link replaced rather than forwarded, so an upstream
+link cannot travel to the browser through the panel.
+
+There is no automatic install any more, because there is nothing to install:
+this distribution ships no artifact a route could install. `install.canInstall`
+is permanently `false` and `install.reason` names the reason (`manual`,
+`disabled`, `current-version-unknown`). `POST /api/updates` stays admin-only and
+answers 409 with the status, whose release link points at this repository; `GET`
+stays open. The indicator renders nothing while `updateAvailable` is false, as
+before, and when a release *is* newer it now shows the release notes and the
+link to the release instead of a command that would have installed a different
+build.
+
+`lib/omp-updates.test.mjs` pins this: the status check asks this repository's
+release API and nothing else, a foreign npm package with a higher version
+yields neither `canInstall: true` nor a foreign release URL, and the module
+names neither the upstream repository nor the npm registry.
+
 ## v0.11.0
 
 ### Layout

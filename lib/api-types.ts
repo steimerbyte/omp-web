@@ -161,34 +161,39 @@ export interface OmpWebReleaseInfo {
   publishedAt: string | null;
 }
 
-export interface OmpWebPackageInfo {
-  version: string;
-}
-
+/**
+ * Why there is no automatic install.
+ *
+ * - `manual`: the update exists, but this distribution is published as a
+ *   GitHub release and ships no artifact a route could install.
+ * - `disabled`: the operator switched the self-update off.
+ * - `current-version-unknown`: the running version could not be determined,
+ *   so no comparison against the release was possible.
+ */
 export type OmpWebInstallPlanReason =
+  | "manual"
   | "disabled"
-  | "latest-package-unavailable"
   | "current-version-unknown";
 
 export interface OmpWebInstallPlan {
+  /**
+   * Always false for this distribution: the only install path the upstream
+   * code knew was the npm package `omp-web`, which belongs to the upstream
+   * line and is a different build.
+   */
   canInstall: boolean;
-  manager: "bun" | "npm";
-  command: string;
-  alternateCommand: string;
-  packageVersion?: string;
   reason?: OmpWebInstallPlanReason;
   restartRequired: boolean;
 }
 
 export type OmpWebUpdateAvailability =
   | "up-to-date"
-  | "installable"
-  | "manual";
+  | "manual"
+  | "unknown";
 
 export interface OmpWebUpdateResponse {
   currentAppVersion: string;
   latestRelease: OmpWebReleaseInfo;
-  latestPackage: OmpWebPackageInfo | null;
   updateAvailable: boolean;
   availability: OmpWebUpdateAvailability;
   install: OmpWebInstallPlan;

@@ -884,20 +884,19 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 ### Aktualisierung — `GET` / `POST` `/api/updates`
 
 - **Kann**: `GET` liefert `getOmpWebUpdateStatus()` mit `Cache-Control: private,
-  no-store`; ein Fehler wird als 502 mit Meldung beantwortet. `POST` installiert,
-  wenn `status.install.canInstall`, sonst 409 mit dem Status. Die Antwort enthält
-  `output`, `restartRequired`, `installedVersion` und `command`.
-- **Identität**: nur `isApiRequestAllowed`. **Kein** `requireAdmin`, **kein**
-  `isAdminIdentity`.
-- **Darf nicht**: Faktisch, nicht als Regel: **jedes angemeldete Konto kann hier
-  einen Update des Hosts auslösen.** Es gibt keinen Admin-Guard und keinen
-  Session-Besitz-Check. Das ist kein Design, das im Code begründet wäre — anders
-  als fast jede andere Route in diesem Dokument, und der Negativteil existiert
-  genau für solche Fälle. Wer beim Refactoring einen Guard „hinzufügt", verändert
-  das Sicherheitsmodell des Hosts; das ist eine Entscheidung, die man trifft und
-  dokumentiert, keine Korrektur. (Ebenfalls verboten: `npx`-Ausgabe in
-  Fehlerantworten ohne `redactNpxOutput`.)
-- **Ort**: `app/api/updates/route.ts:8-63`
+  no-store`; ein Fehler wird als 502 mit Meldung beantwortet. `POST` ist
+  **admin-only** (`requireAdmin`) und antwortet immer 409 mit dem Status, denn
+  diese Distribution liefert kein installierbares Artefakt mit: `install.canInstall`
+  ist dauerhaft `false`, und `install.reason` sagt, warum (`manual`, `disabled`,
+  `current-version-unknown`).
+- **Identität**: `GET` nur `isApiRequestAllowed`. `POST` zusätzlich
+  `requireAdmin` und `hasJsonContentType` (415 ohne JSON-Content-Type).
+- **Darf nicht**: **Die Versionsquelle darf nicht das npm-Paket `omp-web` sein.**
+  Das Paket gehört der Upstream-Linie und ist ein anderer Build; ein Vergleich
+  mit ihm oder ein `npm install --global omp-web@latest` würde die fremde
+  Distribution als Quelle der Wahrheit behandeln und den laufenden Server durch
+  sie ersetzen. `lib/omp-updates.test.mjs` nagelt das fest.
+- **Ort**: `app/api/updates/route.ts:27-69`
 
 ### Systemstatistik — `GET` `/api/system-stats`
 

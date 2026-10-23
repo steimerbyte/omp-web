@@ -290,6 +290,13 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - Skill toggling edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives.
 - `/api/skills/install` shells through `npx skills add ... --agent claude-code`. The `skills` CLI has no `omp` agent, and its `pi` agent writes `~/.pi/agent/skills`, which omp does **not** read; the Claude layout is discovered by default.
 
+### The update check compares against this repository's releases
+- This fork is published as a GitHub release in `steimerbyte/omp-web` (`docs/release.md`). The npm package `omp-web` belongs to the **upstream** line and is a different build; the publish workflow is disabled here.
+- `lib/omp-updates.ts` therefore reads exactly one source: `https://api.github.com/repos/steimerbyte/omp-web/releases/latest`. The npm registry is not consulted at all, and every release link that leaves the server points at `steimerbyte/omp-web` — a payload that names another repository has its `html_url` replaced, not forwarded.
+- There is no automatic install: `install.canInstall` is permanently `false` and `install.reason` says why (`manual`, `disabled`, `current-version-unknown`). The releases carry no server artifact a route could install, and the one command the upstream code knew — `npm install --global omp-web@latest` — would have replaced the running server with the foreign build.
+- `POST /api/updates` stays admin-only and answers 409 with the status; `GET` stays open. The indicator renders nothing while `updateAvailable` is false, as before.
+- `lib/omp-updates.test.mjs` pins all of this: which URL is asked, that a foreign package with a higher version changes nothing, and that the module names neither the upstream repository nor the npm registry.
+
 ### Auth and model config
 - Credentials live in omp's SQLite `agent.db` via `AuthStorage`, not in `auth.json`. Writes go through `authStorage.set()` / `remove()` / `logout()` so the CLI and omp-web share one store and one lock.
 - Provider listing is capability-driven: `lib/provider-listing-runtime.ts` folds the catalog (`@oh-my-pi/pi-catalog`), the OAuth registry (`@oh-my-pi/pi-ai/oauth`) and stored credential types into the flat shape `lib/provider-listing.ts` expects, so a dual-auth provider appears exactly once. An OAuth login whose `storeCredentialsAs` differs from its id is keyed by the id the catalog uses.

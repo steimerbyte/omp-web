@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { copyText } from "@/lib/clipboard";
 import type { OmpWebUpdateResponse } from "@/lib/api-types";
 import { MarkdownBody } from "./MarkdownBody";
 
@@ -59,10 +58,6 @@ export function OmpUpdateIndicator() {
   // collapsing into a permanently "loading" component.
   const [outcome, setOutcome] = useState<UpdatesFetchOutcome | null>(null);
   const [open, setOpen] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [panelPosition, setPanelPosition] = useState<{ left: number; bottom: number; width: number } | null>(null);
 
@@ -125,11 +120,6 @@ export function OmpUpdateIndicator() {
     return () => controller.abort();
   }, [loadStatus]);
 
-  useEffect(() => () => {
-    clearTimeout(copiedTimerRef.current ?? undefined);
-    copiedTimerRef.current = null;
-  }, []);
-
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -158,41 +148,6 @@ export function OmpUpdateIndicator() {
     ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(release.publishedAt))
     : null;
   const changelog = release.body.trim() || release.name;
-  const copyCommand = async (command: string) => {
-    try {
-      await copyText(command);
-      clearTimeout(copiedTimerRef.current ?? undefined);
-      setCopiedCommand(command);
-      copiedTimerRef.current = setTimeout(() => setCopiedCommand(null), 1600);
-    } catch {
-      setMessage({ kind: "error", text: t("updates.copyFailed") });
-    }
-  };
-  const installUpdate = async () => {
-    if (!status.install.canInstall || installing) return;
-    setInstalling(true);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/updates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      const body = await response.json().catch(() => ({})) as { error?: string; installedVersion?: string };
-      if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
-      setMessage({
-        kind: "success",
-        text: t("updates.installed", { version: displayVersion(body.installedVersion ?? release.version) }),
-      });
-    } catch (error) {
-      setMessage({
-        kind: "error",
-        text: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      setInstalling(false);
-    }
-  };
 
   return (
     <div ref={rootRef} style={{ position: "relative", width: "100%" }}>
@@ -200,10 +155,7 @@ export function OmpUpdateIndicator() {
         type="button"
         aria-expanded={open}
         aria-haspopup="dialog"
-        onClick={() => {
-          setOpen((value) => !value);
-          setMessage(null);
-        }}
+        onClick={() => setOpen((value) => !value)}
         title={t("updates.availableTitle", { version: displayVersion(release.version) })}
         style={{
           width: "100%",
@@ -290,48 +242,9 @@ export function OmpUpdateIndicator() {
               </a>
             </div>
 
-            {status.install.canInstall ? (
-              <button
-                type="button"
-                onClick={() => void installUpdate()}
-                disabled={installing}
-                style={{ width: "100%", minHeight: 34, border: "1px solid var(--accent)", borderRadius: 7, background: installing ? "var(--bg-selected)" : "var(--accent)", color: installing ? "var(--accent)" : "var(--bg)", cursor: installing ? "wait" : "pointer", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)" }}
-              >
-                {installing ? t("updates.installing") : t("updates.install")}
-              </button>
-            ) : (
-              <div style={{ color: "var(--text-muted)", fontSize: 11, lineHeight: 1.45 }}>
-                <div style={{ marginBottom: 7, color: "var(--text-dim)" }}>{t("updates.manual")}</div>
-                {[status.install.command, status.install.alternateCommand].map((command) => (
-                  <div key={command} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 6, padding: "6px 7px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", fontFamily: "var(--font-mono)" }}>
-                    <code style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", color: "var(--text)" }}>{command}</code>
-                    <button
-                      type="button"
-                      onClick={() => void copyCommand(command)}
-                      title={copiedCommand === command ? t("updates.commandCopied") : t("updates.copyCommand")}
-                      aria-label={copiedCommand === command ? t("updates.commandCopied") : t("updates.copyCommand")}
-                      style={{ flex: "0 0 auto", width: 24, height: 24, padding: 0, border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: copiedCommand === command ? "var(--accent)" : "var(--text-dim)", cursor: "pointer" }}
-                    >
-                      {copiedCommand === command ? (
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : (
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {message && (
-              <div role={message.kind === "error" ? "alert" : "status"} style={{ marginTop: 9, color: message.kind === "error" ? "var(--danger)" : "var(--success)", fontSize: 11, lineHeight: 1.45 }}>
-                {message.text}
-              </div>
-            )}
+            <div style={{ color: "var(--text-muted)", fontSize: 11, lineHeight: 1.45 }}>
+              {t("updates.manual")}
+            </div>
           </div>
         </div>
       )}
