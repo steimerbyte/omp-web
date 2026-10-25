@@ -88,6 +88,12 @@ export async function POST(req: Request) {
       ...(toolNames ? { toolNames } : {}),
       ...(provider && modelId ? { initialModel: { provider, modelId } } : {}),
       ...(explicitThinkingLevel ? { thinkingLevel: explicitThinkingLevel } : {}),
+      // Die Identitaet wandert mit in die Sitzung: die Kalender-Werkzeuge
+      // brauchen sie, weil sie im Serverprozess laufen und dort keinen Request
+      // mehr vorfinden, aus dem sie das Konto lesen koennten. Ohne diese
+      // Bindung wuerde der Agent den Kalender des *globalen* Verzeichnisses
+      // benutzen — also den des Betreibers, nicht den des angemeldeten Kontos.
+      identity,
     });
 
     // Keep the files-route allowed-roots cache (see app/api/files/[...path]/route.ts)

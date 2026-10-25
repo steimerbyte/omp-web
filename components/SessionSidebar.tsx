@@ -7,6 +7,7 @@ import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { useI18n } from "@/hooks/useI18n";
+import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -97,6 +98,10 @@ interface Props {
   onShowProjectsDashboard?: () => void;
   /** `true` while the dashboard is showing, so the button can read as pressed. */
   showProjectsDashboard?: boolean;
+  /** Show the calendar instead of the chat. */
+  onShowCalendar?: () => void;
+  /** `true` while the calendar is showing, so the button can read as pressed. */
+  showCalendar?: boolean;
   /** Fired when a session that is not currently selected finishes running.
    *  Lets the app play a cross-workspace completion tone. */
   onBackgroundTaskDone?: () => void;
@@ -472,8 +477,11 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onBackgroundTaskDone }: Props) {
+export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onBackgroundTaskDone }: Props) {
   const { t } = useI18n();
+  // Der Kalender ist ein deutsches Kalendersystem — auch sein Knopf im
+  // Kopfbereich heisst auf Deutsch. Siehe `components/calendar/useCalendarText.ts`.
+  const calendarText = useCalendarText();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   // Memoized so the derived lists below keep a stable identity across the many
   // renders a running-session poll causes — Virtuoso compares `data` by
@@ -1238,6 +1246,34 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                 <rect x="14" y="3" width="7" height="7" />
                 <rect x="3" y="14" width="7" height="7" />
                 <rect x="14" y="14" width="7" height="7" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={onShowCalendar}
+              title={calendarText("calendar.open")}
+              aria-label={calendarText("calendar.open")}
+              aria-pressed={showCalendar}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32, height: 32,
+                borderRadius: 7,
+                padding: 0,
+                flexShrink: 0,
+                cursor: "pointer",
+                border: `1px solid ${showCalendar ? "var(--accent)" : "var(--border)"}`,
+                background: showCalendar ? "var(--bg-selected)" : "var(--bg-hover)",
+                color: showCalendar ? "var(--accent)" : "var(--text-muted)",
+                transition: "background 0.3s, color 0.3s, border-color 0.3s",
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="17" rx="2" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="16" y1="2" x2="16" y2="6" />
               </svg>
             </button>
             <button

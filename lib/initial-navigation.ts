@@ -9,7 +9,7 @@ export interface InitialNavigation {
    * dashboard is a real URL rather than component state so a reload, a
    * bookmark and a shared link all land on the same view.
    */
-  requestedView: "chat" | "projects";
+  requestedView: "chat" | "projects" | "calendar";
 }
 
 export function getInitialNavigation(searchParams: Pick<URLSearchParams, "get">): InitialNavigation {
@@ -19,6 +19,9 @@ export function getInitialNavigation(searchParams: Pick<URLSearchParams, "get">)
   return {
     requestedCwd,
     sessionId: requestedCwd ? null : searchParams.get("session"),
-    requestedView: view === "projects" ? "projects" : "chat",
+    // `calendar` ist die dritte Ansicht. Sie wird ausdruecklich genannt und
+    // nicht aus dem Rest abgeleitet: ein unbekannter Name darf keine
+    // Ansicht waehlen.
+    requestedView: view === "projects" ? "projects" : view === "calendar" ? "calendar" : "chat",
   };
 }

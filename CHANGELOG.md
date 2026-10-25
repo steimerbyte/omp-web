@@ -5,6 +5,74 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+### Features
+
+**Der Kalender.** Eine eigene Ansicht in omp-web, erreichbar über den Knopf
+neben dem Projekt-Dashboard in der Seitenleiste und über `?view=calendar`.
+Monats-, Wochen- und Tagesansicht; Termine lassen sich per Klick anlegen,
+per Ziehen verschieben, bearbeiten und löschen. Das Löschen fragt vorher nach
+(`window.confirm`), weil es sich nicht zurücknehmen lässt und der Agent vom
+gelöschten Termin nichts erfährt: eine Rückfrage kostet einen Klick, ein
+Versehen kostet den Termin.
+
+Ein neuer Termin aus einem freien Stundenraster bekommt eine Stunde als
+Ende, nicht dieselbe Uhrzeit wie der Beginn — ein Termin, dessen Ende gleich
+seinem Beginn wäre, wäre ungültig, und der Nutzer hätte an der freien
+Stunde nichts falsch gemacht.
+
+Der Kalender ist deutsch, und das ist mehr als eine Übersetzung: Die Woche
+beginnt am Montag, die Kalenderwoche wird nach ISO 8601 gezählt (KW), die neun
+bundesweiten Feiertage stehen in der Kopfzeile (Karfreitag, Ostermontag,
+Christi Himmelfahrt und Pfingstmontag über die Gauss-Formel für das
+Osterdatum berechnet), und das Datum erscheint als `14.03.2026`. Bundesländer-
+spezifische Feiertage fehlen — ohne eine Bundesland-Auswahl kann der Kalender
+sie nicht zutreffend anzeigen, und ein falscher Feiertag ist schlimmer als
+ein fehlender.
+
+Der Kalender ist dabei in *jeder* Oberflächensprache deutsch. Seine Texte
+kommen aus dem deutschen Sprachpaket, nicht aus der eingestellten Sprache:
+deutsche Monats- und Wochentagsnamen, die ISO-Woche, die deutschen
+Feiertagsnamen, das deutsche Datumsformat. Eine Oberfläche, in der der Kalender
+„Oktober 2026" und „Tag der Deutschen Einheit" zeigt, aber die Knöpfe „Month"
+und „Week" trägt, ist halb übersetzt — und einen englischen Kalender mit
+deutschen Feiertagen gibt es nicht. Die `calendar.*`-Schlüssel stehen darum
+ausschließlich im deutschen Paket; `lib/i18n/locale-parity.test.mjs` hält das
+fest.
+
+Die Termine liegen in `omp-web-calendar.json` im Agent-Verzeichnis des Kontos:
+eine Datei pro Konto, atomar geschrieben, `0o600`. Das ist dieselbe Form wie
+bei den Quick Phrases und der Projekt-Registry.
+
+**Der Agent liest und schreibt denselben Kalender.** Zwei neue Werkzeuge,
+`calendar_read` und `calendar_write`, sind nativ angemeldet — im selben
+`customTools`-Feld wie `present_files`. Nativ, weil der Kalender dem *Konto*
+gehört und nicht dem Projekt: eine Datei unter `.omp/extensions` hinge am
+Vertrauen in das Projekt, der Kalender an der Identität, die die Sitzung
+geöffnet hat. Die Identität wandert deshalb mit der Sitzung
+(`RpcSessionStartOptions.identity`), und die Werkzeuge sind daran gebunden —
+ohne diese Bindung würde der Agent eines Mandanten den Kalender des
+Betreibers lesen und schreiben.
+
+`calendar_write` kann anlegen, ändern, verschieben und löschen. Ein Verschieben
+ist ein Ändern von Beginn und Ende; dafür gibt es keinen zweiten Endpunkt.
+Die Länge eines Termins bleibt dabei erhalten — wer einen zweistündigen Termin
+verschiebt, bekommt keinen einstündigen.
+
+Die Oberfläche hängt an einem SSE-Strom (`GET /api/calendar/events`). Legt der
+Agent einen Termin an, steht er im Kalender im Browser, ohne dass die Seite
+neu geladen werden muss. Ohne diesen Strom stünde im Chat „Ich habe einen
+Termin angelegt", während der Kalender leer bliebe. Der Strom schickt benannte
+Ereignisse (`event: calendar_changed`), und der Browser hört mit
+`addEventListener("calendar_changed", …)` darauf: eine SSE-Nachricht ohne
+`event:`-Zeile käme als Standard-Ereignis `message` an und der Listener
+feuerte nie — die Live-Aktualisierung fände dann stillschweigend nicht statt.
+
+**Deutsch als Oberflächensprache.** `lib/i18n/messages/de.ts` ist ein
+vollständiges Sprachpaket: es trägt alle 690 Schlüssel des englischen Katalogs
+in derselben Reihenfolge und dazu 40 eigene `calendar.*`-Schlüssel, insgesamt
+730. Ein deutscher Browser bekommt Deutsch, ohne dass etwas eingestellt werden
+muss.
+
 ### Updates
 
 **The update check compared this fork against the upstream package.** It asked

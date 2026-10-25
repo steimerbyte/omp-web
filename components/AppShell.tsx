@@ -17,6 +17,7 @@ import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { SubagentPanel } from "./SubagentPanel";
 import { ProjectsDashboard } from "./ProjectsDashboard";
+import { CalendarView } from "./CalendarView";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
@@ -176,7 +177,7 @@ export function AppShell() {
   // Which of the three views is showing. Seeded from `?view=` so a reload or a
   // shared link lands where the sender was, and kept in the URL below so it
   // survives the next reload too.
-  const [activeView, setActiveView] = useState<"chat" | "projects">(
+  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar">(
     () => initialNavigation.requestedView,
   );
   // The sidebar's *automatic* first cwd adoption is what would break a
@@ -195,7 +196,7 @@ export function AppShell() {
   // switch the view away from the dashboard, so with it suppressed the
   // dashboard opens no cwd and no session at all.
   const skipInitialProjectSelection =
-    initialNavigation.requestedCwd !== null || activeView === "projects";
+    initialNavigation.requestedCwd !== null || activeView === "projects" || activeView === "calendar";
   // Whether this account may create projects. Creating one widens the file
   // allow-list, which `AGENTS.md` keeps admin-gated, so the button is hidden
   // for a tenant rather than shown and then refused. Asked the same way
@@ -1083,6 +1084,7 @@ export function AppShell() {
   // "Go to the work" is therefore explicit instead: `handleSelectSession`,
   // `handleNewSession` and `handleCwdChange` each switch the view themselves.
   const showProjects = activeView === "projects";
+  const showCalendar = activeView === "calendar";
 
   // Keep the view in the URL. `replaceState` rather than a router navigation
   // so switching views never re-runs the server component tree — the
@@ -1091,6 +1093,7 @@ export function AppShell() {
   useEffect(() => {
     const url = new URL(window.location.href);
     if (activeView === "projects") url.searchParams.set("view", "projects");
+    else if (activeView === "calendar") url.searchParams.set("view", "calendar");
     else url.searchParams.delete("view");
     window.history.replaceState(window.history.state, "", url.toString());
   }, [activeView]);
@@ -1177,6 +1180,8 @@ export function AppShell() {
         onAtMentions={handleAtMentions}
         onShowProjectsDashboard={() => setActiveView("projects")}
         showProjectsDashboard={activeView === "projects"}
+        onShowCalendar={() => setActiveView("calendar")}
+        showCalendar={activeView === "calendar"}
         onBackgroundTaskDone={handleBackgroundTaskDone}
       />
       <div style={{ padding: "0 8px", flexShrink: 0 }}>
@@ -2024,6 +2029,8 @@ export function AppShell() {
                 handleCwdChange(root);
               }}
             />
+          ) : showCalendar ? (
+            <CalendarView />
           ) : showChat ? (
             <ChatWindow
               key={sessionKey}

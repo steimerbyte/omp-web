@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { getRequestIdentity } from "@/lib/request-identity";
 import { requireSessionAccess } from "@/app/api/sessions/session-guard";
 
 /**
@@ -97,7 +98,14 @@ export async function POST(
       }, { status: 404 });
     }
 
-    const { session } = await startRpcSession(id, filePath, undefined);
+    const { session } = await startRpcSession(id, filePath, undefined, {
+      // Die Identitaet des anfragenden Kontos wandert in die Sitzung: die
+      // Kalender-Werkzeuge laufen im Serverprozess und koennen dort keinen
+      // Request mehr vorfinden, aus dem sie das Konto laessten. Der Guard
+      // `requireSessionAccess` hat oben bereits geprueft, dass dieses Konto
+      // auf die Session zugreifen darf.
+      identity: getRequestIdentity(req.headers) ?? undefined,
+    });
     const result = await session.send(body);
     promptAccepted = body.type === "prompt";
 

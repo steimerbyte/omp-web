@@ -77,6 +77,9 @@ app/api/
   auth/login/[provider]/route.ts  GET OAuth/device-code SSE | POST manual code
   auth/logout/[provider]/route.ts POST OAuth logout
   auth/providers/route.ts         GET OAuth provider list
+  calendar/route.ts               GET/POST the account's calendar events
+  calendar/[id]/route.ts          PATCH/DELETE one calendar event
+  calendar/events/route.ts        GET SSE stream of calendar changes
   cwd/validate/route.ts           POST validate/select a cwd
   default-cwd/route.ts            POST create ~/omp-cwd-YYYYMMDD
   files/[...path]/route.ts        GET file contents for viewer
@@ -121,6 +124,9 @@ lib/
   session-system-prompt.ts  SYSTEM.md / APPEND_SYSTEM.md resolution per session cwd
   session-title.ts     thin wrapper over omp's own title generator
   tool-presets.ts      PRESET_NONE/DEFAULT/FULL + getPresetFromTools()
+  calendar.ts          the calendar domain: event shape, German date rules, holidays
+  calendar-store.ts    the per-account calendar file
+  calendar-tool.ts     the calendar_read / calendar_write agent tools
   types.ts             shared TypeScript types
   normalize.ts         normalizeToolCalls() — field name mismatch between file format and our types
   worktree.ts          project/worktree resolution and git worktree operations
@@ -143,6 +149,10 @@ components/
   FileIcons.tsx       file icon helpers
   FileViewer.tsx      file content in a tab
   TabBar.tsx          tab bar (Chat + open file tabs)
+  CalendarView.tsx    the calendar (month/week/day)
+  calendar/
+    calendar-model.ts     where an event sits on screen; presentation only
+    CalendarEventDialog.tsx  create/edit dialog for one event
 
 hooks/
   useAgentSession.ts  messages + streaming + SSE + fork/navigate/reconciliation logic
@@ -289,6 +299,16 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - `/api/skills` uses omp's own `loadSkills()`, so `.omp/skills`, `~/.omp/agent/skills`, `.claude/skills`, plugin skills and `.agents/skills` are listed exactly as a session sees them.
 - Skill toggling edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives.
 - `/api/skills/install` shells through `npx skills add ... --agent claude-code`. The `skills` CLI has no `omp` agent, and its `pi` agent writes `~/.pi/agent/skills`, which omp does **not** read; the Claude layout is discovered by default.
+
+### The calendar is per account, and the agent is bound to one
+- The calendar lives in `omp-web-calendar.json` in the tenant's agent dir — the same shape as `omp-web-quick-phrases.json` and `omp-web-projects.json`. One file per account, `omp-web-` prefix, atomic write with `0o600` (`lib/calendar-store.ts`).
+- **Time is local and zone-less.** `2026-03-14` for an all-day event, `2026-03-14T15:00` for a timed one. No `Z`, no offset. A calendar shows events in the reader's timezone, and a stored offset has to be converted at read time — that is exactly where a calendar starts showing the wrong time. No zone means nothing to convert.
+- **`calendar_read` and `calendar_write` are native `customTools`**, registered next to `present_files` in `lib/rpc-manager.ts`. Native because the calendar belongs to the *account*, not the project: a `.omp/extensions` file would depend on project trust (`lib/project-trust.ts`), and the calendar depends on the identity that opened the session.
+- **The identity travels with the session.** The tools run in the server process and find no request to read the account from, so `RpcSessionStartOptions.identity` carries it in and the factory closes over it. Without that binding every account would share one file, and a tenant's agent would read and write the operator's calendar.
+- **The domain has no `fs` and no `fetch`** (`lib/calendar.ts`), so the browser and the server answer "what is a valid event" identically. The screen layout — where an event sits, how a move preserves the duration — is presentation and lives in `components/calendar/calendar-model.ts`.
+- **The month grid is always six weeks.** The number of weeks a month covers varies with the weekday it starts on; a table that changes its height jumps while you page through it, and a calendar that jumps is unusable because you hit the wrong event.
+- **The ISO week uses the Thursday, not the 1 January.** ISO 8601's first week is the one containing 4 January, and 1 January can belong to the last week of the previous year. `firstThursdayOfYear()` is the Thursday of the week containing 4 January — for 2026 that is 1 January, because 4 January is a Sunday.
+- `docs/calendar.md` has the rest.
 
 ### The update check compares against this repository's releases
 - This fork is published as a GitHub release in `steimerbyte/omp-web` (`docs/release.md`). The npm package `omp-web` belongs to the **upstream** line and is a different build; the publish workflow is disabled here.

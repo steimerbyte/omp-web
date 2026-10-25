@@ -27,7 +27,12 @@ function getMessages(): Record<string, Record<string, string>> {
 function readInitialLocale(): Locale {
   try {
     const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-    if (stored === "en" || stored === "zh-CN") return stored;
+    // Geprueft wird gegen die *registrierten* Sprachpakete und nicht gegen
+    // eine Liste hier: eine Sprache, die spaeter aus dem Register
+    // verschwindet, faellt sonst auf eine gespeicherte, nicht mehr
+    // existierende Kennung zurueck — und die Anzeige zeigt dann Schluessel
+    // statt Text.
+    if (stored && getLocalePlugin(stored)) return stored as Locale;
   } catch {
     // 隐私模式或存储不可用时继续使用浏览器语言。
   }

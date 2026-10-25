@@ -34,6 +34,7 @@ import { readDefaultModelRole } from "./model-roles";
 import { getOmpRuntime, getSettingsForCwd } from "./omp-runtime";
 import { PRESET_FULL } from "./tool-presets";
 import { makePresentFilesTool } from "./present-files-tool";
+import { makeCalendarTools } from "./calendar-tool";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import type { SlashCommandInfo } from "./omp-types";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./omp-types";
@@ -150,6 +151,27 @@ export interface RpcSessionStartOptions {
    * nicht der Rolle. Die Admin-Ausnahme steht ausschliesslich im Filter.
    */
   owner?: string;
+  /**
+   * Die volle Identitaet des angemeldeten Kontos.
+   *
+   * ### Warum das noetig ist und `owner` nicht reicht
+   *
+   * `owner` ist ein *Name* — er beantwortet "wem gehoert die Session", und das
+   * reicht fuer den Sichtbarkeitsfilter. Die Kalender-Werkzeuge brauchen mehr:
+   * sie brauchen die vollstaendige Identitaet, weil der Kalender ueber
+   * `resolveTenantAgentDir(identity)` abgeleitet wird — und der unterscheidet
+   * zwischen "Admin, also globales Verzeichnis" und "Mieter, also eigenes
+   * Verzeichnis". Der Name allein kann diese Unterscheidung nicht treffen.
+   *
+   * ### Warum die Identitaet mit der Session wandert und nicht mitgereist wird
+   *
+   * Das Werkzeug laeuft im Serverprozess und hat keinen Request, aus dem es
+   * die Identitaet lesen koennte. Ohne diese Bindung wuerde ein Agent eines
+   * Mandanten den Kalender des Betreibers lesen und schreiben — der Kalender
+   * liegt pro Konto in einer eigenen Datei, und ohne Bindung gaelte fuer alle
+   * dieselbe.
+   */
+  identity?: WebIdentity;
 }
 
 const CODING_TOOL_NAMES: Record<string, true> = Object.fromEntries(
@@ -1906,7 +1928,14 @@ export async function startRpcSession(
         // `customTools` slot `pi-web-ui` uses for its own copy) instead of via a
         // discovered `.omp/extensions` file, so it cannot be dropped by project
         // trust gating or by a session started before the extension existed.
-        customTools: [makePresentFilesTool()],
+        //
+        // `calendar_read` und `calendar_write` sind aus demselben Grund
+        // nativ: der Kalender gehoert dem *Konto*, nicht dem Projekt. Eine
+        // Datei unter `.omp/extensions` waere vom Projekt abhaengig — und
+        // damit vom Vertrauen in dieses Projekt (`lib/project-trust.ts`),
+        // waehrend der Kalender an der Identitaet haengt, die diese Sitzung
+        // geoeffnet hat.
+        customTools: [makePresentFilesTool(), ...makeCalendarTools({ identity: options.identity })],
         // `restrictToolNames` drops `customTools` entirely unless this is set —
         // the SDK filters `options.customTools` to `[]` when a session is
         // restricted and this is not true (see `allowRestrictedCustomTools` in

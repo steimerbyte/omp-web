@@ -1,3 +1,4 @@
+import { deLocale } from "./messages/de";
 import { enLocale } from "./messages/en";
 import { zhCNLocale } from "./messages/zh-CN";
 import type { Locale, LocalePlugin } from "./types";
@@ -35,9 +36,11 @@ export function resolveBrowserLocale(languages: readonly string[]): Locale {
     const normalized = language.toLowerCase();
     if (normalized === "en" || normalized.startsWith("en-")) return "en";
     if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
+    if (normalized === "de" || normalized.startsWith("de-")) return "de";
   }
   return "en";
 }
 
 registerLocale(enLocale);
 registerLocale(zhCNLocale);
+registerLocale(deLocale);

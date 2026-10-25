@@ -1,6 +1,7 @@
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession, type AgentEvent } from "@/lib/rpc-manager";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { getRequestIdentity } from "@/lib/request-identity";
 import { requireSessionAccess } from "@/app/api/sessions/session-guard";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +46,12 @@ export async function GET(
       return new Response("Session not found", { status: 404 });
     }
     try {
-      ({ session } = await startRpcSession(id, filePath, undefined));
+      ({ session } = await startRpcSession(id, filePath, undefined, {
+        // Die Identitaet wandert in die Sitzung, damit die Kalender-Werkzeuge
+        // das Konto benutzen, das die Sitzung gerade oeffnet — siehe die
+        // gleiche Begruendung in `app/api/agent/[id]/route.ts`.
+        identity: getRequestIdentity(req.headers) ?? undefined,
+      }));
     } catch {
       return new Response("Failed to start agent", { status: 500 });
     }
