@@ -7,7 +7,7 @@ Kalender über zwei eigene Werkzeuge.
 
 Dieses Dokument beschreibt, was ausgeliefert ist, und begründet die
 Entscheidungen, die nicht offensichtlich sind. Die Dateien, die es beschreibt,
-stehen in Kapitel 7.
+stehen in Kapitel 8.
 
 ---
 
@@ -538,9 +538,40 @@ Tageszahl kein Fall möglich.
 
 ### Löschen fragt nach
 
-Vor dem Löschen fragt die Oberfläche mit `window.confirm`. Das Löschen ist
-nicht rückgängig zu machen: der Termin ist weg, und der Agent weiß nichts
-davon. Eine Rückfrage kostet einen Klick, ein Versehen kostet den Termin.
+Vor dem Löschen fragt die Oberfläche nach — **im Dialog selbst**, nicht mit
+`window.confirm`. Das Löschen ist nicht rückgängig zu machen: der Termin ist
+weg, und der Agent weiß nichts davon. Eine Rückfrage kostet einen Klick, ein
+Versehen kostet den Termin.
+
+Die Rückfrage ist ein zweistufiger Zustand im Dialog: der erste Klick auf
+„Löschen" schaltet den Fuß in den Bestätigungszustand, und erst der zweite
+Klick auf „Termin löschen" löscht. „Abbrechen" in diesem Zustand bricht den
+Löschvorgang ab und stellt den vorherigen Zustand wieder her — der Dialog
+bleibt offen, die Formularfelder behalten ihre Werte.
+
+**Warum keine native Rückfrage.** `window.confirm` hat im Tauri-Desktop
+zwei getrennte Fehler, und beide treffen das Löschen:
+
+1. `src-tauri/Cargo.lock` pinnt wry 0.55.1 und tauri 2.11.5. In wry 0.55.1
+   implementiert die `WKUIDelegate`-Implementierung
+   (`src/wkwebview/class/wry_web_view_ui_delegate.rs`) **kein**
+   `runJavaScriptConfirmPanel`. Apple dokumentiert für genau diese Lücke:
+   *"If you do not implement this method, the web view will behave as if
+   the user selected the Cancel button."* `confirm()` liefert im
+   macOS-Webview also immer `false` — der Knopf tut, als sei nichts
+   passiert: keine Anfrage, keine Änderung, keine Meldung. Das ist das
+   gemeldete Symptom.
+2. Im Browser blockiert die native Box den Seitent Thread, bis der Nutzer
+   antwortet. Ein Klick auf „Löschen" hängt dann in einem Test fest.
+
+Ein Zustand im Dialog hat keine native Box, keinen Thread-Blocker und keine
+zweite Fokusfalle: der Dialog *ist* bereits ein Radix-Dialog, ein zweites
+Modal darin erzeugte zwei Fokusfallen.
+
+**Der Bestätigungstext nennt den Termin.** „Diesen Termin löschen?" sagt bei
+vielen Terminen nicht, welcher gemeint ist; im Bestätigungszustand steht
+stattdessen „‹Titel› wirklich löschen?" (`calendar.deleteConfirm`, mit dem
+Titel als Platzhalter).
 
 ### Ein Serverfehler erscheint nicht als englischer Text
 
@@ -551,6 +582,21 @@ stattdessen eine deutsche Meldung aus dem Kalender-Katalog:
 Die Regel aus `docs/i18n.md` sagt das ausdrücklich: einen API-Fehler
 übersetzt man nicht, indem man seinen englischen Text erkennt, sondern indem
 man den *lokalen* Text darüberlegt.
+
+**Der Fehler des offenen Dialogs steht im Dialog.** Die Meldungsleiste unter
+der Kalender-Kopfzeile liegt hinter dem Radix-Overlay
+(`[data-slot="dialog-overlay"]`, `fixed inset-0`, `z-50`): gemessen im Browser
+liefert `document.elementFromPoint` auf der Zeile der Meldung das Overlay
+oder den Dialog, nie die Meldung — sie ist schlicht unsichtbar. Die Ansicht
+hält deshalb einen eigenen Fehlerzustand für den offenen Dialog
+(`dialogError`), reicht ihn als Prop an den Dialog durch und setzt ihn beim
+Öffnen und beim Schließen zurück. Der Dialog rendert ihn als `role="alert"`
+unmittelbar über dem Fuß, in `--danger`. Der Fuß bleibt sichtbar: die Meldung
+nimmt Platz aus dem scrollenden Feldbereich, nicht aus dem Fuß.
+
+Die Meldungsleiste der Kopfzeile bleibt für den **Erfolgsfall** („Termin
+gelöscht", „Termin angelegt") — da ist der Dialog zu, und die Leiste ist
+sichtbar.
 
 ### Live-Updates aus dem Agenten
 
@@ -598,6 +644,7 @@ Broadcast nur die Identität, die geschrieben hat, nicht die, die zuhört.
 | `PATCH /api/calendar/[id]` | Einen Termin ändern oder verschieben. |
 | `DELETE /api/calendar/[id]` | Einen Termin löschen. |
 | `GET /api/calendar/events` | SSE-Strom der Änderungen. |
+| `POST /api/calendar/import` | Eine `.ics`-Datei lesen — und auf Zuruf schreiben (Kapitel 6). |
 
 `PATCH` und nicht `PUT`: `PUT` bedeutet „ersetze diese Ressource", und der
 Client schickt bei einer Verschiebung nur das, was sich ändert. Ein `PUT`
@@ -620,7 +667,310 @@ Termins, wenn sie nicht mitschickt.
 
 ---
 
-## 6. Die Mandantengrenze
+## 6. Der Import aus einer ICS-Datei
+
+`lib/calendar-ics.ts` liest eine `.ics`-Datei und macht daraus Termine des
+Kalenders. `POST /api/calendar/import` nimmt den Dateitext entgegen, legt
+ihn in den Kalender des Kontos — oder nicht, wenn der Nutzer erst sehen
+will, was drinsteht.
+
+Der Parser ist ein eigenes Modul und **rein**: kein `fs`, kein `fetch`. Er
+liest einen String und gibt Termine und einen Bericht zurück; die Route ist
+die einzige Stelle, die schreibt. Und er wirft **nie**: eine kaputte Datei
+ist ein Import mit vielen übersprungenen Terminen, kein Fehler — ein
+einzelner kaputter `VEVENT` darf die anderen fünfzig nicht mitnehmen.
+
+### Die unterstützte Teilmenge
+
+| Eigenschaft | Wird zu |
+|---|---|
+| `SUMMARY` | `title` |
+| `DESCRIPTION` | `description` (ein `\n` wird ein Zeilenumbruch) |
+| `LOCATION` | `location` |
+| `DTSTART` | `start` |
+| `DTEND` | `end` |
+| `DURATION` | `end`, aus `DTSTART` und der Dauer berechnet |
+| `RRULE` | mehrere Termine — siehe unten |
+| `EXDATE` | Tage, die aus der Regel fallen |
+| `UID` | nichts. Sie dient nur dem Duplikat-Vergleich. |
+
+Was das Ereignismodell nicht kennt, wird **gezählt und gemeldet**, nicht
+stillschweigend weggeworfen: `ATTENDEE`, `VALARM` (sowohl der Block als
+auch die Eigenschaft), `CATEGORIES`, `ORGANIZER`, `URL`, `STATUS`, `TRANSP`.
+Dazu kommen die Komponenten, die nicht `VEVENT` sind: `VTIMEZONE` und
+alles andere (`VJOURNAL`, `VTODO`, …). Die Zähler stehen im Bericht unter
+`report.ignored`, und sie stehen auch dann da, wenn sie null sind — eine
+Antwort, deren Form von der Datei abhängt, ist eine Form, die der Client
+nicht kennen kann.
+
+`SUMMARY`, `DESCRIPTION` und `LOCATION` werden entschlüsselt: `\n` und `\N`
+werden ein Zeilenumbruch, `\,` `\;` und `\\` werden das Zeichen selbst.
+
+### Die drei Zeitumrechnungen
+
+Der Kalender speichert lokale Wandzeit ohne Zone (Kapitel 1). Aus der
+ICS-Datei kommen drei Formen, und sie werden **nicht** gleich behandelt:
+
+| Angabe in der Datei | Gespeichert wird | Beispiel |
+|---|---|---|
+| `DTSTART:20261028T140000` (ohne Zone) | die Wandzeit, unverändert | `2026-10-28T14:00` |
+| `DTSTART;TZID=Europe/Berlin:20261028T140000` | die Wandzeit, **unverändert** | `2026-10-28T14:00` |
+| `DTSTART:20261028T140000Z` | die **lokale Zeit der Maschine**, auf der der Import läuft | je nach Rechner z. B. `2026-10-28T15:00` (UTC+1) |
+
+Der Unterschied ist nicht willkürlich. `TZID` sagt „das ist eine Uhrzeit in
+irgendeiner Zone" — und der Kalender kennt keine Zonen. Seine Form *ist*
+die Wandzeit, und die Wandzeit ist genau das, was der Leser sieht. Eine
+Umrechnung bräuchte ein Zonenmodell, das das Format nicht hat; sie würde
+den Termin in eine andere Stunde verschieben, ohne dass jemand es merkt.
+
+`Z` sagt etwas anderes: „das ist ein Zeitpunkt". Ein Zeitpunkt ohne Zone
+wäre eine Verschiebung um den UTC-Offset — genau der Fehler, den ein
+Kalender nicht machen darf. Deshalb wird hier umgerechnet, in die lokale
+Zeit der Maschine, auf der der Import läuft.
+
+Weil die `TZID`-Fälle nicht umgerechnet werden, **nennt der Bericht die
+betroffenen Termine** (in `report.warnings`) — der Nutzer soll sie prüfen
+können, wenn die Datei aus einer fremden Zone kommt.
+
+### Ganztag: `DTEND` ist exklusiv, `end` ist inklusiv
+
+In ICS endet ein Ganztagestermin am Tag **nach** dem letzten Tag. Im
+Kalender ist `end` der **letzte** Tag. Deshalb wird ein Tag abgezogen:
+
+```
+DTSTART;VALUE=DATE:20261028
+DTEND;VALUE=DATE:20261029
+```
+
+wird zu `start: "2026-10-28"`, `end: "2026-10-28"` — ein einzelner Tag. Und
+`DTEND;VALUE=DATE:20261030` wird zu `end: "2026-10-29"`: der 28. und der
+29. Ein Ganztagestermin ohne `DTEND` dauert einen Tag (`start == end`).
+
+Statt `DTEND` darf eine `DURATION` stehen: `DURATION:P2D` sind zwei Tage
+(`end: "2026-10-29"`), `DURATION:PT1H30M` anderthalb Stunden
+(`end: "2026-10-28T15:30"`). Wenn beides dasteht, gewinnt `DTEND`.
+
+Ein Termin **mit** Uhrzeit, aber ohne `DTEND` und ohne `DURATION`, bekommt
+ein Ende eine Stunde nach dem Beginn. Das Kalenderformat kennt keinen
+Termin ohne Länge (`validateEventRange` weist ein Ende auf dem Beginn
+zurück), und eine Stunde ist der kleinste Wert, der darstellbar ist. Der
+Bericht sagt es, wenn das passiert.
+
+### Wiederholungen
+
+Ausgewertet werden:
+
+- `FREQ=DAILY`, `FREQ=WEEKLY`, `FREQ=MONTHLY`, `FREQ=YEARLY`,
+- `INTERVAL` — der Abstand zwischen den Perioden,
+- `COUNT` — so viele Vorkommen,
+- `UNTIL` — bis zu diesem Datum,
+- `BYDAY` bei `WEEKLY` (z. B. `MO,WE`),
+- `BYDAY` mit Ordnungszahl (`2MO` — der zweite Montag) und `BYMONTHDAY` bei
+  `MONTHLY`; stehen beide da, schneiden sie sich,
+- `BYMONTH` bei `YEARLY`,
+- `EXDATE` — diese Tage fallen weg.
+
+Jedes Vorkommen wird ein eigener Termin mit eigener Kennung, mit demselben
+Titel, derselben Notiz und demselben Ort.
+
+Zwei Grenzen, und beide sind hart:
+
+- **Ohne `COUNT` und ohne `UNTIL` wird die Regel nicht ausgewertet.** Der
+  Import bringt den ersten Termin und eine Meldung in
+  `report.unexpandedRecurrences`. Eine unbegrenzte Regel darf nie endlos
+  laufen — und ein Kalender, der auf Zuruf 40 Jahre lang jeden Montag
+  anlegt, ist kein Kalender.
+- **Eine Regel, die das Modul nicht kennt** (`BYSETPOS`, `BYWEEKNO`,
+  `BYYEARDAY`, `RSCALE`, …) bringt genauso den ersten Termin und eine
+  Meldung. Der Bericht nennt die Teile, die nicht ausgewertet wurden.
+
+Die `BY`-Teile gelten nicht für jede Frequenz: `BYDAY` ohne Ordnungszahl
+und `BYMONTHDAY` nur bei `MONTHLY`, `BYMONTH` nur bei `YEARLY`, eine
+Ordnungszahl im `BYDAY` nur bei `MONTHLY`. Was nicht zur Frequenz passt,
+wird **nicht geraten**, sondern gemeldet — eine Regel, die stillschweigend
+etwas anderes bedeutet, wäre der schlimmste Fall.
+
+Zusätzlich ist ein einzelner `VEVENT` bei 1000 Vorkommen und ein ganzer
+Import bei 2000 Terminen abgeschnitten; der Bericht sagt, wenn der Deckel
+gegriffen hat.
+
+### Was das Format nicht ausdrücken kann
+
+Der Kalender kennt keine Teilnehmer, keine Erinnerungen, keine Kategorien,
+keine Organisatoren, keine URLs, keinen Status und keine Transparenz
+(„frei" oder „belegt"). Eine Datei, die das enthält, verliert diese Angaben
+beim Import — gezählt und gemeldet, aber nicht gespeichert, denn das
+Ereignismodell hat keine Felder dafür.
+
+Eine Regel ohne Ende liegt sich nicht importieren lassen. Und die UID wird
+nicht gespeichert — das Ereignismodell hat kein Feld dafür, und ein
+zusätzliches Feld wäre eine zweite Wahrheit über denselben Termin.
+
+### Die Route
+
+```
+POST /api/calendar/import
+{ "ics": "BEGIN:VCALENDAR…", "apply": false }
+```
+
+Ohne `apply` (oder mit `apply: false`) wird **nur gelesen**: die Route sagt,
+was importiert würde, und schreibt nichts. Erst `apply: true` legt die
+Termine in die Kalenderdatei — atomar, über denselben Store wie
+`POST /api/calendar`.
+
+Die Antwort hat immer dieselbe Form:
+
+```json
+{
+  "applied": false,
+  "events": [],
+  "report": {
+    "imported": 0,
+    "skipped": [{ "reason": "no-start-date", "detail": "VEVENT „X" ohne DTSTART" }],
+    "ignored": { "alarms": 0, "attendees": 0, "categories": 0, "organizers": 0, "urls": 0, "statuses": 0, "transparencies": 0, "timezones": 0, "otherComponents": 0 },
+    "unexpandedRecurrences": 0,
+    "warnings": []
+  }
+}
+```
+
+`reason` ist ein maschinenlesbares Wort — `no-start-date`, `duplicate`,
+`unexpanded-recurrence`, `invalid-event` — damit die Oberfläche es
+übersetzen und ein Test darauf prüfen kann.
+
+Die Statuscodes:
+
+| Fall | Antwort |
+|---|---|
+| Kein Konto, fremder Host | `403` |
+| Kein JSON-Body | `415` |
+| Kein `ics` im Body, kaputtes JSON | `400` |
+| Leere Datei, kein `BEGIN:VCALENDAR` | `400` |
+| Datei größer als 2 MB | `413` |
+| Alles andere | `200` |
+
+### Die Oberfläche des Imports
+
+`components/calendar/CalendarImport.tsx` ist die Oberfläche des Imports. Sie
+hängt als eine Kopfzeilen-Aktion in der Kalenderansicht: der Knopf
+**„ICS importieren"** sitzt in derselben Gruppe wie „Neuer Termin" —
+zwischen der Ansichtsumschaltung und dem Anlegen-Knopf. Er ist kein eigenes
+Bedienfeld: ein Import ist eine Aktion wie das Anlegen eines Termins, und
+ein zweiter Block in der Kopfzeile wäre eine zweite Art, den Kalender zu
+benutzen.
+
+Die Komponente trägt ihren Zustand selbst — sie kennt den Kalender nicht und
+lädt ihn nicht. Nach einem Import ruft sie `onImported?.()` auf; in der
+Ansicht ist das der Rückfall für den Fall, dass der SSE-Strom (Kapitel 4)
+nicht kommt. Normalerweise lädt der Strom den Kalender von selbst, weil die
+Route `notifyCalendarChange` auslöst.
+
+#### Zwei Requests, und der erste schreibt nichts
+
+Die Route kennt das Feld `apply`, und die Oberfläche nutzt es: der erste
+Request trägt `apply: false` und ist die **Vorschau** — die Route parst die
+Datei und sagt, was importiert würde, und legt **nichts** in die Datei. Erst
+der zweite Request, mit `apply: true`, schreibt.
+
+Der Dialog bleibt zwischen beiden offen. Der Nutzer liest die Vorschau und
+entscheidet; „Abbrechen" schließt den Dialog, ohne dass etwas geschrieben
+wurde.
+
+**Ein Import lässt sich nicht rückgängig machen.** Es gibt keinen Papierkorb
+und kein Undo für eine importierte Datei — dieselbe Grenze wie beim Löschen
+eines Termins (Kapitel 3, „Das Löschen ist endgültig"). Deshalb gibt es die
+Vorschau, und deshalb bleibt der Dialog auch nach dem Import offen und zeigt
+das Ergebnis, bis der Nutzer ihn schließt: Der Import ist ein Einmal-Vorgang,
+und der Nutzer soll sehen, was passiert ist.
+
+#### Die Größenprüfung passiert im Browser, vor dem Request
+
+`MAX_ICS_BYTES` in `lib/calendar-ics.ts` ist die Grenze. Die Oberfläche prüft
+`file.size` **vor** dem Request: eine zu große Datei erzeugt **keinen**
+Request, sondern eine Meldung im Dialog.
+
+Der Server prüft trotzdem noch einmal. Die Grenze im Browser ist die
+Bequemlichkeit — sie spart den Upload einer Datei, die nichts einbringt; die
+Grenze im Server ist die Sicherheit, denn der Server ist die Stelle, an der
+ein Request überhaupt ankommt. Beide nennen dieselbe Konstante, damit die
+zwei Prüfungen nicht auseinanderlaufen können.
+
+#### Was die Vorschau zeigt
+
+Die Vorschau nennt alles, was der Import tun wird und was er nicht tun wird:
+
+- die **Zahl der Termine**, die importiert würden,
+- die **übersprungenen Einträge** mit Grund und Erklärung — der Grund ist
+  das maschinenlesbare `reason` aus dem Bericht, übersetzt in eine deutsche
+  Bezeichnung („Kein Startdatum", „Doppelt", …); die Erklärung ist der
+  `detail`-Text des Berichts,
+- die **Warnungen** des Parsers (etwa ein Termin aus einer fremden Zeitzone),
+- die **Zahl der nicht ausgewerteten Regeln**,
+- die **verworfenen Formate** — aber nur die, deren Zähler größer als null
+  ist. Der Bericht liefert alle Zähler, auch die nullen (in diesem Kapitel,
+  „Die unterstützte Teilmenge"); eine Liste voller Nullen ist Rauschen: sie
+  sagt dem Nutzer nichts und verdeckt die eine Zahl, die ihn interessiert.
+
+Eine Datei ohne Termine wird als solche gemeldet — „Die Datei enthält keine
+Termine." — und nicht als Erfolg verbucht. Der Import-Knopf ist dann
+deaktiviert: es gibt nichts zu schreiben, und ein Knopf, der nichts tut, ist
+eine falsche Zusage.
+
+#### Der Fehler steht im Dialog
+
+Dieselbe Falle wie beim Löschen (Kapitel 4, „Ein Serverfehler erscheint
+nicht als englischer Text"): Die Meldungsleiste der Kalenderansicht liegt
+hinter dem Overlay des Dialogs und ist unsichtbar, solange der Dialog offen
+ist. Der Import trägt deshalb seinen **eigenen** Fehlerbereich — im Dialog,
+als `role="alert"`, in `--danger`. Der Test prüft das nicht an der Farbe,
+sondern an der Stelle: das `role="alert"`-Element muss ein Nachfolger des
+Dialogs sein.
+
+Die beiden Dialoge sind nicht derselbe Baustein, der Grund ist aber bei
+beiden derselbe: Der Termindialog ist ein Radix-Dialog mit dem Overlay
+`[data-slot="dialog-overlay"]` (`fixed inset-0`, `z-50`), der Importdialog
+ein `ModalBackdrop` (`fixed inset-0`, `z-index: 1100`) im Portal auf
+`document.body`. Beide liegen über der Kopfzeile — und damit auch über ihrer
+Meldungsleiste.
+
+Die **deutsche** Überschrift kommt aus dem **Statuscode**, nicht aus dem
+englischen Text des Servers: `400` → „Die Datei ist kein gültiger ICS-Kalender",
+`403` → „Zugriff auf den Kalender verweigert", `413` → „Die Datei ist zu
+groß", alles andere → „Der Import ist fehlgeschlagen". Der englische
+Originaltext steht **darunter**, als Nachweis, nicht als Übersetzung — eine
+Übersetzung per String-Matching auf englische Sätze zerbricht, sobald der
+Server den Satz umformuliert.
+
+Das sind die beiden Regeln aus `docs/i18n.md` in dieser Reihenfolge: die
+servergelieferte Fehlerdetails bleiben **unverändert** (Regel 5), und ein
+API-Fehler wird **nicht** übersetzt, indem man seinen englischen Text
+erkennt — übersetzt wird nur der lokale Text darum herum (Regel 6). Die
+deutsche Überschrift ist dieser lokale Text; sie entsteht aus dem
+Statuscode, nicht aus dem Satz.
+
+#### Der Datei-Eingang bleibt mit der Tastatur bedienbar
+
+Der Eingang ist versteckt, aber nicht unerreichbar: der sichtbare Knopf löst
+ihn per `ref` aus, und der Eingang selbst bleibt im Tabstopp. Gemessen im
+Browser am 26.10.2026 (Chromium 149, Playwright): nach dem Knopf „ICS
+importieren" ist der nächste Tabstopp der Datei-Eingang (`input[type=file]`,
+`aria-label` „ICS-Datei auswählen"), danach folgt „Neuer Termin". Ein
+versteckter, aber fokussierbarer Eingang ist die eine Hälfte; die andere
+Hälfte ist der sichtbare Knopf, der ihn auslöst.
+
+### Die Duplikate
+
+Zwei `VEVENT` mit derselben `UID` sind derselbe Termin — der zweite fällt
+weg, mit allen seinen Vorkommen. Gegenüber dem **vorhandenen** Kalender
+hilft nur der Inhalt: Titel, Beginn und Ende. Die UID wird nicht gespeichert,
+und ein selbst angelegter Termin hat keine — er wird deshalb nur erkannt,
+wenn er zufällig denselben Titel zur selben Zeit am selben Tag hat. Das ist
+die ehrliche Grenze des Formats, und sie steht hier, statt in einer
+Fußnote zu verschwinden.
+
+---
+
+## 7. Die Mandantengrenze
 
 Der Kalender ist pro Konto getrennt, an drei Stellen:
 
@@ -636,41 +986,52 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 
 ---
 
-## 7. Die Dateien
+## 8. Die Dateien
 
 | Datei | Inhalt |
 |---|---|
 | `lib/calendar.ts` | Ereignismodell, Validierung, deutsche Datumslogik, Feiertage, Farben, die Normalisierung von Zeit-, Datums- und Farbeingaben. Ohne `fs`, ohne `fetch` — damit Browser und Server dieselbe Rechnung benutzen. |
 | `lib/calendar-store.ts` | Die Datei pro Konto, atomar geschrieben, plus der Änderungs-Emitter. |
 | `lib/calendar-tool.ts` | Die beiden Agent-Werkzeuge. |
+| `lib/calendar-ics.ts` | Der ICS-Parser: eine `.ics`-Datei lesen, die Regeln auswerten, den Bericht schreiben. Ohne `fs`, ohne `fetch`. |
 | `app/api/calendar/route.ts` | Liste und Anlegen. |
 | `app/api/calendar/[id]/route.ts` | Ändern und Löschen. |
+| `app/api/calendar/import/route.ts` | Der Import: eine `.ics`-Datei lesen — und auf Zuruf schreiben. |
 | `app/api/calendar/events/route.ts` | Der SSE-Strom. |
 | `app/globals.css` | Die Theme-Variablen — und dort auch `--violet`, die fünfte Preset-Farbe, in beiden Themes. |
 | `hooks/useCalendar.ts` | Laden, Schreiben und die Verbindung zum SSE-Strom. |
 | `components/CalendarView.tsx` | Die Oberfläche. |
 | `components/calendar/calendar-model.ts` | Die Rechenlogik der Anzeige: wo ein Termin sitzt, wie lang er ist, wie er verschoben wird. |
 | `components/calendar/CalendarEventDialog.tsx` | Der Dialog zum Anlegen und Bearbeiten eines Termins. |
+| `components/calendar/CalendarImport.tsx` | Die Oberfläche des Imports: Dateiauswahl, Größenprüfung vor dem Request, die Vorschau, der Import-Knopf und der Fehler im Dialog. |
 | `components/calendar/useCalendarText.ts` | Die Texte des Kalenders — immer aus dem deutschen Sprachpaket. |
 | `lib/i18n/messages/de.ts` | Das deutsche Sprachpaket, vollständig — und als einziges Paket mit den `calendar.*`-Schlüsseln. |
 | `lib/i18n/locale-parity.test.mjs` | Die Vollständigkeit des deutschen Pakets und die Ausnahme der `calendar.*`-Schlüssel. |
+| `test/calendar-formats.mjs` | Das gemeinsame Fixture-Modul der neun Formate, die der Import nicht übernimmt: je Format sein eigener Auslöser, sein Schlüssel im Bericht und sein Schlüssel im deutschen Sprachpaket. **Keine Testdatei** — es speist zwei Testdateien (den Parser-Test und den Oberflächen-Test), damit beide dieselben Dateien benutzen. |
+| `src-tauri/Cargo.lock` | Die Lockdatei des Desktop-Umbaus. Sie pinnt die `wry`- und `tauri`-Version, auf die sich das Löschen ohne `window.confirm` beruht — und an ihr hängt `test/calendar-versions.test.mjs`. |
 
 ---
 
-## 8. Die Tests
+## 9. Die Tests
 
 | Datei | Deckt ab |
 |---|---|
-| `lib/calendar.test.mjs` | Datumslogik, ISO-Woche, Feiertage, Raster, Terminpositionen, Farben und ihre Normalisierung. |
+| `lib/calendar.test.mjs` | Datumslogik, ISO-Woche — mit dem Beispiel, dass die erste Kalenderwoche 2026 am 29.12.2025 beginnt und ihr Donnerstag der 1.1.2026 ist —, Feiertage, Raster, Terminpositionen, Farben und ihre Normalisierung. |
 | `lib/calendar-store.test.mjs` | Dateipfad, Mandantengrenze, Schreibweise, Normalisierung, Sortierung, Änderungsmeldungen. |
-| `lib/calendar-tool.test.mjs` | Werkzeugnamen, Freigabestufen, Lesen, Schreiben, Verschieben, Löschen, der heutige Anker, die Gekürzungs-Hinweise, die Farben, Mandantengrenze. |
+| `lib/calendar-tool.test.mjs` | Werkzeugnamen, Freigabestufen, Lesen, Schreiben, Verschieben, Löschen, der heutige Anker, die Farben, Mandantengrenze — und die gekürzten Felder: ein Titel über 300 Zeichen sowie eine Notiz oder ein Ort über 4000 Zeichen, jeweils mit dem Kürzungshinweis im Ergebnistext. |
+| `lib/calendar-ics.test.mjs` | Der ICS-Parser: gefaltete Zeilen, die Texte, die drei Zeitumrechnungen, die Dauer, die Regeln (Täglich, Wöchentlich, Monatlich, `INTERVAL`, `COUNT`, `UNTIL`), die Ausschlussliste `EXDATE`, die unbegrenzte und die unbekannte Regel, die Zähler für Alarm und Teilnehmer, die kaputte Datei — und die neun verworfenen Formate: jede von ihnen wird von ihrer eigenen Datei ausgelöst und von keiner anderen, eine Datei mit allen neun trägt genau die neun Zähler. Ebenso der Import-Deckel von 2000 Terminen mit der Meldung, dass der Import abgeschnitten wurde, und der Deckel von 1000 Terminen je Ereignis. |
 | `app/api/calendar/calendar-routes.test.mjs` | Zugriff, Anlegen, Ändern, Löschen, Filter, Farben, Mandantengrenze. |
+| `app/api/calendar/import/route.test.mjs` | Der Import: Zugriff, die Grenzen (2 MB, kein Kalender), die Vorschau ohne Schreibvorgang, das Schreiben in die Datei, die Duplikate, der Bericht. |
 | `components/calendar/calendar-model.test.mjs` | Die Rechenlogik der Anzeige: Raster, Mitternacht, Verschieben. |
-| `components/calendar/calendar-event-dialog.test.mjs` | Vorbelegung von Beginn und Ende, das Ende folgt dem Beginn, die Rückfrage vor dem Löschen, die fünf Presets und der eigene Farbcode. |
+| `components/calendar/calendar-event-dialog.test.mjs` | Vorbelegung von Beginn und Ende, das Ende folgt dem Beginn um 60 Minuten — auch wenn die Beginnzeit sich danach ändert —, die zweistufige Löschbestätigung **im Dialog** (ohne `window.confirm`), die den Namen des Termins nennt, das Abbrechen stellt den Zustand wieder her, der Fehler im Dialog, die fünf Presets und der eigene Farbcode. |
+| `components/calendar/calendar-import.test.mjs` | Der Import der Oberfläche: der erste Request liest nur und schreibt nichts, „Importieren" schickt `apply: true`, eine zu große Datei erzeugt keinen Request, der Serverfehler steht **im Dialog**, der Statuscode nennt die deutsche Überschrift, eine Datei ohne Termine wird als solche gemeldet, und die Zahl steht im richtigen Numerus. Der Block „Diese Angaben wurden nicht übernommen" erscheint **nur**, wenn ein Zähler über null liegt, und die Vorschau nennt alle neun verworfenen Formate mit ihrem deutschen Namen statt eines Rohschlüssels. Ebenso die Grenze von 4000 Zeichen für Notiz und Ort, mit der Warnung in der Vorschau. |
 | `components/calendar/calendar-view.test.mjs` | Die verdrahtete Ansicht: Ziehen im Monats- und im Wochenraster, und der Servertext erscheint nicht unübersetzt. |
 | `components/calendar/calendar-sse.test.mjs` | Der SSE-Strom: die Änderung erreicht einen Listener, für den der Client sich tatsächlich registriert. |
+| `hooks/useCalendar.test.mjs` | Der Generationszähler des Hooks: die jüngere Antwort gewinnt, auch wenn die ältere später eintrifft, eine ältere Antwort wird verworfen, keine der Anfragen wird abgebrochen, ein veralteter Fehler meldet nichts, und beim Abbau wird die laufende Anfrage abgebrochen. |
 | `lib/i18n/locale-parity.test.mjs` | Die Vollständigkeit des deutschen Pakets und die `calendar.*`-Ausnahme. |
 | `lib/i18n/registry.test.mjs` | Die Erkennung der deutschen Browsersprache und die Registrierung. |
+| `lib/i18n/format.test.mjs` | Die i18n-Hilfsfunktionen: das Einsetzen von Parametern, der Rückfall auf Englisch und die relative Zeit in der gewählten Sprache. |
+| `test/calendar-versions.test.mjs` | Die gepinnten Versionen: die Doku nennt genau die Versionen, die `src-tauri/Cargo.lock` pinnt, und die Lockdatei pinnt `wry` und `tauri` als eigene Pakete. |
 
 Ein Test, der eine Zahl nennt, prüft diese Zahl auch — die Regel aus
 `AGENTS.md` gilt hier genauso wie im Rest des Projekts.

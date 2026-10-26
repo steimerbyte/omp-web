@@ -10,10 +10,27 @@ upstream line — see the Provenance section in the README.
 **Der Kalender.** Eine eigene Ansicht in omp-web, erreichbar über den Knopf
 neben dem Projekt-Dashboard in der Seitenleiste und über `?view=calendar`.
 Monats-, Wochen- und Tagesansicht; Termine lassen sich per Klick anlegen,
-per Ziehen verschieben, bearbeiten und löschen. Das Löschen fragt vorher nach
-(`window.confirm`), weil es sich nicht zurücknehmen lässt und der Agent vom
-gelöschten Termin nichts erfährt: eine Rückfrage kostet einen Klick, ein
-Versehen kostet den Termin.
+per Ziehen verschieben, bearbeiten und löschen. Das Löschen fragt vorher nach,
+weil es sich nicht zurücknehmen lässt und der Agent vom gelöschten Termin
+nichts erfährt: eine Rückfrage kostet einen Klick, ein Versehen kostet den
+Termin.
+
+Die Rückfrage steht jetzt **im Dialog selbst**, und sie kostet **zwei Klicks**:
+der erste schaltet den Dialog in den Bestätigungszustand, der zweite löscht.
+Sie nennt den Termin — „Kunde Meier“ wirklich löschen? —, weil bei vielen
+Terminen sonst keiner zu erkennen ist. Vorher stand hier ein natives Fenster
+(`window.confirm`), und das hat in der Desktop-App gar nicht gefragt: das
+Webview (`wry` 0.55.1) führt `runJavaScriptConfirmPanel` nicht aus, und Apple
+dokumentiert für genau diese Lücke, dass sich die WebView verhält, als hätte
+der Nutzer abgebrochen. Das Löschen fand dort also nie statt — ohne jede
+sichtbare Rückmeldung, der Knopf tat schlicht nichts. Im Browser blockierte
+das Fenster außerdem den Seitenthrend, bis der Nutzer antwortet.
+
+Fehler beim Speichern und beim Löschen stehen jetzt **im** Dialog und nicht
+mehr in der Meldungsleiste unter der Kalender-Kopfzeile: die Leiste liegt
+hinter dem offenen Dialog und war unsichtbar, genau dann, wenn der Nutzer den
+Fehler gebraucht hätte. Die Meldungsleiste bleibt für den Erfolgsfall — dort
+ist der Dialog zu.
 
 Ein neuer Termin aus einem freien Stundenraster bekommt eine Stunde als
 Ende, nicht dieselbe Uhrzeit wie der Beginn — ein Termin, dessen Ende gleich
@@ -75,6 +92,40 @@ wurden deshalb ersetzt, nicht umformatiert: ihr Format folgt dem Browser,
 nicht der Seite. Die Felder sind uncontrolled, damit „15:3" getippt und
 danach „0" nachgetippt werden kann — die Normalisierung sitzt an der Grenze
 zum Kalenderformat.
+
+**Import aus einer `.ics`-Datei.** In der Kalender-Kopfzeile steht ein Knopf
+„ICS importieren", der eine `.ics`-Datei annimmt. Der Import läuft in zwei
+Schritten: die Datei wird gelesen und ausgewertet, und das Ergebnis erscheint
+als Vorschau — es wird **nichts** geschrieben. Erst ein Klick auf
+„Importieren" legt die Termine an. Zwei Schritte, weil ein Import sich nicht
+zurücknehmen lässt: die Vorschau macht den Fehler sichtbar, **bevor**
+geschrieben wird, und nicht danach.
+
+Die Vorschau sagt, was importiert würde: die Zahl der Termine, die
+**übersprungenen** Termine mit ihrem Grund, die **Warnungen**, die Zahl der
+nicht ausgewerteten Wiederholungsregeln und die **Angaben, die nicht übernommen
+wurden** — Erinnerungen, Teilnehmer, Kategorien, Organisatoren, Webadressen,
+Statusangaben, Durchsichtigkeitsangaben, Zeitzonen und die übrigen Bestandteile
+der Datei. Die Vorschau listet dabei nur die Formate auf, die wirklich
+vorkommen; eine Liste voller Nullen wäre Rauschen. Eine Datei über 2 MB wird
+schon im Browser abgewiesen — sie erzeugt gar keinen Request.
+
+Ein Import kann teilweise gelingen: ein Termin ohne Startdatum oder ohne
+brauchbares Ende fällt heraus, und die Datei nennt ihn mit seinem Grund — ein
+unbrauchbarer Termin bricht den Import nicht ab. Die Grenzen des Formats
+stehen dabei offen in der Vorschau. Eine Regel ohne Ende (kein `COUNT`, kein
+`UNTIL`) wird nicht endlos expandiert, sondern liefert nur den ersten Termin
+und steht als Meldung im Bericht. `BYSETPOS`, `BYYEARDAY` und andere Teile
+der Regel, die der Kalender nicht kennt, werden nicht ausgewertet und ebenso
+gemeldet.
+
+Ein Duplikat erkennt der Import auf **zwei** Wegen, und die beiden Wege
+unterscheiden sich. **Innerhalb der Datei** entscheidet die UID: zwei
+Termine mit derselben UID sind derselbe Termin — der erste gewinnt, der
+spätere fällt weg, samt aller seiner Wiederholungen. **Gegenüber dem
+bereits vorhandenen Kalender** hilft nur der Inhalt, denn die UID wird nicht
+gespeichert: dort entscheiden Titel, Beginn und Ende — für jeden Termin im
+Kalender, ob er selbst angelegt oder importiert wurde.
 
 Die Termine liegen in `omp-web-calendar.json` im Agent-Verzeichnis des Kontos:
 eine Datei pro Konto, atomar geschrieben, `0o600`. Das ist dieselbe Form wie

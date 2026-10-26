@@ -88,26 +88,50 @@ export function useCalendar(): UseCalendarResult {
    * Die laufende Anfrage.
    *
    * Sie wird beim Wechsel der Ansicht nicht abgebrochen — der Kalender laedt
-   * fuer alle drei Ansichten dieselbe Liste — sondern nur beim Aendern der
-   * Identitaet. Sonst wuerde ein schneller Klick auf "Heute" zwei Anfragen
-   * erzeugen, deren Antworten in beliebiger Reihenfolge eintreffen.
+   * fuer alle drei Ansichten dieselbe Liste — sondern nur beim Abbau der
+   * Komponente. Eine laufende Anfrage zu beenden, ist ein Eingriff in den
+   * Netzwerk-Tab des Nutzers, und der wird hier vermieden.
    */
   const inFlight = useRef<AbortController | null>(null);
+  /**
+   * Der Generationszaehler der Ladevorgaenge.
+   *
+   * Jeder `reload()` nimmt die naechste Nummer. Eine Antwort wird nur dann
+   * uebernommen, wenn ihre Nummer die juengste abgegebene ist: die juengste
+   * Anfrage gewinnt, eine aeltere Antwort, die spaeter eintrifft, wird
+   * verworfen.
+   *
+   * Warum kein Abbruch mehr: bei jedem Anlegen und Loeschen eines Termins
+   * laufen zwei Ladevorgaenge — der eigene des Schreibvorgangs und der des
+   * SSE-Stroms, den der Server mit `calendar_changed` ausloest. Bisher hat
+   * der zweite den ersten abgebrochen. Das ist technisch harmlos (der
+   * `AbortError` wird abgefangen), aber der Nutzer sah bei *jedem* Schreiben
+   * eine rote Zeile im Netzwerk-Tab (`net::ERR_ABORTED`) und eine rote
+   * Zeile in der Konsole und hat sie als Fehler gemeldet. Der Abbruch war
+   * nie das Ziel, sondern nur der bisherige Weg, veraltete Antworten
+   * fernzuhalten — der Zaehler erledigt das ohne Nebenwirkung.
+   */
+  const generation = useRef(0);
 
   const reload = useCallback(async () => {
-    inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
+    const mine = ++generation.current;
     try {
       const body = await requestJson<{ events?: CalendarEvent[] }>("/api/calendar", {
         signal: controller.signal,
       });
-      if (controller.signal.aborted) return;
+      // Eine aeltere Antwort, die spaeter eintrifft, wird verworfen: die
+      // juengere Anfrage hat inzwischen den neueren Stand geliefert.
+      if (mine !== generation.current) return;
       setEvents(body.events ?? []);
       setError(false);
     } catch (cause) {
+      // Eine veraltete Anfrage hat nichts zu melden: ihr Fehler betrifft
+      // einen Stand, den die Oberflaeche nicht mehr zeigt.
+      if (mine !== generation.current) return;
       // Ein abgebrochener Request ist kein Fehler: er wurde absichtlich
-      // verwaorfen, weil ein neuer kam.
+      // verwaorfen, weil die Komponente verschwunden ist.
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       console.error("Failed to load the calendar:", cause);
       setError(true);
@@ -116,7 +140,14 @@ export function useCalendar(): UseCalendarResult {
 
   useEffect(() => {
     void reload();
-    return () => { inFlight.current?.abort(); };
+    return () => {
+      // Der Abbau ist der einzige Abbruch, der bleibt: die Anfrage laeuft
+      // nicht mehr gegen eine Oberflaeche, die es nicht mehr gibt. Die
+      // Generation wird hochgezaehlt, damit eine Antwort, die trotzdem noch
+      // eintrifft, nichts mehr setzt.
+      inFlight.current?.abort();
+      generation.current += 1;
+    };
   }, [reload]);
 
   /**

@@ -312,13 +312,27 @@ test("ein Fehler beim Speichern erscheint nicht als englischer Servertext", asyn
   const viewSource = await readFile(new URL("../CalendarView.tsx", import.meta.url), "utf8");
   const noticeLines = viewSource.split("\n").filter((line) => line.includes("setNotice("));
   assert.ok(noticeLines.length > 0, "es wird ueberhaupt eine Meldung angezeigt");
-  for (const line of noticeLines) {
+  // Der Fehler des *offenen Dialogs* hat einen eigenen Zustand: er steht
+  // im Dialog, weil die Meldungsleiste der Ansicht hinter dem Radix-Overlay
+  // liegt und damit nicht lesbar ist. Auch dort darf der Servertext nicht
+  // unuebersetzt erscheinen.
+  const dialogErrorLines = viewSource.split("\n").filter((line) => line.includes("setDialogError("));
+  assert.ok(dialogErrorLines.length > 0, "der Dialog bekommt keinen Fehler weitergereicht");
+  for (const line of [...noticeLines, ...dialogErrorLines]) {
     assert.doesNotMatch(
       line,
       /cause\.message|cause\.toString/,
       `der Servertext wird unuebersetzt angezeigt: ${line.trim()}`,
     );
   }
+
+  // Und der Fehler des Dialogs erreicht den Dialog auch wirklich: ohne
+  // dieses Prop koennte die Meldung im Dialog gar nicht erscheinen.
+  assert.match(
+    viewSource,
+    /error=\{dialogError\}/,
+    "der Dialog bekommt den Fehler nicht weitergereicht",
+  );
 
   await act(async () => { root.unmount(); });
 });

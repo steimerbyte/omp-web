@@ -5,7 +5,22 @@ const eslintConfig = [
   ...coreWebVitals,
   ...typescript,
   {
-    ignores: ["**/src-tauri/target", "**/src-tauri/gen"],
+    // Global ignores: this object has no other keys, so ESLint treats it as a
+    // global ignore (applies to every config object, not just this one).
+    ignores: [
+      "**/src-tauri/target",
+      "**/src-tauri/gen",
+      // Next.js build output, in every location it can appear:
+      //   - `.next`            -> default dev/build dist dir
+      //   - `.next-*`          -> custom OMP_WEB_DIST_DIR (e.g. .next-cal-dialog)
+      //   - `src-tauri/server/.next` -> staged desktop build (bun run desktop:build)
+      "**/.next",
+      "**/.next/**",
+      "**/.next-*",
+      "**/.next-*/**",
+      "**/src-tauri/server/.next",
+      "**/src-tauri/server/.next/**",
+    ],
   },
   {
     rules: {

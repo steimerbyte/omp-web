@@ -133,6 +133,7 @@ export function CalendarEventDialog({
   event,
   preset,
   busy,
+  error,
   onCancel,
   onSave,
   onDelete,
@@ -143,6 +144,15 @@ export function CalendarEventDialog({
   preset: { date: string; time: string | null };
   /** `true`, solange gespeichert wird. */
   busy: boolean;
+  /**
+   * Der Fehler des letzten Speicherns oder Loeschens — oder `null`.
+   *
+   * Er kommt von der Ansicht, weil *dort* die Anfrage laeuft. Er wird
+   * hier *innerhalb* des Dialogs angezeigt: eine Meldungsleiste unter der
+   * Kalender-Kopfzeile liegt hinter dem Radix-Overlay und ist damit
+   * unerreichbar, solange der Dialog offen ist.
+   */
+  error?: string | null;
   onCancel: () => void;
   onSave: (input: CalendarEventInput, id: string | null) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
@@ -153,6 +163,31 @@ export function CalendarEventDialog({
   const [description, setDescription] = useState(event?.description ?? "");
   const [location, setLocation] = useState(event?.location ?? "");
   const [allDay, setAllDay] = useState(event?.allDay ?? preset.time === null);
+
+  /**
+   * Der Dialog fragt *im Dialog* nach, bevor er loescht.
+   *
+   * ### Warum keine native Rueckfrage
+   *
+   * `window.confirm()` hat zwei getrennte Fehler, und beide treffen das
+   * Loeschen im Tauri-Desktop:
+   *
+   * 1. Der Desktop-Shell (wry 0.55.1) implementiert
+   *    `runJavaScriptConfirmPanel` nicht. Apple dokumentiert fuer diese
+   *    Luecke: "If you do not implement this method, the web view will
+   *    behave as if the user selected the Cancel button." `confirm()`
+   *    liefert dort also immer `false` — der Knopf tut, als sei nichts
+   *    passiert: keine Anfrage, keine Aenderung, keine Meldung.
+   * 2. Im Browser blockiert die native Rueckfrage den Seitent Thread, bis
+   *    der Nutzer antwortet. Ein Klick auf "Loeschen" haengt dann im
+   *    Automationstest fest.
+   *
+   * Die Rueckfrage ist deshalb ein Zustand *dieses* Dialogs: ein erster
+   * Klick schaltet den Dialog in den Bestaetigungszustand, und erst der
+   * zweite Klick loescht. Damit gibt es keine native Box, keinen
+   * Thread-Blocker und keine zweite Fokusfalle.
+   */
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   /**
    * Die kanonischen Werte des Termins.
@@ -229,6 +264,10 @@ export function CalendarEventDialog({
     setColor(nextColor);
     setCustomOpen(nextHex !== "");
     setHexText(nextHex);
+    // Ein anderer Termin heisst auch: keine offene Loesch-Rueckfrage. Sonst
+    // stuende die Bestaetigung noch, obwohl sie den *vorherigen* Termin
+    // meint.
+    setConfirmingDelete(false);
 
     // Die Felder sind uncontrolled: ihr Inhalt steht im DOM. Ein neuer Termin
     // braucht deshalb den passenden Text im Feld.
@@ -395,20 +434,40 @@ export function CalendarEventDialog({
   };
 
   /**
-   * Der Termin wird geloescht — aber erst nach der Rueckfrage.
+   * Der Termin wird geloescht — aber erst nach der Rueckfrage *im Dialog*.
    *
    * Das Loeschen ist nicht rueckgaendig zu machen: der Termin ist weg, und
    * der Agent weiss nichts davon. Eine Rueckfrage kostet einen Klick, ein
    * Versehen kostet den Termin.
+   *
+   * Der erste Klick schaltet nur in den Bestaetigungszustand; `onDelete`
+   * laeuft erst beim zweiten. Siehe die Erklaerung am Zustand.
    */
   const handleDelete = () => {
     if (!event) return;
-    if (!window.confirm(t("calendar.deleteConfirm"))) return;
+    setConfirmingDelete(true);
+  };
+
+  /** Der Bestaetigungszustand wird abgebrochen — der Termin bleibt. */
+  const handleDeleteCancel = () => {
+    setConfirmingDelete(false);
+  };
+
+  /** Der zweite Klick loescht wirklich. */
+  const handleDeleteConfirm = () => {
+    if (!event) return;
+    setConfirmingDelete(false);
     void onDelete(event.id);
   };
 
   const inputStyle = {
     width: "100%",
+    // `minWidth: 0` ist Pflicht, nicht Kosmetik: ein `<input>` hat eine
+    // intrinsische Mindestbreite (Groesse des Default-`size`-Attributs), und
+    // ohne diese Zeile weicht das Feld in einem Grid lieber aus, als dass es
+    // schrumpft. Die Spalte waere dann breiter als der Dialog, und der
+    // Inhalt laege ausserhalb des Fensters.
+    minWidth: 0,
     padding: "6px 8px",
     fontSize: 13,
     fontFamily: "inherit",
@@ -475,11 +534,36 @@ export function CalendarEventDialog({
           border: "1px solid var(--border)",
           color: "var(--text)",
           maxWidth: 420,
-          width: "calc(100vw - 32px)",
+          // `100%` statt `100vw`: `vw` enthaelt die Breite des
+          // Bildlaufleisten-Bereichs, `100%` nicht. Sonst ragt der Dialog auf
+          // einem Desktop mit sichtbarer Bildlaufleiste ueber den sichtbaren
+          // Bereich hinaus.
+          width: "calc(100% - 32px)",
+          // Der Dialog darf hoeher sein als der Bildschirm nicht. `100dvh`
+          // statt `100vh`, weil die Adressleiste des Browsers die sichtbare
+          // Hoehe veraendert.
+          maxHeight: "calc(100dvh - 32px)",
+          display: "flex",
+          flexDirection: "column",
+          // Der Inhalt scrollt *innerhalb* des Dialogs; der Fuss bleibt stehen.
+          overflow: "hidden",
         }}
       >
-        <form onSubmit={handleSubmit} noValidate>
-          <DialogHeader>
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            // `minHeight: 0` ist die Voraussetzung dafuer, dass die
+            // Flexbox das Formular unter die Hoehe des Dialogs schrumpfen
+            // laesst. Ohne das bleibt die Hoehe beim Inhalt, und der Fuss
+            // rutscht aus dem Fenster.
+            minHeight: 0,
+            flex: "1 1 auto",
+          }}
+        >
+          <DialogHeader style={{ flexShrink: 0 }}>
             <DialogTitle style={{ fontSize: 15, color: "var(--text)" }}>
               {event ? t("calendar.editEvent") : t("calendar.newEvent")}
             </DialogTitle>
@@ -488,7 +572,24 @@ export function CalendarEventDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 4 }}>
+          {/* Der Bereich mit den Feldern scrollt, der Fuss nicht. Damit bleibt
+              „Termin speichern" auch auf einem flachen Bildschirm erreichbar,
+              statt aus dem Fenster zu rutschen. */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              marginTop: 4,
+              flex: "1 1 auto",
+              minHeight: 0,
+              overflowY: "auto",
+              overflowX: "hidden",
+              // Kein Scroll-Chaining: das Scrollen im Dialog soll nicht die
+              // Seite dahinter mitziehen.
+              overscrollBehavior: "contain",
+            }}
+          >
             <div>
               <label style={labelStyle} htmlFor="calendar-title">{t("calendar.eventTitle")}</label>
               <input
@@ -521,8 +622,20 @@ export function CalendarEventDialog({
               {t("calendar.allDay")}
             </label>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
+            {/* Die beiden Spalten (Beginn und Ende) stehen nebeneinander, nur
+                wenn dafuer Platz ist. `auto-fit` mit einer Mindestbreite
+                entscheidet das an der *Innenhöhe* des Containers, nicht an
+                einer Fensterschwelle: unter ~310 px Inhaltsbreite faellt das
+                Raster auf eine Spalte zusammen, und Datum und Uhrzeit stehen
+                untereinander statt in zwei winzigen Kaestchen. */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
                 <label style={labelStyle} htmlFor="calendar-start-date">{t("calendar.eventStart")}</label>
                 <input
                   id="calendar-start-date"
@@ -555,7 +668,7 @@ export function CalendarEventDialog({
                 {timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
                 <span style={hintStyle}>{t("calendar.dateFormatHint")}</span>
               </div>
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={labelStyle} htmlFor="calendar-end-date">{t("calendar.eventEnd")}</label>
                 <input
                   id="calendar-end-date"
@@ -626,6 +739,10 @@ export function CalendarEventDialog({
                         width: 22,
                         height: 22,
                         borderRadius: 6,
+                        // `flexShrink: 0`: das Farbfeld darf nicht kleiner
+                        // werden, sonst waere die Farbe nicht mehr erkennbar.
+                        // Die Reihe bricht lieber um.
+                        flexShrink: 0,
                         // Die Farbe kommt aus der Theme-Variablen, nicht aus
                         // dem Quelltext — sonst waere die Farbe in einem
                         // importierten Theme die alte.
@@ -647,6 +764,10 @@ export function CalendarEventDialog({
                     fontSize: 12,
                     fontFamily: "inherit",
                     cursor: "pointer",
+                    // Der Knopf bricht nicht um, sondern die *Reihe* bricht um.
+                    // Ohne das schrumpft er zu einem unlesbaren Rest.
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
                     border: customSelected ? "2px solid var(--text)" : "1px solid var(--border)",
                     background: "none",
                     color: "var(--text-muted)",
@@ -659,15 +780,21 @@ export function CalendarEventDialog({
 
               {customOpen ? (
                 <div style={{ marginTop: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {/* Der eigene Farbwaehler und das Hex-Feld teilen sich die
+                      Breite. Das Hex-Feld waechst mit, der native Waehler
+                      behaelt seine Groesse — bei 320 px bleiben so beide
+                      bedienbar, statt dass eines aus der Zeile gedrueckt
+                      wird. */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                     <input
                       ref={nativeColorRef}
                       type="color"
                       aria-label={t("calendar.colorHex")}
                       onChange={(inputEvent) => handleNativeColor(inputEvent.target.value)}
                       style={{
-                        width: 34,
-                        height: 26,
+                        width: 36,
+                        height: 28,
+                        flexShrink: 0,
                         padding: 2,
                         border: "1px solid var(--border)",
                         borderRadius: 7,
@@ -686,7 +813,7 @@ export function CalendarEventDialog({
                       onBlur={() => handleHexBlur()}
                       aria-label={t("calendar.colorHex")}
                       placeholder={t("calendar.colorHexPlaceholder")}
-                      style={{ ...inputStyle, width: 110 }}
+                      style={{ ...inputStyle, flex: "1 1 110px", width: "auto", minWidth: 0 }}
                     />
                   </div>
                   {hexInvalid ? <span style={errorStyle}>{t("calendar.invalidColor")}</span> : null}
@@ -707,63 +834,194 @@ export function CalendarEventDialog({
             </div>
           </div>
 
-          <DialogFooter style={{ marginTop: 16, gap: 8 }}>
-            {event ? (
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={busy}
-                style={{
-                  marginRight: "auto",
-                  padding: "6px 12px",
-                  fontSize: 12,
-                  fontFamily: "inherit",
-                  cursor: busy ? "not-allowed" : "pointer",
-                  border: "1px solid var(--danger)",
-                  background: "none",
-                  color: "var(--danger)",
-                  borderRadius: 7,
-                }}
-              >
-                {t("calendar.delete")}
-              </button>
-            ) : null}
+          {/* Der Fehler des letzten Speicherns oder Loeschens steht *im*
+              Dialog, unmittelbar ueber dem Fuss — nicht in der Leiste unter
+              der Kalender-Kopfzeile. Diese Leiste liegt hinter dem
+              Radix-Overlay (`fixed inset-0 z-50`) und ist damit unerreichbar,
+              solange der Dialog offen ist: `document.elementFromPoint` auf
+              ihrer Zeile liefert das Overlay, nie die Meldung.
 
-            <button
-              type="button"
-              onClick={onCancel}
+              Der Fuss bleibt sichtbar, weil er nicht schrumpft
+              (`flexShrink: 0`) und die Meldung *oberhalb* von ihm steht —
+              die Meldung nimmt Platz aus dem scrollenden Feldbereich, nicht
+              aus dem Fuss. */}
+          {error ? (
+            <div
+              role="alert"
               style={{
-                padding: "6px 12px",
+                flexShrink: 0,
+                marginTop: 12,
+                padding: "8px 10px",
                 fontSize: 12,
-                fontFamily: "inherit",
-                cursor: "pointer",
-                border: "1px solid var(--border)",
-                background: "none",
-                color: "var(--text-muted)",
+                color: "var(--danger)",
+                background: "color-mix(in srgb, var(--danger) 10%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--danger) 45%, transparent)",
                 borderRadius: 7,
               }}
             >
-              {t("calendar.cancel")}
-            </button>
+              {error}
+            </div>
+          ) : null}
 
-            <button
-              type="submit"
-              disabled={busy || !title.trim() || timeInvalid || dateInvalid || hexInvalid}
-              style={{
-                padding: "6px 12px",
-                fontSize: 12,
-                fontWeight: 550,
-                fontFamily: "inherit",
-                cursor: busy || !title.trim() ? "not-allowed" : "pointer",
-                border: "1px solid var(--accent)",
-                background: "var(--accent)",
-                color: "var(--bg)",
-                borderRadius: 7,
-                opacity: busy || !title.trim() ? 0.6 : 1,
-              }}
-            >
-              {busy ? t("calendar.saving") : t("calendar.save")}
-            </button>
+          {/* Der Fuss ist eine *umbruchende* Zeile, keine feste.
+
+              `justifyContent: "flex-start"` plus `marginLeft: "auto"` auf der
+              Aktionsgruppe ist der Weg, der bei jeder Breite funktioniert:
+              breit stehen „Abbrechen" und „Termin speichern" rechts, schmal
+              bricht die Zeile um, und die Aktionsgruppe rutscht auf die zweite
+              Zeile — nach rechts. Ein `marginRight: "auto"` auf „Loeschen"
+              waere bei einem Umbruch wirkungslos und wuerde den Knopf auf
+              schmalen Fenstern allein links stehen lassen, waehrend die beiden
+              anderen die volle Breite naehmen.
+
+              Im Bestaetigungszustand zeigt der Fuss *nur* die beiden Knoepfe
+              der Rueckfrage. „Abbrechen" hat dort eine andere Bedeutung als
+              sonst — es bricht den Loeschvorgang ab, statt den Dialog zu
+              schliessen — und genau das macht den Zustand eindeutig: es gibt
+              zu keinem Zeitpunkt zwei „Abbrechen"-Knoepfe. */}
+          <DialogFooter
+            style={{
+              marginTop: 16,
+              gap: 8,
+              display: "flex",
+              flexDirection: "row",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              // Der Fuss wird nie kleiner als seine eigene Hoehe: er ist
+              // der einzige Weg zu „Termin speichern".
+              flexShrink: 0,
+              // Der Bestaetigungszustand faellt optisch auf: ein normaler
+              // Fuss waere hier ein Missverstaendnis, weil „Abbrechen"
+              // gerade etwas anderes tut als sonst.
+              ...(confirmingDelete
+                ? {
+                  background: "color-mix(in srgb, var(--danger) 9%, transparent)",
+                  borderTop: "1px solid color-mix(in srgb, var(--danger) 45%, transparent)",
+                }
+                : {}),
+            }}
+          >
+            {confirmingDelete ? (
+              <>
+                {/* Die Frage nennt den Termin: „Diesen Termin löschen?" sagt
+                    bei vielen Terminen nicht, welcher gemeint ist. */}
+                <div
+                  style={{
+                    flexBasis: "100%",
+                    marginBottom: 2,
+                    fontSize: 12,
+                    fontWeight: 550,
+                    color: "var(--danger)",
+                  }}
+                >
+                  {t("calendar.deleteConfirm", { title: event?.title?.trim() || t("calendar.unnamed") })}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, marginLeft: "auto", flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={handleDeleteCancel}
+                    disabled={busy}
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontFamily: "inherit",
+                      cursor: busy ? "not-allowed" : "pointer",
+                      border: "1px solid var(--border)",
+                      background: "none",
+                      color: "var(--text-muted)",
+                      borderRadius: 7,
+                    }}
+                  >
+                    {t("calendar.cancel")}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDeleteConfirm}
+                    disabled={busy}
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontWeight: 550,
+                      fontFamily: "inherit",
+                      cursor: busy ? "not-allowed" : "pointer",
+                      border: "1px solid var(--danger)",
+                      background: "var(--danger)",
+                      color: "var(--bg)",
+                      borderRadius: 7,
+                      opacity: busy ? 0.6 : 1,
+                    }}
+                  >
+                    {t("calendar.deleteEvent")}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {event ? (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={busy}
+                    style={{
+                      flexShrink: 0,
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontFamily: "inherit",
+                      cursor: busy ? "not-allowed" : "pointer",
+                      border: "1px solid var(--danger)",
+                      background: "none",
+                      color: "var(--danger)",
+                      borderRadius: 7,
+                    }}
+                  >
+                    {t("calendar.delete")}
+                  </button>
+                ) : null}
+
+                {/* Die beiden Aktionsknöpfe bleiben zusammen: sie brechen nicht
+                    zwischen Abbrechen und Speichern um. */}
+                <div style={{ display: "flex", gap: 8, marginLeft: "auto", flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontFamily: "inherit",
+                      cursor: "pointer",
+                      border: "1px solid var(--border)",
+                      background: "none",
+                      color: "var(--text-muted)",
+                      borderRadius: 7,
+                    }}
+                  >
+                    {t("calendar.cancel")}
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={busy || !title.trim() || timeInvalid || dateInvalid || hexInvalid}
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontWeight: 550,
+                      fontFamily: "inherit",
+                      cursor: busy || !title.trim() ? "not-allowed" : "pointer",
+                      border: "1px solid var(--accent)",
+                      background: "var(--accent)",
+                      color: "var(--bg)",
+                      borderRadius: 7,
+                      opacity: busy || !title.trim() ? 0.6 : 1,
+                    }}
+                  >
+                    {busy ? t("calendar.saving") : t("calendar.save")}
+                  </button>
+                </div>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

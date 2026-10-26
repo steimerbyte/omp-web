@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   GERMAN_WEEKDAYS_MIN,
   addDays,
@@ -27,6 +27,7 @@ import {
 } from "./calendar/calendar-model";
 import { useCalendar, type CalendarEventInput } from "@/hooks/useCalendar";
 import { CalendarEventDialog } from "./calendar/CalendarEventDialog";
+import { CalendarImportButton } from "./calendar/CalendarImport";
 import { useCalendarText } from "./calendar/useCalendarText";
 
 /**
@@ -50,6 +51,30 @@ import { useCalendarText } from "./calendar/useCalendarText";
 
 /** Die Ansichten, zwischen denen umgeschaltet wird. */
 type CalendarMode = "month" | "week" | "day";
+
+/**
+ * Die Mindestbreite des Monatsrasters.
+ *
+ * Sieben gleich breite Spalten brauchen eine gewisse Breite, damit eine
+ * Tageszelle ueberhaupt lesbar ist — ein Tag braucht Platz fuer die Zahl
+ * und fuer einen Termin. Darunter ist die Breite der Spalten nicht mehr
+ * das Problem, sondern die Frage, ob der Kalender ueberhaupt benutzbar ist.
+ *
+ * Deshalb hat das Raster eine Mindestbreite, und die Area, in der es
+ * liegt, scrollt waagerecht.
+ */
+const MONTH_MIN_WIDTH = 7 * 96;
+
+/**
+ * Die Mindestbreite einer Tagespalte in der Wochen- und Tagesansicht.
+ *
+ * Neben der Stundenskala (`TIME_AXIS_WIDTH` Pixel) braucht ein Tag
+ * mindestens so viel Platz, dass ein Termin mit Uhrzeit lesbar ist.
+ */
+const TIME_COLUMN_MIN_WIDTH = 120;
+
+/** Die Breite der Stundenskala links neben den Tagen. */
+const TIME_AXIS_WIDTH = 56;
 
 /**
  * Wohin ein Termin gezogen wurde.
@@ -77,13 +102,29 @@ interface EditingState {
 
 export function CalendarView() {
   const t = useCalendarText();
-  const { events, error, create, update, remove } = useCalendar();
+  const { events, error, create, update, remove, reload } = useCalendar();
 
   const [mode, setMode] = useState<CalendarMode>("month");
   const [anchor, setAnchor] = useState<string>(todayDateString);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  /**
+   * Der Fehler des offenen Dialogs.
+   *
+   * ### Warum ein eigener Zustand und nicht `notice`
+   *
+   * `notice` steht in der Leiste *unter* der Kalender-Kopfzeile. Diese
+   * Leiste liegt hinter dem Radix-Overlay (`fixed inset-0 z-50`), solange
+   * der Dialog offen ist — `document.elementFromPoint` auf ihrer Zeile
+   * liefert das Overlay, nie die Meldung. Ein Fehler, der zu einem Fehler
+   * *im* Dialog gehoert, muss deshalb im Dialog stehen.
+   *
+   * `notice` bleibt fuer den Erfolgsfall: da ist der Dialog zu, und die
+   * Leiste ist sichtbar.
+   */
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   /**
    * Die Feiertage des Jahres, in dem der Anker liegt.
@@ -128,17 +169,24 @@ export function CalendarView() {
 
   /** Oeffnet den Dialog fuer einen neuen Termin an einem Tag und einer Zeit. */
   const openCreate = useCallback((date: string, time: string | null) => {
+    // Ein neuer Dialog beginnt ohne Fehler: der alte Fehler gehoerte zum
+    // letzten Termin, nicht zu diesem.
+    setDialogError(null);
     setEditing({ event: null, preset: { date, time } });
   }, []);
 
   /** Oeffnet den Dialog fuer einen bestehenden Termin. */
   const openEdit = useCallback((event: CalendarEvent) => {
+    setDialogError(null);
     setEditing({ event, preset: { date: event.start.slice(0, 10), time: null } });
   }, []);
 
   /** Speichert den Termin aus dem Dialog. */
   const handleSave = useCallback(async (input: CalendarEventInput, id: string | null) => {
     setBusy(true);
+    // Der alte Fehler verschwindet mit dem neuen Versuch: sonst stuende
+    // eine alte Meldung da, waehrend der Dialog gerade erfolgreich speichert.
+    setDialogError(null);
     try {
       if (id) {
         await update(id, input);
@@ -155,7 +203,9 @@ export function CalendarView() {
       // nicht, indem man seinen englischen Text erkennt, sondern indem man
       // den *lokalen* Text darueberlegt.
       console.error("Failed to save the calendar event:", cause);
-      setNotice(t("calendar.saveFailed"));
+      // Der Fehler gehoert *in* den Dialog: die Leiste unter der Kopfzeile
+      // liegt hinter dem Overlay und waere nicht lesbar.
+      setDialogError(t("calendar.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -164,6 +214,7 @@ export function CalendarView() {
   /** Loescht einen Termin. */
   const handleDelete = useCallback(async (id: string) => {
     setBusy(true);
+    setDialogError(null);
     try {
       await remove(id);
       setNotice(t("calendar.deleted"));
@@ -172,7 +223,7 @@ export function CalendarView() {
       // Siehe `handleSave`: der Servertext bleibt im Protokoll, die
       // Oberflaeche zeigt eine deutsche Meldung.
       console.error("Failed to delete the calendar event:", cause);
-      setNotice(t("calendar.deleteFailed"));
+      setDialogError(t("calendar.deleteFailed"));
     } finally {
       setBusy(false);
     }
@@ -219,18 +270,42 @@ export function CalendarView() {
 
   // --- Die Kopfzeile ---------------------------------------------------------
 
+  /**
+   * Die Kopfzeile.
+   *
+   * ### Warum sie umbricht und nicht schrumpft
+   *
+   * Die Kopfzeile ist eine Zeile aus fuenf Teilen: der Navigationsgruppe,
+   * der Ueberschrift, dem Tablist und dem „Neuer Termin"-Knopf. Ein Panel
+   * kann beliebig schmal sein — der Nutzer zieht die Trennlinie, und auf dem
+   * Handy ist das Panel so breit wie das Display. Ein Knopf, den man
+   * wegschiebt, ist ein Knopf, den niemand mehr benutzt.
+   *
+   * Deshalb ist die Zeile **umbruchbar** (`flexWrap`) und die Ueberschrift
+   * darf schrumpfen (`minWidth: 0` plus Auslassungspunkte). Umbruchen
+   * schrumpfen ist hier nicht moeglich: die Tablist und der Knopf haben
+   * eine Mindestbreite, die ihre Beschriftung nicht abschneiden laesst — und
+   * abgeschnittene Beschriftungen sind schlimmer als eine zweite Zeile.
+   *
+   * Die Aktionsgruppe (`marginLeft: "auto"`) sitzt rechts, wenn alles in
+   * eine Zeile passt, und rutscht als *ein* Block auf die zweite Zeile,
+   * wenn es nicht passt. So bleibt sie zusammen — ein halb umgebrochener
+   * Tablist waere schlimmer als ein zweizeiliger.
+   */
   const toolbar = (
     <header
       style={{
         display: "flex",
+        flexWrap: "wrap",
         alignItems: "center",
         gap: 12,
+        rowGap: 8,
         padding: "16px 20px 12px",
         borderBottom: "1px solid var(--border)",
         flexShrink: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
         <IconButton
           label={t("calendar.previous")}
           onClick={() => step(-1)}
@@ -248,69 +323,149 @@ export function CalendarView() {
         />
       </div>
 
-      <h1 style={{ margin: 0, fontSize: 17, fontWeight: 650, color: "var(--text)" }}>
+      <h1
+        style={{
+          margin: 0,
+          fontSize: 17,
+          fontWeight: 650,
+          color: "var(--text)",
+          // Die Ueberschrift ist der einzige Teil der Zeile, der schrumpfen
+          // darf: sie ist Text, und ein Text laesst sich notfalls mit
+          // Auslassungspunkten kuerzen. Ohne `minWidth: 0` weigert sich das
+          // Flex-Element aber, seine Beschriftung zu beschneiden, und
+          // schiebt damit die Aktionsgruppe aus dem Panel heraus.
+          minWidth: 0,
+          // `1 1 120px`: Die Ueberschrift waechst in den freien Platz
+          // (sie schiebt damit die Aktionsgruppe nach rechts) und schrumpft
+          // auf 120 Pixel Basis, wenn es eng wird. Die Basis ist wichtig
+          // fuer den Umbruch: eine Ueberschrift mit der vollen Textbreite
+          // als Basis wuerde die Zeile auch dann umbrechen lassen, wenn
+          // genug Platz waere.
+          flex: "1 1 120px",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
         {heading}
       </h1>
 
-      <div style={{ flex: 1 }} />
-
-      {/* Die Umschaltung zwischen den drei Ansichten. */}
+      {/* Die Aktionsgruppe: Umschaltung und „Neuer Termin". */}
       <div
-        role="tablist"
-        aria-label={t("calendar.title")}
         style={{
-          display: "inline-flex",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          overflow: "hidden",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          rowGap: 8,
+          // Sie sitzt rechts, wenn die Zeile passt, und kommt als Block auf
+          // die zweite Zeile, wenn sie nicht passt. Umbruch *innerhalb* der
+          // Gruppe ist der letzte Ausweg: im schlimmsten Fall rutscht der
+          // Knopf „Neuer Termin" unter die Umschaltung.
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+          // Sie sitzt rechts, wenn die Zeile passt, und kommt als Block auf
+          // die zweite Zeile, wenn sie nicht passt. Umbruch *innerhalb* der
+          // Gruppe ist der letzte Ausweg: im schlimmsten Fall rutscht der
+          // Knopf „Neuer Termin" unter die Umschaltung.
+          marginLeft: "auto",
+          flex: "0 1 auto",
+          // `min-content` statt `0`: die Gruppe schrumpft nur so weit, wie
+          // ihre schmalste Zeile breit ist. Mit `0` wuerde die Umschaltung
+          // aus der Gruppe herausquellen, weil sie nicht schrumpft.
+          minWidth: "min-content",
         }}
       >
-        {(["month", "week", "day"] as const).map((entry) => (
+        {/* Die Umschaltung zwischen den drei Ansichten. */}
+        <div
+          role="tablist"
+          aria-label={t("calendar.title")}
+          style={{
+            display: "inline-flex",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            overflow: "hidden",
+            flexShrink: 0,
+          }}
+        >
+          {(["month", "week", "day"] as const).map((entry) => (
+            <button
+              key={entry}
+              type="button"
+              role="tab"
+              aria-selected={mode === entry}
+              onClick={() => setMode(entry)}
+              style={{
+                padding: "5px 12px",
+                fontSize: 12,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                border: "none",
+                background: mode === entry ? "var(--bg-selected)" : "none",
+                color: mode === entry ? "var(--text)" : "var(--text-muted)",
+                fontWeight: mode === entry ? 600 : 400,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {t(`calendar.${entry}`)}
+            </button>
+          ))}
+        </div>
+
+        {/*
+          * Die beiden Aktionsknöpfe: Import und „Neuer Termin".
+          *
+          * Sie stehen in einer *eigenen* Zeile der Gruppe, damit sie immer
+          * zusammenbleiben. Ohne diese Kapselung wuerde der Umbruch sie
+          * trennen: die Umschaltung faellt mit dem Import auf eine Zeile,
+          * „Neuer Termin" auf die naechste — und die beiden Aktionen, die
+          * zusammengehoeren, stuenden allein.
+          *
+          * `flexShrink: 0` heisst: die Knöpfe werden nie schrumpfen. Ihre
+          * Beschriftung ist damit nie abgeschnitten — eine halb
+          * abgeschnittene Beschriftung ist schlimmer als eine zweite Zeile.
+          */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+          {/*
+            * Der Import ist eine Kopfzeilen-Aktion wie „Neuer Termin" — kein
+            * eigenes Bedienfeld. Deshalb sitzt er in derselben Gruppe und
+            * zwischen der Umschaltung und dem Anlegen-Knopf.
+            *
+            * `reload` ist der Rueckfall: der Import schreibt ueber die
+            * Route, die `notifyCalendarChange` loest, und der SSE-Strom
+            * laedt den Kalender nach. Kommt der Strom nicht (der Tab war im
+            * Hintergrund, die Verbindung ist weg), laedt `reload` die Termine
+            * von Hand. Ohne den Aufruf waere eine importierte Datei erst
+            * nach einem Neuladen sichtbar — ein halber Import.
+            */}
+          <CalendarImportButton onImported={() => { void reload(); }} />
+
           <button
-            key={entry}
             type="button"
-            role="tab"
-            aria-selected={mode === entry}
-            onClick={() => setMode(entry)}
+            onClick={() => openCreate(anchor.slice(0, 10), null)}
             style={{
-              padding: "5px 12px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 12px",
               fontSize: 12,
-              fontFamily: "inherit",
+              fontWeight: 550,
+              borderRadius: 8,
               cursor: "pointer",
-              border: "none",
-              background: mode === entry ? "var(--bg-selected)" : "none",
-              color: mode === entry ? "var(--text)" : "var(--text-muted)",
-              fontWeight: mode === entry ? 600 : 400,
+              border: "1px solid var(--accent)",
+              background: "var(--accent)",
+              color: "var(--bg)",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
             }}
           >
-            {t(`calendar.${entry}`)}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            {t("calendar.newEvent")}
           </button>
-        ))}
+        </div>
       </div>
-
-      <button
-        type="button"
-        onClick={() => openCreate(anchor.slice(0, 10), null)}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "6px 12px",
-          fontSize: 12,
-          fontWeight: 550,
-          borderRadius: 8,
-          cursor: "pointer",
-          border: "1px solid var(--accent)",
-          background: "var(--accent)",
-          color: "var(--bg)",
-          fontFamily: "inherit",
-        }}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        {t("calendar.newEvent")}
-      </button>
     </header>
   );
 
@@ -323,6 +478,12 @@ export function CalendarView() {
         flexDirection: "column",
         height: "100%",
         minHeight: 0,
+        // Das Panel kann schmaler sein als der Inhalt. Ohne `minWidth: 0`
+        // weigert sich das Flex-Element, schrumpfen zu wollen, und schiebt
+        // den Kalender aus dem Panel heraus — die Seite waere dann breiter
+        // als das Fenster.
+        minWidth: 0,
+        overflow: "hidden",
         color: "var(--text)",
       }}
     >
@@ -366,6 +527,13 @@ export function CalendarView() {
           onCreate={openCreate}
           onEdit={openEdit}
           onMove={moveEvent}
+          onShowDay={(date) => {
+            // Der Hinweis „N weitere" fuehrt in die Tagesansicht dieses
+            // Tages: dort stehen alle Termine, ohne dass einer abgeschnitten
+            // wird.
+            setMode("day");
+            setAnchor(date);
+          }}
         />
       ) : (
         <TimeGrid
@@ -383,7 +551,13 @@ export function CalendarView() {
           event={editing.event}
           preset={editing.preset}
           busy={busy}
-          onCancel={() => setEditing(null)}
+          // Der Fehler steht *im* Dialog: die Leiste unter der Kopfzeile
+          // liegt hinter dem Overlay und waere nicht lesbar.
+          error={dialogError}
+          onCancel={() => {
+            setEditing(null);
+            setDialogError(null);
+          }}
           onSave={handleSave}
           onDelete={handleDelete}
         />
@@ -440,6 +614,61 @@ function IconButton({
 }
 
 /**
+ * Wie viele Termine in eine Zelle des Monatsrasters passen.
+ *
+ * ### Warum das gerechnet und nicht geraten wird
+ *
+ * Die Tageszelle schneidet ihren Inhalt ab. Ein Tag mit mehr Terminen, als
+ * die Zelle hoch ist, verliert die ueberzaehligen Termine *stillschweigend* —
+ * kein Zeichen, kein Tooltip, kein Hinweis. Der Nutzer glaubt, der Tag sei
+ * leer.
+ *
+ * Die Rechnung braucht drei gemessene Groessen:
+ *
+ * - `cellSpace` — der nutzbare Platz in einer Tageszelle (nach Innenabstand).
+ * - `dayRowHeight` — die Hoehe der Zeile mit der Tageszahl.
+ * - `chipHeight` — die Hoehe eines Terminchips samt Marge.
+ *
+ * Der Rest der Zelle steht den Chips zur Verfuegung. Passt ein Termin mehr
+ * hinein, wird er gezeigt; passt er nicht, bleibt eine Zeile fuer den
+ * Hinweis „N weitere" frei — sonst wuerde der Hinweis selbst abgeschnitten
+ * und die Information wieder unsichtbar.
+ */
+function visibleEventCount(
+  count: number,
+  cellSpace: number,
+  dayRowHeight: number,
+  chipHeight: number,
+): { shown: number; hidden: number } {
+  // Ohne belastbare Messung (erster Durchlauf, oder eine Umgebung ohne
+  // Layout) gibt es keine verlaessliche Zahl — dann wird nichts
+  // abgeschnitten.
+  //
+  // Der Test auf `Number.isFinite` ist wichtig: eine Umgebung ohne Layout
+  // liefert `undefined` fuer `clientHeight`, und daraus wird `NaN`. `NaN`
+  // besteht jeden Vergleich mit `<= 0`, und `slice(0, NaN)` liefert eine
+  // leere Liste — der Kalender waere dann *leer*, statt zu viel zu zeigen.
+  if (!Number.isFinite(cellSpace) || !Number.isFinite(chipHeight)) {
+    return { shown: count, hidden: 0 };
+  }
+  if (cellSpace <= 0 || chipHeight <= 0) return { shown: count, hidden: 0 };
+
+  const available = cellSpace - (Number.isFinite(dayRowHeight) ? dayRowHeight : 0);
+  const capacity = Math.floor(available / chipHeight);
+  if (count <= capacity) return { shown: count, hidden: 0 };
+
+  // Passt *nicht einmal* ein Termin hinein, ist die Messung unbrauchbar
+  // (oder die Zelle ist so niedrig, dass auch der Hinweis nicht hineinpasst).
+  // In beiden Faellen wird nichts abgeschnitten: ein leerer Kalender ist
+  // schlimmer als ein ueberlaufender.
+  if (capacity < 1) return { shown: count, hidden: 0 };
+
+  // Eine Zeile bleibt fuer den Hinweis frei.
+  const shown = Math.max(0, capacity - 1);
+  return { shown, hidden: count - shown };
+}
+
+/**
  * Die Monatsansicht: ein 6×7-Raster.
  *
  * ### Warum ausserhalb des Monats liegende Tage sichtbar bleiben
@@ -458,6 +687,7 @@ function MonthGrid({
   onCreate,
   onEdit,
   onMove,
+  onShowDay,
 }: {
   days: string[];
   anchor: string;
@@ -466,10 +696,94 @@ function MonthGrid({
   onCreate: (date: string, time: string | null) => void;
   onEdit: (event: CalendarEvent) => void;
   onMove: (event: CalendarEvent, target: MoveTarget) => void;
+  /** Wechselt in die Tagesansicht — fuer den Hinweis „N weitere". */
+  onShowDay: (date: string) => void;
 }) {
   const t = useCalendarText();
   const month = anchor.slice(0, 7);
   const todayDate = todayDateString();
+
+  /**
+   * Das Raster, an dem die Zeilenhoehe gemessen wird.
+   *
+   * Die Zeilenhoehe entscheidet, wie viele Termine in eine Zelle passen —
+   * und die ist nicht konstant, sondern haengt von der Hoehe des Panels ab.
+   * Deshalb wird sie gemessen und nicht geraten.
+   */
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [cellSpace, setCellSpace] = useState(0);
+  const [dayRowHeight, setDayRowHeight] = useState(0);
+  const [chipHeight, setChipHeight] = useState(0);
+  /** Die Zahl der Termine — *nicht* das Array: `events ?? []` ist bei jedem
+   *  Rendern ein neues Array, und ein Effekt, der daran haengt, laeuft bei
+   *  jedem Rendern erneut. */
+  const eventCount = events.length;
+
+  /**
+   * Den Platz in einer Tageszelle messen.
+   *
+   * Drei Zahlen bestimmen, wie viele Termine in eine Zelle passen: der
+   * nutzbare Platz in der Zelle, die Hoehe der Zeile mit der Tageszahl und
+   * die Hoehe eines Terminchips samt Marge.
+   *
+   * Sie werden *gemessen* und nicht geraten: die Zeilenhoehe haengt von der
+   * Hoehe des Panels ab, und ein geratener Wert stimmt entweder zu gross
+   * (dann schneidet die Zelle den letzten Termin ab — der alte Defekt) oder
+   * zu klein (dann verschwinden Termine, die Platz haetten).
+   *
+   * Die Messung laeuft im Layout-Effekt, also *vor* dem ersten Malen: der
+   * Nutzer sieht kein Bild mit ueberlaufenden Terminen, das gleich wieder
+   * verschwindet.
+   */
+  useLayoutEffect(() => {
+    const node = gridRef.current;
+    if (!node) return;
+    const measure = () => {
+      // Die Messung darf den Kalender nie umwerfen: eine Umgebung ohne
+      // Layout (ein Test-Harness) kennt `clientHeight` nicht, und eine
+      // Ausnahme hier waere ein leerer Kalender. Deshalb wird jede Zahl
+      // einzeln geprueft.
+      try {
+        const cell = node.querySelector<HTMLElement>("[data-cal-cell]");
+        if (!cell) return;
+        const style = getComputedStyle(cell);
+        const padding = (Number.parseFloat(style.paddingTop) || 0)
+          + (Number.parseFloat(style.paddingBottom) || 0);
+        // `clientHeight` enthaelt den Innenabstand, aber keinen Rand — der
+        // nutzbare Platz der Zelle ist also `clientHeight` minus Innenabstand.
+        const space = cell.clientHeight - padding;
+        if (Number.isFinite(space)) setCellSpace(space);
+
+        // Die Tageszeile ist in allen Zellen gleich hoch; fuer den Fall, dass
+        // ein Feiertagsname sie ein wenig streckt, zaehlt die groesste.
+        const rows = node.querySelectorAll("[data-cal-day-row]");
+        let dayRow = 0;
+        for (let index = 0; index < rows.length; index++) {
+          const height = (rows[index] as HTMLElement).offsetHeight;
+          if (Number.isFinite(height)) dayRow = Math.max(dayRow, height);
+        }
+        if (Number.isFinite(dayRow)) setDayRowHeight(dayRow);
+
+        // Die Chiphoehe ist fuer alle Chips gleich, also genuegt ein einziger
+        // gemessener Chip. Die Marge gehoert dazu: sie steht *vor* dem Chip
+        // und belegt Platz in der Zelle. Fehlt ein Chip (keine Termine), bleibt
+        // der zuletzt gemessene Wert stehen.
+        const chip = node.querySelector<HTMLElement>("[data-cal-chip]");
+        if (chip) {
+          const margin = Number.parseFloat(getComputedStyle(chip).marginTop) || 0;
+          const height = chip.getBoundingClientRect().height + margin;
+          if (Number.isFinite(height) && height > 0) setChipHeight(height);
+        }
+      } catch {
+        // Ohne belastbare Messung zeigt die Zelle alle Termine.
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [eventCount]);
 
   /** Die Termine eines Tages, nach Beginn sortiert. */
   const eventsOf = (date: string) =>
@@ -479,50 +793,102 @@ function MonthGrid({
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {/* Die Wochentagskopfzeile — Montag zuerst. */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        {GERMAN_WEEKDAYS_MIN.map((name) => (
-          <div
-            key={name}
-            style={{
-              padding: "6px 8px",
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--text-dim)",
-              textAlign: "center",
-              borderRight: "1px solid var(--border)",
-            }}
-          >
-            {name}
-          </div>
-        ))}
-      </div>
-
+      {/*
+        * Der Bereich, in dem das Raster scrollt.
+        *
+        * Sieben gleich breite Spalten in einem schmalen Panel ergeben
+        * Zellen von wenigen Pixeln — der Kalender wird unbrauchbar. Deshalb
+        * hat das Raster eine Mindestbreite, und *diese* Area scrollt
+        * waagerecht. Nicht die Seite: eine Seite, die seitlich scrollt,
+        * verschiebt beim Scrollen das ganze Fenster, und das Panel waere
+        * nicht mehr an seinem Platz.
+        */}
       <div
         style={{
           flex: 1,
           minHeight: 0,
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gridTemplateRows: "repeat(6, 1fr)",
+          display: "flex",
+          flexDirection: "column",
+          overflowX: "auto",
+          overflowY: "hidden",
         }}
       >
+        <div
+          style={{
+            minWidth: MONTH_MIN_WIDTH,
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          {/* Die Wochentagskopfzeile — Montag zuerst. */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, 1fr)",
+              borderBottom: "1px solid var(--border)",
+              flexShrink: 0,
+            }}
+          >
+            {GERMAN_WEEKDAYS_MIN.map((name) => (
+              <div
+                key={name}
+                style={{
+                  padding: "6px 8px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--text-dim)",
+                  textAlign: "center",
+                  borderRight: "1px solid var(--border)",
+                }}
+              >
+                {name}
+              </div>
+            ))}
+          </div>
+
+          <div
+            ref={gridRef}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "grid",
+              gridTemplateColumns: "repeat(7, 1fr)",
+              gridTemplateRows: "repeat(6, 1fr)",
+            }}
+          >
         {days.map((date) => {
           const dayEvents = eventsOf(date);
           const outside = date.slice(0, 7) !== month;
           const holiday = holidays.get(date);
           const isToday = date === todayDate;
 
+          /**
+           * Wie viele Termine in diese Zelle passen.
+           *
+           * Die Zelle schneidet ihren Inhalt ab (`overflow: hidden`) — ohne
+           * diese Rechnung verliert ein Tag mit vielen Terminen seine
+           * Termine *stillschweigend*. Es gibt kein Zeichen, kein Tooltip,
+           * nichts: der Termin ist einfach weg.
+           *
+           * Deshalb wird die Zahl der sichtbaren Termine berechnet und der
+           * Rest als „N weitere" ausgewiesen. Der Klick darauf wechselt in
+           * die Tagesansicht dieses Tages — dort stehen alle Termine.
+           */
+          const visibleEvents = visibleEventCount(
+            dayEvents.length,
+            cellSpace,
+            dayRowHeight,
+            chipHeight,
+          );
+          const shownEvents = dayEvents.slice(0, visibleEvents.shown);
+          const hiddenCount = dayEvents.length - visibleEvents.shown;
+
           return (
             <div
               key={date}
+              data-cal-cell="true"
               onClick={() => {
                 // Der Klick legt einen Termin an — aber nur, wenn er nicht
                 // auf einem bestehenden Termin landete. Der Termin
@@ -571,10 +937,13 @@ function MonthGrid({
               {/* Die Tageszeile ist ein *Geschwister* des Chips, nicht sein
                   Vorfahr. Sie darf den Zug deshalb nicht auffangen — sonst
                   waere ueber der Tageszahl kein Fall moeglich. */}
-              <div style={{
-                display: "flex", alignItems: "baseline", gap: 5, minHeight: 16,
-                position: "relative", zIndex: 1, pointerEvents: "none",
-              }}>
+              <div
+                data-cal-day-row="true"
+                style={{
+                  display: "flex", alignItems: "baseline", gap: 5, minHeight: 16,
+                  position: "relative", zIndex: 1, pointerEvents: "none",
+                }}
+              >
                 <span
                   style={{
                     fontSize: 11,
@@ -600,7 +969,7 @@ function MonthGrid({
                 ) : null}
               </div>
 
-              {dayEvents.map((event) => (
+              {shownEvents.map((event) => (
                 <EventChip
                   key={`${event.id}-${date}`}
                   event={event}
@@ -615,6 +984,40 @@ function MonthGrid({
                 />
               ))}
 
+              {/* Die Termine, die nicht mehr passen, werden nicht
+                  verschwiegen: der Hinweis nennt ihre Zahl und fuehrt in die
+                  Tagesansicht, in der alle stehen. */}
+              {hiddenCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={(clickEvent) => {
+                    clickEvent.stopPropagation();
+                    onShowDay(date);
+                  }}
+                  title={t("calendar.more", { count: hiddenCount })}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    marginTop: 2,
+                    padding: "0 5px",
+                    border: "none",
+                    borderRadius: 4,
+                    background: "none",
+                    color: "var(--text-muted)",
+                    fontSize: 10,
+                    lineHeight: 1.4,
+                    fontFamily: "inherit",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {t("calendar.more", { count: hiddenCount })}
+                </button>
+              ) : null}
+
               {dayEvents.length === 0 && !holiday && isToday ? (
                 <div style={{ fontSize: 10, color: "var(--text-dim)" }}>
                   {t("calendar.noEvents")}
@@ -623,6 +1026,8 @@ function MonthGrid({
             </div>
           );
         })}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -697,44 +1102,66 @@ function TimeGrid({
     events.filter((event) => !event.allDay && eventSpansDay(event, date));
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "auto" }}>
-      {/* Die Ganztagestermine stehen ueber dem Raster, nicht darin. */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `56px repeat(${days.length}, 1fr)`,
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <div />
-        {days.map((date) => (
-          <div key={date} style={{ padding: "4px 6px", borderRight: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
-              {Number(date.slice(8, 10))}.
-            </div>
-            {holidays.get(date) ? (
-              <div style={{ fontSize: 10, color: "var(--danger)" }}>{holidays.get(date)}</div>
-            ) : null}
-            {allDayOf(date).map((event) => (
-              <EventChip
-                key={event.id}
-                event={event}
-                onClick={(clickEvent) => {
-                  clickEvent.stopPropagation();
-                  onEdit(event);
-                }}
-                onDragStart={(dragEvent) => {
-                  dragEvent.dataTransfer.setData("text/plain", event.id);
-                }}
-              />
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/*
+        * Der Bereich, in dem die Ansicht scrollt.
+        *
+        * Neben der Stundenskala (56 Pixel) braucht jeder Tag eine gewisse
+        * Mindestbreite — sonst ist ein Termin mit Uhrzeit nicht lesbar. Bei
+        * sieben Tagen ist das in einem schmalen Panel nicht mehr darstellbar.
+        *
+        * Deshalb hat der Raster eine Mindestbreite, und *diese* Area
+        * scrollt waagerecht. Nicht die Seite: eine Seite, die seitlich
+        * scrollt, verschiebt beim Scrollen das ganze Fenster.
+        */}
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <div
+          style={{
+            minWidth: TIME_AXIS_WIDTH + days.length * TIME_COLUMN_MIN_WIDTH,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Die Ganztagestermine stehen ueber dem Raster, nicht darin. */}
+          <div
+            style={{
+              display: "grid",
+              // `minmax` statt `1fr`: die Spalte *darf* schrumpfen, aber
+              // nicht unter ihre Mindestbreite — sonst ist ein Tag so breit
+              // wie ein Pixel und ein Termin unlesbar.
+              gridTemplateColumns: `${TIME_AXIS_WIDTH}px repeat(${days.length}, minmax(${TIME_COLUMN_MIN_WIDTH}px, 1fr))`,
+              borderBottom: "1px solid var(--border)",
+              flexShrink: 0,
+            }}
+          >
+            <div />
+            {days.map((date) => (
+              <div key={date} style={{ padding: "4px 6px", borderRight: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
+                  {Number(date.slice(8, 10))}.
+                </div>
+                {holidays.get(date) ? (
+                  <div style={{ fontSize: 10, color: "var(--danger)" }}>{holidays.get(date)}</div>
+                ) : null}
+                {allDayOf(date).map((event) => (
+                  <EventChip
+                    key={event.id}
+                    event={event}
+                    onClick={(clickEvent) => {
+                      clickEvent.stopPropagation();
+                      onEdit(event);
+                    }}
+                    onDragStart={(dragEvent) => {
+                      dragEvent.dataTransfer.setData("text/plain", event.id);
+                    }}
+                  />
+                ))}
+              </div>
             ))}
           </div>
-        ))}
-      </div>
 
-      {/* Die Stundenskala. */}
-      <div style={{ display: "grid", gridTemplateColumns: `56px repeat(${days.length}, 1fr)`, flex: 1, minHeight: HOUR_HEIGHT * (MINUTES_PER_DAY / 60) }}>
+          {/* Die Stundenskala. */}
+          <div style={{ display: "grid", gridTemplateColumns: `${TIME_AXIS_WIDTH}px repeat(${days.length}, minmax(${TIME_COLUMN_MIN_WIDTH}px, 1fr))`, flex: 1, minHeight: HOUR_HEIGHT * (MINUTES_PER_DAY / 60) }}>
         <div>
           {Array.from({ length: MINUTES_PER_DAY / 60 }, (_, hour) => (
             <div
@@ -838,6 +1265,8 @@ function TimeGrid({
             })}
           </div>
         ))}
+          </div>
+        </div>
       </div>
 
       {events.length === 0 ? (
@@ -888,6 +1317,7 @@ function EventChip({
   return (
     <div
       draggable
+      data-cal-chip="true"
       onClick={onClick}
       onDragStart={onDragStart}
       title={`${event.title} · ${formatGermanDate(event.start.slice(0, 10))}`}
