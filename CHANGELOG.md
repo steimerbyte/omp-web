@@ -29,7 +29,7 @@ spezifische Feiertage fehlen — ohne eine Bundesland-Auswahl kann der Kalender
 sie nicht zutreffend anzeigen, und ein falscher Feiertag ist schlimmer als
 ein fehlender.
 
-Der Kalender ist dabei in *jeder* Oberflächensprache deutsch. Seine Texte
+Der Kalender ist in *jeder* Oberflächensprache deutsch. Seine Texte
 kommen aus dem deutschen Sprachpaket, nicht aus der eingestellten Sprache:
 deutsche Monats- und Wochentagsnamen, die ISO-Woche, die deutschen
 Feiertagsnamen, das deutsche Datumsformat. Eine Oberfläche, in der der Kalender
@@ -38,6 +38,43 @@ und „Week" trägt, ist halb übersetzt — und einen englischen Kalender mit
 deutschen Feiertagen gibt es nicht. Die `calendar.*`-Schlüssel stehen darum
 ausschließlich im deutschen Paket; `lib/i18n/locale-parity.test.mjs` hält das
 fest.
+
+**Termine farblich markieren.** Ein Termin kann eine Farbe tragen: fünf
+Presets (Akzent, Erfolg, Warnung, Gefahr, Violett) oder ein frei
+gewählter Hex-Code über den Knopf „Benutzerdefiniert". Die Presets sind
+Theme-Variablen und folgen dem importierten Theme — eine im Quelltext
+festgeschriebene Farbe bliebe dort die alte. Violett ist dabei die eine
+Ausnahme: die Titanium-Palette hat kein Violett, und `applyOmpPalette` kennt
+nur Akzent, Erfolg, Fehler und Warnung. Im importierten Theme folgen die
+vier übrigen Presets dem Theme, das Violett bleibt bei der Anwendung; der
+Kommentar in `app/globals.css` sagt das ausdrücklich, damit die
+Asymmetrie nicht als Versehen gelesen wird. Der eigene Hex-Code wird
+wörtlich gespeichert, weil eine Farbe, die der Nutzer gewählt hat, seine
+Wahl behalten soll, wenn das Theme wechselt — und nur in einer Schreibweise,
+klein und sechs Stellen, damit dieselbe Farbe nicht als zwei Termine in der
+Datei steht.
+
+Die deutschen Namen der fünf Presets stehen dabei nicht im Sprachpaket,
+sondern in `lib/calendar.ts` neben den Monats- und Wochentagsnamen: es ist
+ein festes Vokabular des Kalenders, und Client und Server müssen dieselben
+fünf Wörter nennen.
+
+Der Hintergrund eines Termins ist die Terminfarbe, mit der Fläche des Themes
+gemischt, und der Text bleibt in der Theme-Farbe. So bleibt ein Termin auch
+mit `#ffffff` lesbar — und der Kontrast hängt am Theme, nicht an der Wahl
+des Nutzers.
+
+**Datum und Uhrzeit im 24-Stunden-Format.** Der Dialog hat eigene
+Textfelder für Datum und Uhrzeit: die Uhrzeit als `15:00`, das Datum als
+`14.03.2026`. Gemessen in Chromium mit englischem Browser-Locale zeigt ein
+natives `<input type="time">` den Wert `15:00` als `03:00 PM` und ein
+natives `<input type="date">` den Wert `2026-10-26` als `10/26/2026` — ein
+`lang="de"` am Element ändert daran nichts. Der gespeicherte Wert war dabei
+die ganze Zeit richtig; falsch war allein die Anzeige. Die nativen Felder
+wurden deshalb ersetzt, nicht umformatiert: ihr Format folgt dem Browser,
+nicht der Seite. Die Felder sind uncontrolled, damit „15:3" getippt und
+danach „0" nachgetippt werden kann — die Normalisierung sitzt an der Grenze
+zum Kalenderformat.
 
 Die Termine liegen in `omp-web-calendar.json` im Agent-Verzeichnis des Kontos:
 eine Datei pro Konto, atomar geschrieben, `0o600`. Das ist dieselbe Form wie
@@ -56,7 +93,84 @@ Betreibers lesen und schreiben.
 `calendar_write` kann anlegen, ändern, verschieben und löschen. Ein Verschieben
 ist ein Ändern von Beginn und Ende; dafür gibt es keinen zweiten Endpunkt.
 Die Länge eines Termins bleibt dabei erhalten — wer einen zweistündigen Termin
-verschiebt, bekommt keinen einstündigen.
+verschiebt, bekommt keinen einstündigen. Jetzt reicht dafür ein einziger
+Wert: ein `update` mit nur einem neuen Beginn berechnet das Ende aus der
+bestehenden Dauer, und umgekehrt. Vorher scheiterte der Aufruf immer, sobald
+der neue Beginn nach dem alten Ende lag. Auch der Ganztag-Flag folgt jetzt
+der Schreibweise — beim Ändern wie beim Anlegen —, sodass der Wechsel zwischen
+Ganztag und Uhrzeit keinen ausdrücklichen Flag mehr braucht.
+
+Der Vertrag der Werkzeuge ist englisch, das Ergebnis deutsch: die Beschreibung
+liest das Modell, das Ergebnis liest der Nutzer im Chatverlauf. Dasselbe
+Muster wie beim anderen nativen Werkzeug `present_files`.
+
+Jede Antwort von `calendar_read` beginnt mit dem heutigen Datum, seinem
+Wochentag und den Grenzen der laufenden und der nächsten **Kalenderwoche**
+(Montag bis Sonntag). Der Wochentag ist dabei der eigentliche Gewinn: Das
+Harness schreibt in die erste User-Nachricht nur `Today: <YYYY-MM-DD>`, ohne
+Wochentag, also musste der Agent den Wochentag selbst rechnen — und genau
+das war der Anlass für die `bash date`-Aufrufe. Der Anker liefert die zweite,
+müllfreie Quelle; er kommt aus dem Kalender, weil das Kalenderformat keine
+Zeitzone kennt.
+
+„Kalenderwoche" statt „Woche" ist kein Wortklang, sondern eine gemessene
+Fehlerklasse: In der Nach-Messung las ein Agent die Ankerzeile „Nächste
+Woche", rief ein zwei Wochen breites Fenster ab und bezeichnete in seiner
+Antwort die falsche der beiden Linien als „die nächste Woche". „Kalenderwoche"
+ist im Deutschen der etablierte Begriff für die ISO-Woche — die Anwendung
+schreibt selbst „KW 11" in die Kopfzeile —, und „diese Woche" meint im
+Gespräch die laufende. Der Anker sagt deshalb beide Male „Kalenderwoche".
+Fragt der Nutzer nach einer Woche, fragt der Agent genau den Bereich ab, den
+der Anker nennt — eine Woche, kein breiteres Fenster — und antwortet mit
+demselben Bereich.
+
+Der Anker präzisiert relative Angaben, er löst die Frage „welche Woche meinst
+du" nicht: Die Baseline lief sonntags um 23:55, die Nach-Messung montags, und
+Prompt 2 („Was steht diese Woche bei mir im Kalender?") war nur deshalb falsch,
+weil „diese Woche" an einem Sonntagabend mehrdeutig ist. Ein Kontrolllauf mit
+dem alten Vertrag am selben Montag lieferte dieselbe richtige Antwort.
+
+Der Zeitraumfilter prüft Überschneidung, nicht den Beginn: ein Termin, der
+nur teilweise im Zeitraum liegt, wird mitgeliefert. Ein Filter nach dem
+Beginn würde einen Termin verdecken, der noch läuft.
+
+Die Fehlermeldungen sagen, was zu tun ist: ein unbrauchbares Datum nennt das
+erwartete Format und verlangt ein konkretes Datum statt „nächste Woche", eine
+fehlende Kennung verweist auf `calendar_read`, ein fehlender Titel sagt, dass
+ein Titel gebraucht wird. Gekürzte Felder werden gemeldet — ein Titel über 300
+Zeichen und eine Notiz oder ein Ort über 4000 Zeichen werden gekürzt, und
+das Ergebnis sagt es dem Nutzer, damit er es nicht am Text bemerkt. Und das
+Löschen wird als endgültig gemeldet: es gibt keinen Papierkorb und kein
+Rückgängig.
+
+`calendar_write` kann auch die Farbe setzen (`color`): einen Preset-Namen
+(`accent`, `success`, `warning`, `danger`, `violet`) oder einen Hex-Code.
+Geprüft wird mit derselben Funktion wie in den Routen — was die Route
+ablehnt, muss auch das Werkzeug ablehnen.
+
+Zwei Fehler in der Werkzeugausgabe sind dabei aufgefallen und behoben: die
+Löschmeldung formatierte einen Termin mit Uhrzeit wie ein reines Datum
+(`am 06T15:00.11.2026`), und die Ausgabe eines Termins über Mitternacht
+verlor dessen Enddatum (`26.10.2026, 22:00–02:00 Uhr`). Beides steht jetzt
+richtig im Ergebnis.
+
+**Der Werkzeug-Vertrag, gemessen.** Elf natürliche deutsche Aufgaben, sieben
+aus der Baseline plus vier neue, die genau die geänderten Pfade treffen:
+11/11 Agenten nutzten die Kalenderwerkzeuge, 10/11 kamen zu einem korrekten
+Ergebnis, 0 erfundene Behauptungen, 0 vom Werkzeug abgelehnte Aufrufe in
+beiden Läufen. Die `bash date`-Aufrufe zur Datumsermittlung gingen von 4 auf
+1 zurück; wochentagsbereinigt (Kontrolllauf mit dem alten Vertrag am selben
+Tag: 2) bleibt es 2 auf 1.
+
+Am Werkzeug selbst gemessen, je eigenes Temp-HOME, alt gegen neu: ein
+`update` mit nur `start` nach vorn scheiterte vorher mit „Das Ende liegt vor
+dem Beginn." und rechnet jetzt die Dauer fort; nach hinten war er sogar
+stillschweigend falsch (3-Tage-Termin) und ist es nicht mehr; der Wechsel
+Ganztag ↔ Uhrzeit scheiterte vorher und gelingt jetzt; ein Ende gleich dem
+Beginn bekommt jetzt eine eigene Meldung (das Ende muss *nach* dem Beginn
+liegen), weil der alte Satz sachlich falsch war; und die Löschmeldung nennt
+bei einem Termin mit Uhrzeit jetzt `am 06.11.2026, 15:00 Uhr` statt
+`am 06T15:00.11.2026.`.
 
 Die Oberfläche hängt an einem SSE-Strom (`GET /api/calendar/events`). Legt der
 Agent einen Termin an, steht er im Kalender im Browser, ohne dass die Seite
@@ -69,8 +183,8 @@ feuerte nie — die Live-Aktualisierung fände dann stillschweigend nicht statt.
 
 **Deutsch als Oberflächensprache.** `lib/i18n/messages/de.ts` ist ein
 vollständiges Sprachpaket: es trägt alle 690 Schlüssel des englischen Katalogs
-in derselben Reihenfolge und dazu 40 eigene `calendar.*`-Schlüssel, insgesamt
-730. Ein deutscher Browser bekommt Deutsch, ohne dass etwas eingestellt werden
+in derselben Reihenfolge und dazu 53 eigene `calendar.*`-Schlüssel, insgesamt
+743. Ein deutscher Browser bekommt Deutsch, ohne dass etwas eingestellt werden
 muss.
 
 ### Updates

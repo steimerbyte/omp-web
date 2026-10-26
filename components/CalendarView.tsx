@@ -11,13 +11,13 @@ import {
   formatGermanMonthYear,
   formatGermanWeekRange,
   germanHolidays,
+  resolveEventColor,
   type CalendarEvent,
 } from "@/lib/calendar";
 import {
   HOUR_HEIGHT,
   MINUTE_HEIGHT,
   MINUTES_PER_DAY,
-  eventColorVariable,
   eventSegmentForDay,
   eventSpansDay,
   moveEventToDay,
@@ -629,6 +629,37 @@ function MonthGrid({
 }
 
 /**
+ * Die Flaeche, auf der ein Termin gezeichnet wird.
+ *
+ * ### Warum die Farbe *gemischt* wird und nicht gefüllt
+ *
+ * Der Hintergrund ist die Terminfarbe, mit der Flaeche des Themes gemischt —
+ * nicht die Terminfarbe selbst. Das ist der Grund, warum ein Termin auch
+ * mit `#ffffff` lesbar bleibt: eine gefuellte weisse Flaeche im hellen Theme
+ * waere ein weisses Rechteck auf weissem Grund, ohne Rand und ohne Text, der
+ * sich vom Untergrund abhebt. Der Text bleibt deshalb `var(--text)` — die
+ * Theme-Farbe, nicht die Terminfarbe. Nur so tragen *alle* Terminfarben
+ * denselben Text: der Kontrast haengt am Theme, nicht an der Wahl des
+ * Nutzers.
+ *
+ * Der linke Rand bleibt die volle Terminfarbe. Er ist das, was den Termin
+ * auf einen Blick erkennbar macht — eine Flaeche, die nur 20 Prozent der
+ * Farbe enthaelt, waere fuer sich allein zu leise.
+ */
+function eventSurface(event: CalendarEvent, mixPercent: number): {
+  borderLeft: string;
+  background: string;
+  color: string;
+} {
+  const color = resolveEventColor(event);
+  return {
+    borderLeft: `3px solid ${color}`,
+    background: `color-mix(in srgb, ${color} ${mixPercent}%, var(--bg-panel))`,
+    color: "var(--text)",
+  };
+}
+
+/**
  * Die Wochen- und die Tagesansicht: eine Stundenskala ueber den Tagen.
  *
  * Die beiden Ansichten unterscheiden sich nur in der Zahl der Spalten — der
@@ -795,9 +826,7 @@ function TimeGrid({
                     lineHeight: 1.25,
                     overflow: "hidden",
                     cursor: "grab",
-                    borderLeft: `3px solid ${eventColorVariable(event)}`,
-                    background: `color-mix(in srgb, ${eventColorVariable(event)} 22%, var(--bg-panel))`,
-                    color: "var(--text)",
+                    ...eventSurface(event, 22),
                   }}
                 >
                   <div style={{ fontWeight: 600 }}>{event.title}</div>
@@ -856,7 +885,6 @@ function EventChip({
   onClick: (event: React.MouseEvent) => void;
   onDragStart: (event: React.DragEvent) => void;
 }) {
-  const color = eventColorVariable(event);
   return (
     <div
       draggable
@@ -878,9 +906,7 @@ function EventChip({
         overflow: "hidden",
         textOverflow: "ellipsis",
         cursor: "grab",
-        borderLeft: `3px solid ${color}`,
-        background: `color-mix(in srgb, ${color} 20%, var(--bg-panel))`,
-        color: "var(--text)",
+        ...eventSurface(event, 20),
       }}
     >
       {event.title}

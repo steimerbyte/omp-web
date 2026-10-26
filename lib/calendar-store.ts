@@ -10,9 +10,8 @@ import {
   MAX_CALENDAR_EVENTS,
   MAX_TEXT_LENGTH,
   MAX_TITLE_LENGTH,
-  resolveEventColor,
+  normalizeCalendarColor,
   validateEventRange,
-  type CalendarColor,
   type CalendarEvent,
 } from "./calendar";
 
@@ -175,9 +174,14 @@ export function normalizeCalendarEvents(value: unknown): CalendarEvent[] {
 /**
  * Ein Termin aus ungeprueftem Material — oder `null`, wenn er unbrauchbar ist.
  *
- * Die Farbe wird **nicht** aus dem Fremdobjekt uebernommen, sondern aus der
- * Kennung abgeleitet, wenn sie nicht erlaubt ist. Die Farbe ist Anzeige, nicht
- * Datenhaltung: sie muss stabil sein, und eine Kennung liefert das gratis.
+ * ### Die Farbe
+ *
+ * Die Farbe wird uebernommen, aber nur, wenn sie eine Farbe ist: ein
+ * Preset-Name oder ein Hex-Code. Eine kaputte Farbe wird **verworfen**, nicht
+ * gespeichert — der Termin faellt dann auf die Voreinstellung zurueck, statt
+ * mit Muell in der Datei zu liegen. Die Route prueft dieselbe Regel und
+ * antwortet bei einer unbrauchbaren Farbe mit einem Fehler; diese Pruefung
+ * hier schuetzt den Bestand, wenn die Datei von Hand geschrieben wurde.
  */
 export function normalizeCalendarEvent(value: unknown): CalendarEvent | null {
   if (typeof value !== "object" || value === null) return null;
@@ -206,12 +210,14 @@ export function normalizeCalendarEvent(value: unknown): CalendarEvent | null {
   const description =
     typeof raw.description === "string" ? raw.description.slice(0, MAX_TEXT_LENGTH) : undefined;
   const location = typeof raw.location === "string" ? raw.location.slice(0, MAX_TEXT_LENGTH) : undefined;
+  const color = normalizeCalendarColor(raw.color);
 
   return {
     id,
     title,
     ...(description ? { description } : {}),
     ...(location ? { location } : {}),
+    ...(color ? { color } : {}),
     start,
     end,
     allDay,
@@ -221,14 +227,14 @@ export function normalizeCalendarEvent(value: unknown): CalendarEvent | null {
 }
 
 /**
- * Die Farbe eines Termins fuer die Anzeige.
+ * Die gespeicherte Farbe eines Termins — Preset-Name oder Hex-Code.
  *
- * Ein Duplikat von `resolveEventColor` aus `lib/calendar.ts`, aber mit dem
- * Dateiformat: die Datei speichert **keine** Farbe, weil sie aus der Kennung
- * abgeleitet wird. Diese Funktion ist die Bruecke zwischen beiden.
+ * Der Wert kommt aus der Datei und ist deshalb *Datenhaltung*: der Nutzer
+ * hat diese Farbe gewaehlt, und sie soll den Theme-Wechsel ueberleben. Fuer
+ * die *Anzeige* ist `resolveEventColor` aus `lib/calendar.ts` zustaendig.
  */
-export function calendarEventColor(event: CalendarEvent): CalendarColor {
-  return resolveEventColor(event);
+export function calendarEventColor(event: CalendarEvent): string | undefined {
+  return normalizeCalendarColor(event.color);
 }
 
 declare global {

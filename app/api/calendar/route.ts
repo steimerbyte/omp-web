@@ -8,7 +8,7 @@ import {
   readCalendarFile,
   writeCalendarFile,
 } from "@/lib/calendar-store";
-import { MAX_TITLE_LENGTH, MAX_TEXT_LENGTH, isCalendarDate, isCalendarDateTime } from "@/lib/calendar";
+import { MAX_TITLE_LENGTH, MAX_TEXT_LENGTH, isCalendarDate, isCalendarDateTime, normalizeCalendarColor } from "@/lib/calendar";
 import { getRequestIdentity, type WebIdentity } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 
@@ -88,8 +88,8 @@ export async function GET(req: Request) {
 /**
  * POST /api/calendar — einen Termin anlegen.
  *
- * Der Client schickt `title`, `start`, `end` und `allDay`; optional `description`
- * und `location`. Die Kennung und die Zeitstempel vergibt der Server — ein
+ * Der Client schickt `title`, `start`, `end` und `allDay`; optional `description`,
+ * `location` und `color`. Die Kennung und die Zeitstempel vergibt der Server — ein
  * Client, der seine eigene Kennung waehlt, koennte einen fremden Termin
  * ueberschreiben, und das ist genau der Grund, warum die Kennung hier nicht
  * aus dem Request kommt.
@@ -135,6 +135,19 @@ export async function POST(req: Request) {
   }
 
   const now = new Date().toISOString();
+
+  // Die Farbe ist optional: ohne sie traegt der Termin die Voreinstellung.
+  // Eine *unbrauchbare* Farbe ist aber ein Fehler und kein Grund, die Farbe
+  // stillschweigend zu verwerfen — der Client hat sie gewaehlt, also stimmt
+  // etwas nicht, und das gehoert gemeldet.
+  const color = normalizeCalendarColor(raw.color);
+  if (raw.color !== undefined && color === undefined) {
+    return NextResponse.json(
+      { error: "color must be a preset name or a hex color" },
+      { status: 400 },
+    );
+  }
+
   const created = normalizeCalendarEvent({
     id: randomUUID(),
     title,
@@ -143,6 +156,7 @@ export async function POST(req: Request) {
     allDay,
     description: typeof raw.description === "string" ? raw.description.slice(0, MAX_TEXT_LENGTH) : undefined,
     location: typeof raw.location === "string" ? raw.location.slice(0, MAX_TEXT_LENGTH) : undefined,
+    ...(color ? { color } : {}),
     createdAt: now,
     updatedAt: now,
   });

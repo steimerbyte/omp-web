@@ -59,6 +59,8 @@ export interface CalendarEventInput {
   allDay?: boolean;
   description?: string;
   location?: string;
+  /** Die Farbe des Termins: ein Preset-Name oder ein Hex-Code. */
+  color?: string;
 }
 
 /**

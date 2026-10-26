@@ -57,6 +57,17 @@ export interface CalendarEvent {
   end: string;
   /** `true` heisst Ganztagestermin: der Termin belegt den ganzen Tag. */
   allDay: boolean;
+  /**
+   * Die Farbe des Termins: ein Preset-Name (`accent`, `success`, ...) oder
+   * ein Hex-Code (`#ff00aa`). Ohne diese Angabe traegt der Termin die
+   * Voreinstellung (Akzent).
+   *
+   * Der Wert ist *Datenhaltung*, nicht Anzeige: ein Termin, den der Nutzer
+   * farblich markiert hat, soll seine Farbe auch behalten, wenn das Theme
+   * wechselt. Deshalb steht hier der Hex-Code des Termins und nicht der
+   * Name einer Theme-Variable.
+   */
+  color?: string;
   /** Erstellzeitpunkt (ISO mit Zone) — fuer die Sortierung im Protokoll. */
   createdAt: string;
   /** Letzte Aenderung (ISO mit Zone). */
@@ -73,65 +84,140 @@ export const MAX_TITLE_LENGTH = 300;
 export const MAX_TEXT_LENGTH = 4000;
 
 /**
- * Die Farben, die ein Termin tragen kann. Die Reihenfolge ist die Anzeigereihenfolge.
+ * Die Preset-Farben, die ein Termin tragen kann. Die Reihenfolge ist die
+ * Anzeigereihenfolge.
  *
- * ### Warum jede Farbe eine CSS-Variable ist
+ * ### Warum jede Preset-Farbe eine CSS-Variable ist
  *
  * `AGENTS.md` verbietet Farbliterale im Code: `applyOmpPalette` schreibt die
  * Variablen zur Laufzeit um, und ein festes `#1f8b4c` in einer Kachel bleibt
- * in einem importierten Theme das alte Blaugruen. Jede Farbe hier ist deshalb
- * ein *Name*, und die Oberflaeche uebersetzt den Namen in eine Variable des
- * aktiven Themes.
+ * in einem importierten Theme das alte Blaugruen. Jede Preset-Farbe hier ist
+ * deshalb ein *Name*, und die Oberflaeche uebersetzt den Namen in eine
+ * Variable des aktiven Themes. Ein Preset sieht in hell und dunkel also
+ * richtig aus und folgt dem Theme wie der Rest der Oberflaeche.
  */
-export const CALENDAR_COLORS = [
+export const CALENDAR_COLOR_PRESETS = [
   "accent",
   "success",
   "warning",
   "danger",
-  "muted",
+  "violet",
 ] as const;
 
-/** Eine der erlaubten Terminfarben. */
-export type CalendarColor = (typeof CALENDAR_COLORS)[number];
+/** Eine der Preset-Farben eines Termins. */
+export type CalendarColorPreset = (typeof CALENDAR_COLOR_PRESETS)[number];
 
 /**
  * Die Farbe, die ein Termin bekommt, wenn keine genannt wurde.
  *
- * Kein Zufall: die Reihenfolge der Palette ist stabil, und der Index wird
- * aus der Kennung abgeleitet. Zwei Termine mit demselben Titel an
- * verschiedenen Tagen sehen dadurch gleich aus, ohne dass der Nutzer etwas
- * einstellen muss.
+ * Der Akzent ist die Farbe der Anwendung selbst: ein Termin ohne eigene
+ * Farbe faellt im Kalender nicht auf, und genau das will der Nutzer in der
+ * Regel.
  */
-export const DEFAULT_CALENDAR_COLOR: CalendarColor = "accent";
+export const DEFAULT_CALENDAR_COLOR: CalendarColorPreset = "accent";
 
 /**
- * Die CSS-Variable, in der die Farbe eines Termins steht.
+ * Die CSS-Variable, in der die Preset-Farbe eines Termins steht.
  *
  * Die Zuordnung gehoert hierher und nicht in die Oberflaeche: die Werkzeuge
  * (Agent) und die Oberflaeche brauchen dieselbe Farbe fuer denselben Termin,
  * und eine Farbe, die nur in der Oberflaeche existiert, waere an zwei Stellen
  * definiert.
  */
-export const CALENDAR_COLOR_VARIABLES: Record<CalendarColor, string> = {
+export const CALENDAR_COLOR_VARIABLES: Record<CalendarColorPreset, string> = {
   accent: "var(--accent)",
   success: "var(--success)",
   warning: "var(--warning)",
   danger: "var(--danger)",
-  muted: "var(--text-muted)",
+  violet: "var(--violet)",
 };
 
-/** Die Farbe eines Termins, wenn die Kennung einen stabilen Index ergibt. */
-export function colorForEventId(id: string): CalendarColor {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  }
-  return CALENDAR_COLORS[hash % CALENDAR_COLORS.length];
+/** `true`, wenn der Wert eine der Preset-Farben ist. */
+export function isCalendarColorPreset(value: unknown): value is CalendarColorPreset {
+  return typeof value === "string" && (CALENDAR_COLOR_PRESETS as readonly string[]).includes(value);
 }
 
-/** `true`, wenn der Wert eine der erlaubten Farben ist. */
-export function isCalendarColor(value: unknown): value is CalendarColor {
-  return typeof value === "string" && (CALENDAR_COLORS as readonly string[]).includes(value);
+/**
+ * Die deutschen Namen der Preset-Farben.
+ *
+ * ### Warum sie hier stehen und nicht im i18n-Katalog
+ *
+ * Wie die Monats- und Wochentagsnamen: es ist ein festes Vokabular des
+ * Kalenders, das in jeder Sprache des Programms deutsch ist — der Kalender
+ * ist ein deutscher Kalender. Der i18n-Katalog ist der Katalog der
+ * *Oberflaeche* und haengt an der eingestellten Sprache.
+ *
+ * Und sie muessen fuer zwei Seiten reichen: die Dialog-Komponente (Client)
+ * und die Werkzeug-Ausgabe (Server) nennen dieselben fuenf Farben. Eine
+ * Konstante in `lib/calendar-tool.ts` koennte der Client nicht importieren
+ * (die Datei zieht `fs` ueber den Store), und ein i18n-Schluessel koennte
+ * das Server-Werkzeug nicht ohne das gesamte Sprachpaket aufloesen.
+ */
+export const CALENDAR_COLOR_PRESET_LABELS: Record<CalendarColorPreset, string> = {
+  accent: "Akzent",
+  success: "Erfolg",
+  warning: "Warnung",
+  danger: "Gefahr",
+  violet: "Violett",
+};
+
+/**
+ * Ein Hex-Farbcode — `#rgb` oder `#rrggbb`.
+ *
+ * ### Warum die kurze Form zulaessig ist
+ *
+ * `#f0a` ist eine gaengige Schreibweise, und wer sie im Dialog eintippt,
+ * meint dieselbe Farbe wie bei `#ff00aa`. Deshalb wird sie erkannt und auf
+ * die lange Form gebracht (siehe `normalizeCalendarColor`).
+ */
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/** `true`, wenn der Wert ein Hex-Farbcode ist. */
+export function isCalendarHexColor(value: unknown): value is string {
+  return typeof value === "string" && HEX_COLOR_PATTERN.test(value.trim());
+}
+
+/**
+ * Bringt eine Farbangabe in die Form, in der sie gespeichert wird.
+ *
+ * ### Warum genau eine Form gespeichert wird
+ *
+ * Gespeichert wird ein Preset-Name (`accent`) oder ein Hex-Code in genau
+ * einer Schreibweise: klein und sechs Stellen (`#ff00aa`). Zwei Schreibweisen
+ * derselben Farbe wuerden in der Datei zwei verschiedene Termine ergeben —
+ * `#f0a` und `#ff00aa` waeren fuer den Vergleich zwei Farben, obwohl sie
+ * eine sind. Der Vergleich bleibt dadurch eindeutig, und die Form ist
+ * zugleich die, die der Farbwähler des Browsers liefert.
+ *
+ * @returns Der Preset-Name, der Hex-Code in kanonischer Form — oder
+ * `undefined`, wenn die Angabe keine Farbe ist.
+ */
+export function normalizeCalendarColor(value: unknown): string | undefined {
+  if (isCalendarColorPreset(value)) return value;
+  if (!isCalendarHexColor(value)) return undefined;
+  const hex = value.trim().slice(1).toLowerCase();
+  const long = hex.length === 3 ? hex.split("").map((digit) => digit + digit).join("") : hex;
+  return `#${long}`;
+}
+
+/**
+ * Die Farbe, mit der ein Termin gezeichnet wird.
+ *
+ * ### Warum die Aufloesung im Domaenenmodell steht
+ *
+ * Die Werkzeuge (Agent) und die Oberflaeche zeigen denselben Termin. Wer die
+ * Farbe an beiden Stellen getrennt aufloest, zeigt dem Nutzer im Chat eine
+ * andere Farbe als im Kalender. Die Aufloesung gehoert deshalb in das
+ * Domaenenmodell, das beide Seiten benutzen.
+ *
+ * @returns Die CSS-Variable eines Presets, der Hex-Code einer eigenen Farbe
+ * — oder die Voreinstellung, wenn der Termin keine Farbe traegt.
+ */
+export function resolveEventColor(event: { color?: unknown }): string {
+  const color = normalizeCalendarColor(event?.color);
+  if (color === undefined) return CALENDAR_COLOR_VARIABLES[DEFAULT_CALENDAR_COLOR];
+  if (isCalendarColorPreset(color)) return CALENDAR_COLOR_VARIABLES[color];
+  return color;
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -412,6 +498,108 @@ export function formatGermanDateTime(start: string): string {
 }
 
 /**
+ * Die Ziffern eines Textes — ohne Buchstaben und ohne alles andere.
+ *
+ * Buchstaben fliegen raus, statt den Wert unbrauchbar zu machen: wer
+ * versehentlich "1a5" tippt, meint "15" und soll nicht an einem Tastendruck
+ * scheitern.
+ */
+export function digitsOf(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+/**
+ * Die Ziffern und der Doppelpunkt einer Uhrzeit-Eingabe.
+ *
+ * Der Doppelpunkt bleibt, weil er Stunde und Minute trennt; alles andere
+ * fliegt raus.
+ */
+export function sanitizeTimeInput(value: string): string {
+  return value.replace(/[^\d:]/g, "");
+}
+
+/**
+ * Die Ziffern und die Punkte einer Datumseingabe.
+ *
+ * Der Punkt bleibt, weil er Tag, Monat und Jahr trennt; alles andere fliegt
+ * raus.
+ */
+export function sanitizeDateInput(value: string): string {
+  return value.replace(/[^\d.]/g, "");
+}
+
+/**
+ * Die Ziffern und der Raute einer Hex-Farb-Eingabe.
+ *
+ * Alles, was kein Hex-Zeichen ist, fliegt raus — sonst koennte ein
+ * Farbcode nicht als Farbcode erkannt werden.
+ */
+export function sanitizeHexInput(value: string): string {
+  return value.replace(/[^0-9a-fA-F#]/g, "");
+}
+
+/**
+ * Die kanonische Form `HH:MM` einer Uhrzeit-Eingabe — oder `null`.
+ *
+ * ### Was der Nutzer tippen darf
+ *
+ * `15`, `15:0` und `15:00` sind alle gueltig und ergeben `15:00`. Ein
+ * Doppelpunkt trennt Stunde und Minute; ohne ihn fuellen die Ziffern erst
+ * die Stunde und dann die Minute, von links nach rechts. So ist `15:3`
+ * `15:03` und `1530` ist `15:30`.
+ *
+ * ### Warum die Form kanonisch ist
+ *
+ * Der Kalender speichert `HH:MM` — ohne Sekunden, ohne Zone, ohne
+ * fuehrende Nullen beim Wert. Jede Eingabe, die zu derselben Zeit fuehrt,
+ * ergibt deshalb dieselbe Zeichenkette: `15`, `15:0` und `15:00` sind alle
+ * `15:00`. Ohne diese Regel haette dieselbe Uhrzeit je nach Eingabe zwei
+ * Formen, und der Vergleich zweier Termine waere unmoeglich.
+ *
+ * @returns `HH:MM`, oder `null`, wenn die Eingabe keine Uhrzeit ist.
+ */
+export function normalizeTimeInput(value: string): string | null {
+  const parts = value.split(":");
+  if (parts.length > 2) return null;
+  let hours = digitsOf(parts[0] ?? "");
+  let minutes = digitsOf(parts[1] ?? "");
+  if (parts.length === 1 && hours.length > 2) {
+    // Ohne Doppelpunkt fuellen die Ziffern erst die Stunde, dann die Minute.
+    minutes = hours.slice(2);
+    hours = hours.slice(0, 2);
+  }
+  if (hours.length === 0 || hours.length > 2) return null;
+  if (minutes.length > 2) return null;
+  const hourValue = Number(hours);
+  const minuteValue = minutes === "" ? 0 : Number(minutes);
+  if (hourValue > 23 || minuteValue > 59) return null;
+  return `${pad2(hourValue)}:${pad2(minuteValue)}`;
+}
+
+/**
+ * Die kanonische Form `YYYY-MM-DD` einer deutschen Datumseingabe — oder
+ * `null`.
+ *
+ * `14.3.2026` und `14.03.2026` ergeben beide `2026-03-14`. Das Datum wird
+ * in der Form gespeichert, in der der Kalender es ohnehin rechnet; der
+ * Doppelpunkt gehoert zur Eingabe, nicht zum Termin.
+ *
+ * @returns `YYYY-MM-DD`, oder `null`, wenn die Eingabe kein Datum ist.
+ */
+export function normalizeDateInput(value: string): string | null {
+  const parts = value.split(".");
+  if (parts.length !== 3) return null;
+  const day = digitsOf(parts[0] ?? "");
+  const month = digitsOf(parts[1] ?? "");
+  const year = digitsOf(parts[2] ?? "");
+  if (day.length === 0 || day.length > 2) return null;
+  if (month.length === 0 || month.length > 2) return null;
+  if (year.length !== 4) return null;
+  const iso = `${year}-${pad2(Number(month))}-${pad2(Number(day))}`;
+  return isCalendarDate(iso) ? iso : null;
+}
+
+/**
  * Das Kalenderblatt eines Monats: sechs Wochen x sieben Tage.
  *
  * ### Warum sechs Wochen und nicht vier oder fünf
@@ -577,15 +765,4 @@ export function eventFallsInMonth(event: CalendarEvent, anchorDate: string): boo
   const startMonth = event.start.slice(0, 7);
   const endMonth = event.end.slice(0, 7);
   return startMonth === month || endMonth === month;
-}
-
-/**
- * Die Farbe eines Termins fuer die Anzeige.
- *
- * Die Funktion nimmt eine Farbe an, wenn sie erlaubt ist, und faellt sonst auf
- * die stabile Farbe aus der Kennung zurueck. Damit kann der Client eine Farbe
- * mitschicken, ohne dass eine unerlaubte durchrutscht.
- */
-export function resolveEventColor(event: Pick<CalendarEvent, "id"> & { color?: unknown }): CalendarColor {
-  return isCalendarColor(event.color) ? event.color : colorForEventId(event.id);
 }

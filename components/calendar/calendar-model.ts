@@ -20,11 +20,9 @@ import {
   dateToDayNumber,
   dayNumberToDate,
   minutesToTime,
-  resolveEventColor,
   timeToMinutes,
   type CalendarEvent,
 } from "@/lib/calendar";
-import { CALENDAR_COLOR_VARIABLES } from "@/lib/calendar";
 
 /** Pixel, die eine Minute im Stundenraster belegt. */
 export const MINUTE_HEIGHT = 0.8;
@@ -66,17 +64,6 @@ export function shiftMonth(anchor: string, delta: number): string {
 /** Der erste Tag des Monats, in dem `date` liegt. */
 function startOfFirst(date: string): string {
   return `${date.slice(0, 7)}-01`;
-}
-
-/**
- * Die CSS-Variable der Farbe eines Termins.
- *
- * `CALENDAR_COLOR_VARIABLES` haelt die Zuordnung zur Laufzeit aktualisierbar:
- * `applyOmpPalette` schreibt die Variablen um, und eine Kachel mit festem
- * Hex-Wert bliebe im importierten Theme die alte Farbe.
- */
-export function eventColorVariable(event: CalendarEvent): string {
-  return CALENDAR_COLOR_VARIABLES[resolveEventColor(event)];
 }
 
 /**

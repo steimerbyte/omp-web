@@ -7,7 +7,6 @@ const {
   HOUR_HEIGHT,
   MINUTE_HEIGHT,
   MINUTES_PER_DAY,
-  eventColorVariable,
   eventDaySpan,
   eventDurationMinutes,
   eventSegmentForDay,
@@ -179,15 +178,4 @@ test("moving an all-day event to a slot turns it into a timed event", () => {
   assert.equal(moved.start, "2026-03-16T09:00");
   assert.equal(moved.end, "2026-03-16T10:00");
   assert.equal(moved.allDay, false);
-});
-
-// --- Die Farbe ------------------------------------------------------------------------------
-
-test("the color of an event is a theme variable, never a literal", () => {
-  const variable = eventColorVariable(timed());
-  assert.match(variable, /^var\(--/, `keine Theme-Variable: ${variable}`);
-});
-
-test("the color of an event is stable", () => {
-  assert.equal(eventColorVariable(timed()), eventColorVariable(timed()));
 });

@@ -104,6 +104,10 @@ win.localStorage = globalThis.localStorage;
 
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { CalendarEventDialog } = await jiti.import("./CalendarEventDialog.tsx");
+// Die deutschen Farbnamen stehen in der Domaene — der Dialog und die
+// Werkzeug-Ausgabe nennen dieselben fuenf Woerter, also kommt die Erwartung
+// hier auch aus der Domaene und nicht aus einer Abschrift.
+const { CALENDAR_COLOR_PRESET_LABELS } = await jiti.import("@/lib/calendar.ts");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -240,4 +244,113 @@ test("das Loeschen fragt nach, bevor der Termin verschwindet", async () => {
     /Diesen Termin löschen\?/,
     "die Rueckfrage traegt keinen deutschen Text",
   );
+});
+
+test("die Farbe zeigt fuenf Presets und einen eigenen Knopf", async () => {
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  // Fuenf Presets, jedes mit seinem deutschen Namen als Beschriftung — die
+  // Namen kommen aus der Domaene.
+  const presets = Object.values(CALENDAR_COLOR_PRESET_LABELS);
+  assert.equal(presets.length, 5);
+  for (const name of presets) {
+    const swatch = buttons().find((button) => button.getAttribute("aria-label") === name);
+    assert.ok(swatch, `das Preset "${name}" fehlt`);
+  }
+
+  // Der Termin traegt noch keine eigene Farbe — er wird in der
+  // Voreinstellung gezeichnet, also ist *der* Knopf gedrueckt.
+  const accentName = CALENDAR_COLOR_PRESET_LABELS.accent;
+  const accent = buttons().find((button) => button.getAttribute("aria-label") === accentName);
+  assert.equal(accent.getAttribute("aria-pressed"), "true");
+  for (const name of presets.filter((entry) => entry !== accentName)) {
+    const swatch = buttons().find((button) => button.getAttribute("aria-label") === name);
+    assert.equal(swatch.getAttribute("aria-pressed"), "false", `"${name}" ist gedrueckt`);
+  }
+
+  // Und der Knopf fuer eine eigene Farbe.
+  const custom = buttonWith("Benutzerdefiniert");
+  assert.ok(custom, "der Knopf fuer eine eigene Farbe fehlt");
+});
+
+test("ein gewaehltes Preset wird als gedrueckt angezeigt und gespeichert", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  const successName = CALENDAR_COLOR_PRESET_LABELS.success;
+  const success = buttons().find((button) => button.getAttribute("aria-label") === successName);
+  assert.ok(success, `das Preset "${successName}" fehlt`);
+  await act(async () => { success.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+  // Das gewaehlte Preset ist gedrueckt, die anderen nicht.
+  assert.equal(success.getAttribute("aria-pressed"), "true");
+  const accent = buttons().find(
+    (button) => button.getAttribute("aria-label") === CALENDAR_COLOR_PRESET_LABELS.accent,
+  );
+  assert.equal(accent.getAttribute("aria-pressed"), "false");
+
+  await submitWithTitle("Teammeeting");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].color, "success", "die gewaehlte Farbe wurde nicht gespeichert");
+});
+
+test("ein bestehender Termin zeigt sein Preset als gedrueckt", async () => {
+  await mount(React.createElement(CalendarEventDialog, {
+    event: {
+      id: "e1", title: "Teammeeting", allDay: false,
+      start: "2026-03-14T15:00", end: "2026-03-14T16:30",
+      color: "warning",
+    },
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  const warningName = CALENDAR_COLOR_PRESET_LABELS.warning;
+  const warning = buttons().find((button) => button.getAttribute("aria-label") === warningName);
+  assert.ok(warning, `das Preset "${warningName}" fehlt`);
+  assert.equal(warning.getAttribute("aria-pressed"), "true");
+});
+
+test("ein eigener Hex-Code wird gespeichert und der eigene Knopf ist gedrueckt", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  const custom = buttonWith("Benutzerdefiniert");
+  assert.ok(custom, "der Knopf fuer eine eigene Farbe fehlt");
+  await act(async () => { custom.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+  // Der eigene Farbwaehler ist jetzt offen: der Farbcode wird getippt.
+  const field = byId("calendar-color-hex");
+  assert.ok(field, "das Feld fuer den Hex-Code fehlt");
+  await setInputValue(field, "#ff00aa");
+
+  await submitWithTitle("Teammeeting");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].color, "#ff00aa");
 });

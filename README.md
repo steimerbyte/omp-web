@@ -346,7 +346,7 @@ The measurements, the viewports and the tests that hold each fix are in
 | [docs/project-trust.md](./docs/project-trust.md) | Which of a project's resources need an explicit trust decision. |
 | [docs/worktrees.md](./docs/worktrees.md) | The Git worktree switcher. |
 | [docs/docker.md](./docs/docker.md) | The container: volume layout, UID/GID matching, reverse proxy. |
-| [docs/calendar.md](./docs/calendar.md) | The calendar as delivered: the German conventions, the agent tools, the API and the per-account boundary. |
+| [docs/calendar.md](./docs/calendar.md) | The calendar as delivered: the German conventions, the event colours, the 24-hour time and date fields, the agent tools, the API and the per-account boundary. |
 | [docs/i18n.md](./docs/i18n.md) | Translations and adding languages or UI text. |
 | [docs/release.md](./docs/release.md) | The release checklist. |
 | [CHANGELOG.md](./CHANGELOG.md) | What changed, with the measurements, per release. |

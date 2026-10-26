@@ -122,29 +122,204 @@ ist deshalb nicht eine Bequemlichkeit, sondern die Mandantengrenze.
 
 ### Was die Werkzeuge können
 
-`calendar_read` liest alle Termine oder nur die in einem Zeitraum. Die
-Antwort nennt zu jedem Termin Titel, Wochentag, Datum, den Ganztag-Flag, den
-Ort und die Notiz — und die Kennung, damit der Agent denselben Termin danach
-ändern oder löschen kann. Der Text kommt deutsch zurück, weil der Nutzer ihn
-im Chatverlauf liest.
-
 `calendar_write` hat drei Aktionen:
 
 - `create` — braucht `title`, `start`, `end`,
 - `update` — braucht `id` und nur die Felder, die sich ändern sollen,
 - `delete` — braucht `id`.
 
-Ein Verschieben ist ein `update` mit neuem `start` und `end`. Es gibt dafür
-keinen zweiten Endpunkt: ein `move`-Werkzeug wäre dieselbe Logik unter einem
-zweiten Namen.
+Dazu kommt der Parameter `color`: ein Preset-Name (`accent`, `success`,
+`warning`, `danger`, `violet`) oder ein Hex-Code. Er wird mit derselben
+Funktion geprüft wie in den Routen (`normalizeCalendarColor()`), damit das
+Werkzeug nicht etwas annehmen kann, was die Route ablehnt.
 
-Der Ganztag-Flag wird aus der Schreibweise geschlossen, wenn er nicht
-ausdrücklich angegeben ist: `"2026-03-14"` *ist* ein Ganztagestermin,
-`"2026-03-14T15:00"` ist ein Termin mit Uhrzeit. So muss das Modell nicht
-beides angeben und kann sich nicht widersprechen.
+`calendar_read` liest alle Termine oder nur die in einem Zeitraum. Die
+Antwort nennt zu jedem Termin Titel, Farbe, Wochentag, Datum, Uhrzeit oder
+Ganztag, den Ort und die Notiz — und die Kennung, damit der Agent denselben
+Termin danach ändern oder löschen kann.
+
+Ein Verschieben ist ein `update` mit neuem `start`; es gibt dafür keinen
+zweiten Endpunkt: ein `move`-Werkzeug wäre dieselbe Logik unter einem zweiten
+Namen.
 
 Ohne Konto geben die Werkzeuge eine klare Fehlermeldung, statt in den
 Kalender des Betreibers zu greifen.
+
+### Der Vertrag ist englisch, das Ergebnis ist deutsch
+
+Die Beschreibung der Werkzeuge liest das **Modell**, das Ergebnis liest der
+**Nutzer** im Chatverlauf. Deshalb ist die Beschreibung englisch und der
+Ergebnistext deutsch. Die Werkzeuge folgen damit derselben Regel wie das
+andere native Werkzeug `present_files` (`lib/present-files-tool.ts`): die
+Beschreibung ist englisch und für das Modell geschrieben.
+
+### Jede Antwort beginnt mit dem heutigen Anker
+
+Der Ergebnistext von `calendar_read` beginnt mit einem **Anker**:
+
+```
+Heute ist Montag, 26.10.2026.
+Diese Kalenderwoche: Mo 26.10.2026 – So 01.11.2026.
+Nächste Kalenderwoche: Mo 02.11.2026 – So 08.11.2026.
+```
+
+Der Anker kommt aus dem Kalender, nicht aus dem Modell: „heute" ist der
+lokale Tag, weil das Kalenderformat keine Zeitzone kennt.
+
+**Der Wochentag ist der eigentliche Gewinn.** Das Harness schreibt in die
+erste User-Nachricht nur `Today: <YYYY-MM-DD>` — **ohne** Wochentag
+(`node_modules/@oh-my-pi/pi-coding-agent/src/session/date-cwd-reminder.ts`,
+Vorlage `src/prompts/system/date-cwd-reminder.md`). Der Agent musste den
+Wochentag also selbst rechnen, und genau das war der Anlass für die
+`bash date`-Aufrufe: Das Datum stand da, die Woche nicht. Der Anker liefert
+die zweite, müllfreie Quelle.
+
+**Warum „Kalenderwoche" und nicht „Woche".** „Kalenderwoche" ist im Deutschen
+der etablierte Begriff für die ISO-Woche — die Anwendung selbst schreibt
+„KW 11" in die Kopfzeile. „Diese Woche" meint im Gespräch dagegen die
+laufende Woche, und genau diese Verwechslung hat ein Agent produziert: In der
+Nach-Messung las er die Ankerzeile „Nächste Woche: Mo 02.11. – So 08.11.",
+rief dann aber ein **zwei Wochen breites** Fenster ab und bezeichnete in
+seiner Antwort „Mo 26.10. – So 01.11." als „die nächste Woche". Er hat also
+zwei Linien verwechselt, weil er zu breit abgefragt hat. Der Anker sagt
+deshalb beide Male „Kalenderwoche" — ein Begriff, den es nur einmal gibt.
+
+**Die Regel für die Abfrage.** Fragt der Nutzer nach einer Woche, fragt der
+Agent genau den Bereich ab, den der Anker nennt — **eine** Woche, kein
+breiteres Fenster — und antwortet mit demselben Bereich. Das steht so auch
+in der Beschreibung von `calendar_read`.
+
+#### Was der Anker nicht leistet
+
+Der Anker **präzisiert** relative Angaben, er löst die Frage „welche Woche
+meinst du" nicht.
+
+Das ist an einem gemessenen Fall sichtbar geworden: Die Baseline lief
+**sonntags** um 23:55, die Nach-Messung **montags**. Prompt 2 („Was steht
+diese Woche bei mir im Kalender?") war in der Baseline nur deshalb falsch,
+weil „diese Woche" an einem Sonntagabend mehrdeutig ist — die laufende oder
+die kommende. Ein **Kontrolllauf mit dem alten Vertrag am selben Montag**
+lieferte dieselbe richtige Antwort. Der Fehler lag also am Wochentag,
+nicht am Vertrag.
+
+Der Anker nennt die *laufende* Kalenderwoche, und die ist an einem Sonntag die
+Woche, die gerade endet. Wer „diese Woche" an einem Sonntag fragt, meint
+die kommende. Der Anker ist damit der Anker für **relative Angaben**
+(Wochentag, „diese Kalenderwoche", „morgen") — nicht die Auflösung der
+Frage, welche Woche gemeint ist.
+
+### Was gemessen wurde
+
+Die Nach-Messung lief mit **elf** natürlichen deutschen Aufgaben — sieben aus
+der Baseline plus vier neue, die genau die geänderten Pfade treffen:
+
+- **11/11** Agenten nutzten die Kalenderwerkzeuge,
+- **10/11** kamen zu einem korrekten Ergebnis,
+- **0** erfundene Behauptungen des Agenten,
+- **0** vom Werkzeug abgelehnte Aufrufe in beiden Läufen,
+- `bash date`-Aufrufe zur Datumsermittlung: **4 → 1** über die sieben
+  gemeinsamen Aufgaben; wochentagsbereinigt (Kontrolllauf mit dem alten
+  Vertrag am selben Tag: 2) bleibt **2 → 1**.
+
+Die drei neuen Fälle, die der alte Vertrag nicht konnte, gelingen jetzt.
+
+#### Der Werkzeug-Vergleich alt gegen neu
+
+Am Werkzeug selbst gemessen, je eigenes Temp-HOME — das sind die härtesten
+Belege, weil sie nicht vom Modell abhängen, sondern vom Werkzeug:
+
+| Fall | alt | neu |
+|---|---|---|
+| `update` mit **nur** `start`, nach vorn | ERROR „Das Ende liegt vor dem Beginn." | korrekt, Dauer erhalten |
+| `update` mit **nur** `start`, nach hinten | **stillschweigend falsch** (3-Tage-Termin) | korrekt, Dauer erhalten |
+| Ganztag → mit Uhrzeit | ERROR | korrekt |
+| mit Uhrzeit → Ganztag | ERROR | korrekt |
+| `end == start` bei bezeitigt | „Das Ende liegt vor dem Beginn." (sachlich falsch) | eigene Meldung: das Ende muss **nach** dem Beginn liegen |
+| Lösch-Meldung bei einem Termin mit Uhrzeit | „am 06T15:00.11.2026." | „am 06.11.2026, 15:00 Uhr" |
+
+Die letzten beiden Zeilen sind **zwei echte Fehler**, die die Baseline
+gefunden hat. Sie gehören in die Doku, weil sie die Fehlerklasse zeigen, nach
+der man suchen muss: eine Meldung, die ein Datum **mit** Uhrzeit wie ein
+reines Datum formatiert, und eine Meldung, die zwei verschiedene Fehler
+(Ende vor Beginn, Ende gleich Beginn) mit demselben Satz belegt.
+
+### Der Bereichsfilter filtert nach Überschneidung
+
+`from` und `to` sind Daten (`YYYY-MM-DD`). Der Filter prüft **Überschneidung**,
+nicht den Beginn: ein Termin, der nur teilweise im Zeitraum liegt, wird
+mitgeliefert — ein Termin vom 01.03. bis 31.03. erscheint auch für
+`from = to = '2026-03-10'`. Ein Filter nach dem Beginn würde einen Termin
+verdecken, der noch läuft.
+
+### Ein Verschieben behält die Dauer
+
+Ein `update` mit nur einem neuen `start` rechnet das Ende aus der bestehenden
+Dauer; ein `update` mit nur einem neuen `end` rechnet entsprechend den
+Beginn. Vor dieser Regel scheiterte der Aufruf immer, sobald der neue
+Beginn nach dem alten Ende lag — das Ende hätte vor dem Beginn gelegen, und
+der Termin wäre ungültig.
+
+### Der Ganztag-Flag folgt der Schreibweise — auch beim Ändern
+
+`"2026-03-14"` *ist* ein Ganztagestermin, `"2026-03-14T15:00"` ist ein Termin
+mit Uhrzeit. Das gilt für `create` und für `update` gleichermaßen: wird beim
+Ändern kein Flag angegeben, richtet er sich nach der Schreibweise des
+angegebenen Wertes. Vor dieser Regel behielt ein `update` den Flag des
+bestehenden Termins, und der Wechsel zwischen Ganztag und Uhrzeit brauchte
+ein ausdrückliches Flag. Wird gar kein Wert angegeben, bleibt der Flag des
+bestehenden Termins stehen.
+
+So muss das Modell nicht beides angeben und kann sich nicht widersprechen.
+
+### Die Fehlermeldungen sagen, was zu tun ist
+
+- Ein unbrauchbares Datum nennt das erwartete Format (`YYYY-MM-DD`) und sagt,
+  dass relative Angaben („nächste Woche", „morgen") in ein konkretes Datum
+  umgerechnet werden müssen. Im Fehlerfall nennt die Meldung zusätzlich den
+  heutigen Tag auf Englisch — das Modell soll ihn nicht selbst bestimmen.
+- Eine fehlende `id` sagt, dass `calendar_read` zuerst aufzurufen ist.
+- Ein fehlender Titel sagt, dass ein Titel gebraucht wird.
+- Ein Ende **gleich** dem Beginn ist ein eigener Fall und hat eine eigene
+  Meldung: bei einem bezeitigten Termin muss das Ende **nach** dem Beginn
+  liegen, sonst hat der Termin keine Länge. Vorher trugen „Ende vor Beginn"
+  und „Ende gleich Beginn" denselben Satz — und der war für den zweiten Fall
+  sachlich falsch.
+
+Diese Meldungen sind englisch: sie gehen an das Modell, nicht an den Nutzer.
+Die einzige Ausnahme ist der Hinweis auf das fehlende Konto — der bleibt
+deutsch, weil er dem Nutzer im Chatverlauf erklärt werden soll, nicht dem
+Modell.
+
+### Gekürzte Felder werden gemeldet
+
+Ein Titel über 300 Zeichen wird gekürzt, eine Notiz oder ein Ort über 4000
+Zeichen ebenfalls. Der Ergebnistext sagt dann ausdrücklich, dass gekürzt
+wurde. Ein Nutzer, dessen Text gekürzt wurde, muss es vom Werkzeug erfahren
+und nicht an der Kürzung selbst.
+
+### Das Löschen ist endgültig
+
+Es gibt keinen Papierkorb und kein Rückgängig. Der Ergebnistext sagt das dem
+Nutzer, sonst sucht er später vergebens nach dem Termin.
+
+### Die Farbe gehört zum Termin
+
+`calendar_write` kann die Farbe setzen: einen Preset-Namen oder einen
+Hex-Code. Geprüft wird mit derselben Funktion `normalizeCalendarColor()`, die
+auch die Routen benutzen — das Werkzeug schreibt in dieselbe Datei, und was
+die Route ablehnt, muss auch hier abgelehnt werden. Ohne `color` behält ein
+bestehender Termin seine Farbe, ein neuer bekommt die Voreinstellung.
+
+### Zwei Fehler, die die Messung gefunden hat
+
+Die beiden sind in der Tabelle unter „Der Werkzeug-Vergleich alt gegen neu"
+mit ihrem alten und ihrem neuen Wortlaut belegt:
+
+- Die Löschmeldung formatierte einen Termin mit Uhrzeit wie ein reines Datum
+  und schrieb `am 06T15:00.11.2026`. Sie nennt jetzt Datum und Uhrzeit
+  getrennt: `am 06.11.2026, 15:00 Uhr`.
+- Die Werkzeugausgabe verlor das Enddatum eines Termins über Mitternacht
+  (`26.10.2026, 22:00–02:00 Uhr`). Sie nennt jetzt beide Tage.
 
 ---
 
@@ -181,6 +356,12 @@ mehr Schlüssel haben als der englische Katalog, aber ausschließlich mit dem
 Präfix `calendar.` — und der englische und der chinesische Katalog dürfen
 keinen einzigen `calendar.`-Schlüssel enthalten.
 
+Die fünf deutschen Namen der Preset-Farben („Akzent“, „Erfolg“, „Warnung“,
+„Gefahr“, „Violett“) stehen **nicht** im Katalog, sondern in
+`lib/calendar.ts` neben den Monats- und Wochentagsnamen. Es ist ein festes
+Vokabular des Kalenders, und es muss für Client und Server reichen — die
+Dialog-Komponente und die Werkzeug-Ausgabe nennen dieselben fünf Wörter.
+
 Die Oberfläche *um* den Kalender herum darf englisch sein. Der Knopf, der den
 Kalender öffnet, ist aus demselben Grund deutsch beschriftet
 (`components/SessionSidebar.tsx`).
@@ -213,6 +394,104 @@ plötzlich weit in der Zukunft.
 Ein Ganztagestermin aus der Monatsansicht bekommt den angeklickten Tag als
 Beginn und denselben Tag als Ende — das ist ein Termin mit genau einem Tag,
 kein leerer Zeitraum.
+
+### Das Zeit- und Datumsfeld
+
+Der Dialog hat **eigene Textfelder** für Datum und Uhrzeit: die Uhrzeit im
+24-Stunden-Format `HH:MM`, das Datum in deutscher Schreibweise `DD.MM.JJJJ`.
+
+Der Grund ist eine Messung in Chromium mit englischem Browser-Locale: ein
+natives `<input type="time">` zeigt den Wert `15:00` als `03:00 PM`, ein
+natives `<input type="date">` den Wert `2026-10-26` als `10/26/2026` — und
+`lang="de"` am Element ändert daran nichts. Der **Wert** war die ganze Zeit
+richtig (`input.value` stand `15:00`); falsch war allein die **Anzeige**.
+
+Die nativen Felder wurden deshalb ersetzt, nicht umformatiert: ihr Format
+folgt dem **Browser**, nicht der Seite. Ein deutscher Kalender, in dem 15 Uhr
+als „03 PM" erscheint, ist falsch.
+
+Die Felder sind **uncontrolled**: der getippte Text steht im DOM, nicht im
+Zustand. Wer „15:3" schreibt, muss danach noch „0" schreiben können — ein
+Zustand, der schon beim Tippen normalisierte, würde die Eingabe zerstören.
+Der Zustand hält die *kanonischen* Werte; die Normalisierung sitzt an der
+Grenze zum Kalenderformat, in `normalizeTimeInput()` und
+`normalizeDateInput()`: `15`, `15:0` und `15:00` ergeben alle `15:00`, und
+`14.3.2026` und `14.03.2026` beide `2026-03-14`. Beim Verlassen des Feldes
+bekommt der Text seine endgültige Form.
+
+### Die Farbe eines Termins
+
+Ein Termin kann farblich markiert werden. Der Dialog bietet fünf
+**Preset-Farben** und einen Knopf **„Benutzerdefiniert“**, der einen
+Farbwähler öffnet.
+
+Die Farbe ist **Datenhaltung**: sie steht in der Kalenderdatei beim Termin.
+Ein Termin, den der Nutzer farblich markiert hat, soll seine Farbe behalten,
+wenn das Theme wechselt.
+
+#### Die Presets sind Theme-Variablen
+
+Die fünf Presets — `accent`, `success`, `warning`, `danger`, `violet` — sind
+Theme-Variablen (`var(--accent)`, `var(--success)`, `var(--warning)`,
+`var(--danger)`, `var(--violet)`), keine festen Farben. `AGENTS.md` verbietet
+Farbliterale im Code, und `applyOmpPalette` schreibt die Variablen zur Laufzeit
+um: eine Kachel mit festem `#1f8b4c` bliebe in einem importierten Theme die
+alte Farbe.
+
+**`violet` ist die eine Ausnahme, und die ist gewollt.** Die Titanium-Palette
+hat kein Violett; der Wert stammt aus omp's Amethyst-Theme (dort `deepPurple`,
+im dunklen Theme `violet`) und steht deshalb in beiden Blöcken von
+`app/globals.css` fest. `applyOmpPalette` kennt nur Akzent, Erfolg, Fehler
+und Warnung — Violett wird nicht überschrieben. In einem importierten Theme
+folgen die vier übrigen Presets dem Theme, das Violett bleibt bei der
+Anwendung. Der Kommentar in `app/globals.css` sagt das ausdrücklich, damit
+die Asymmetrie nicht als Versehen gelesen wird.
+
+#### Die fünf deutschen Namen stehen in der Domäne
+
+„Akzent“, „Erfolg“, „Warnung“, „Gefahr“, „Violett“ stehen in
+`lib/calendar.ts` neben `GERMAN_MONTHS` und `GERMAN_WEEKDAYS` — **nicht** im
+i18n-Katalog. Es ist ein festes Vokabular des Kalenders, das in jeder Sprache
+des Programms deutsch ist, und es muss für zwei Seiten reichen: die
+Dialog-Komponente (Client) und die Werkzeug-Ausgabe (Server) nennen dieselben
+fünf Wörter. Eine Konstante in `lib/calendar-tool.ts` könnte der Client nicht
+importieren (die Datei zieht `fs` über den Store), und ein i18n-Schlüssel
+könnte das Server-Werkzeug nicht ohne das gesamte Sprachpaket auflösen.
+
+#### Der eigene Hex-Code wird wörtlich gespeichert
+
+Wer eine eigene Farbe wählt, hat sie gewählt — sie darf sich nicht mit dem
+Theme ändern. Ein Hex-Code ist deshalb **Datenhaltung** und wird genau so in
+der Datei abgelegt, wie der Nutzer ihn wählt; nur die Schreibweise wird
+vereinheitlicht.
+
+Der eigene Farbwähler ist ein natives `<input type="color">` **plus** ein
+Feld für den Hex-Code. Beide sind in beide Richtungen synchron: wer im
+Hex-Feld tippt, sieht den Wähler die Farbe annehmen, und wer den Wähler
+benutzt, sieht den Code im Feld stehen.
+
+Gespeichert wird nur eine Form — klein und sechs Stellen (`#f0a` wird zu
+`#ff00aa`). Zwei Schreibweisen derselben Farbe wären in der Datei zwei
+verschiedene Termine, und der Vergleich zweier Termine würde sie für zwei
+Farben halten.
+
+Der Wähler wird mit der **tatsächlichen** Farbe des Termins vorbelegt, nicht
+mit einem Wert aus dem Quelltext: `readThemeHex()` liest die geltende
+Theme-Variable über `getComputedStyle`, weil `applyOmpPalette` die Farben zur
+Laufzeit umschreibt und ein importiertes Theme eigene Werte hat. Wählt der
+Nutzer ein Preset, bekommt der eigene Wähler die laufende Farbe dieses
+Presets zu sehen.
+
+#### Wie die Farbe gezeichnet wird
+
+Der Hintergrund eines Termins ist die Terminfarbe, mit der Fläche des Themes
+gemischt — nicht die Terminfarbe selbst. Das ist der Grund, warum ein Termin
+auch mit `#ffffff` lesbar bleibt: eine gefüllte weiße Fläche im hellen Theme
+wäre ein weißes Rechteck auf weißem Grund. Der Text bleibt `var(--text)`, die
+Theme-Farbe — nicht die Terminfarbe. Nur so tragen *alle* Terminfarben
+denselben Text; der Kontrast hängt am Theme, nicht an der Wahl des Nutzers.
+Der linke Rand bleibt die volle Terminfarbe: er ist das, was den Termin auf
+einen Blick erkennbar macht.
 
 ### Ziehen zum Verschieben
 
@@ -314,7 +593,7 @@ Broadcast nur die Identität, die geschrieben hat, nicht die, die zuhört.
 
 | Route | Zweck |
 |---|---|
-| `GET /api/calendar` | Alle Termine des Kontos. `?from=`/`?to=` filtern den Zeitraum. |
+| `GET /api/calendar` | Alle Termine des Kontos. `?from=`/`?to=` filtern den Zeitraum — nach Überschneidung, wie der Filter im Werkzeug. |
 | `POST /api/calendar` | Einen Termin anlegen. |
 | `PATCH /api/calendar/[id]` | Einen Termin ändern oder verschieben. |
 | `DELETE /api/calendar/[id]` | Einen Termin löschen. |
@@ -330,6 +609,14 @@ eigene Kennung wählt, könnte einen fremden Termin überschreiben.
 
 Ein fremder Termin ist in der Datei des Kontos gar nicht vorhanden — es gibt
 nichts, was ein `403` verbergen könnte. Die Antwort lautet deshalb `404`.
+
+`POST` und `PATCH` nehmen ein optionales `color` an: einen Preset-Namen
+(`accent`, `success`, `warning`, `danger`, `violet`) oder einen Hex-Code.
+Eine **unbrauchbare** Farbe ist ein `400` — der Client hat sie gewählt, also
+stimmt etwas nicht, und das gehört gemeldet statt stillschweigend verworfen.
+Eine **fehlende** Farbe ist kein Fehler: sie ist optional, und ein Termin
+ohne Farbe trägt die Voreinstellung. Bei `PATCH` bleibt die Farbe des
+Termins, wenn sie nicht mitschickt.
 
 ---
 
@@ -353,12 +640,13 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 
 | Datei | Inhalt |
 |---|---|
-| `lib/calendar.ts` | Ereignismodell, Validierung, deutsche Datumslogik, Feiertage. Ohne `fs`, ohne `fetch` — damit Browser und Server dieselbe Rechnung benutzen. |
+| `lib/calendar.ts` | Ereignismodell, Validierung, deutsche Datumslogik, Feiertage, Farben, die Normalisierung von Zeit-, Datums- und Farbeingaben. Ohne `fs`, ohne `fetch` — damit Browser und Server dieselbe Rechnung benutzen. |
 | `lib/calendar-store.ts` | Die Datei pro Konto, atomar geschrieben, plus der Änderungs-Emitter. |
 | `lib/calendar-tool.ts` | Die beiden Agent-Werkzeuge. |
 | `app/api/calendar/route.ts` | Liste und Anlegen. |
 | `app/api/calendar/[id]/route.ts` | Ändern und Löschen. |
 | `app/api/calendar/events/route.ts` | Der SSE-Strom. |
+| `app/globals.css` | Die Theme-Variablen — und dort auch `--violet`, die fünfte Preset-Farbe, in beiden Themes. |
 | `hooks/useCalendar.ts` | Laden, Schreiben und die Verbindung zum SSE-Strom. |
 | `components/CalendarView.tsx` | Die Oberfläche. |
 | `components/calendar/calendar-model.ts` | Die Rechenlogik der Anzeige: wo ein Termin sitzt, wie lang er ist, wie er verschoben wird. |
@@ -373,12 +661,12 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 
 | Datei | Deckt ab |
 |---|---|
-| `lib/calendar.test.mjs` | Datumslogik, ISO-Woche, Feiertage, Raster, Terminpositionen, Farben. |
+| `lib/calendar.test.mjs` | Datumslogik, ISO-Woche, Feiertage, Raster, Terminpositionen, Farben und ihre Normalisierung. |
 | `lib/calendar-store.test.mjs` | Dateipfad, Mandantengrenze, Schreibweise, Normalisierung, Sortierung, Änderungsmeldungen. |
-| `lib/calendar-tool.test.mjs` | Werkzeugnamen, Freigabestufen, Lesen, Schreiben, Verschieben, Löschen, Mandantengrenze. |
-| `app/api/calendar/calendar-routes.test.mjs` | Zugriff, Anlegen, Ändern, Löschen, Filter, Mandantengrenze. |
-| `components/calendar/calendar-model.test.mjs` | Die Rechenlogik der Anzeige: Raster, Mitternacht, Verschieben, Farben. |
-| `components/calendar/calendar-event-dialog.test.mjs` | Vorbelegung von Beginn und Ende, das Ende folgt dem Beginn, die Rückfrage vor dem Löschen. |
+| `lib/calendar-tool.test.mjs` | Werkzeugnamen, Freigabestufen, Lesen, Schreiben, Verschieben, Löschen, der heutige Anker, die Gekürzungs-Hinweise, die Farben, Mandantengrenze. |
+| `app/api/calendar/calendar-routes.test.mjs` | Zugriff, Anlegen, Ändern, Löschen, Filter, Farben, Mandantengrenze. |
+| `components/calendar/calendar-model.test.mjs` | Die Rechenlogik der Anzeige: Raster, Mitternacht, Verschieben. |
+| `components/calendar/calendar-event-dialog.test.mjs` | Vorbelegung von Beginn und Ende, das Ende folgt dem Beginn, die Rückfrage vor dem Löschen, die fünf Presets und der eigene Farbcode. |
 | `components/calendar/calendar-view.test.mjs` | Die verdrahtete Ansicht: Ziehen im Monats- und im Wochenraster, und der Servertext erscheint nicht unübersetzt. |
 | `components/calendar/calendar-sse.test.mjs` | Der SSE-Strom: die Änderung erreicht einen Listener, für den der Client sich tatsächlich registriert. |
 | `lib/i18n/locale-parity.test.mjs` | Die Vollständigkeit des deutschen Pakets und die `calendar.*`-Ausnahme. |

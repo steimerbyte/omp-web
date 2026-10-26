@@ -67,6 +67,12 @@
   --success: #1f8b4c;
   --danger: #aa5555;
   --warning: #9a7326;
+  /* The calendar's fifth preset colour. The titanium palette has no violet,
+     so the value comes from omp's amethyst theme — its `deepPurple`, which
+     keeps its contrast on the light surfaces. `applyOmpPalette` does not map
+     this colour (that mapper knows accent, success, error and warning only),
+     so in an imported theme the violet stays with the application. */
+  --violet: #6b4d9e;
 }
 
 html.dark {
@@ -88,6 +94,11 @@ html.dark {
   --success: #00ff88;     /* readoutGreen */
   --danger: #ff4757;      /* alertRed */
   --warning: #ffb347;     /* warningAmber */
+  /* The same fifth preset colour as in the light theme, in its bright
+     variant — omp's amethyst `violet`. Both blocks define it, because the
+     calendar's colour swatches read the variable, and a variable that exists
+     in only one of the two themes would be invisible in the other. */
+  --violet: #9b6fd8;
 }
 
 .catppuccin-file-icon {

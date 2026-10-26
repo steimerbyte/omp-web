@@ -7,7 +7,7 @@ import {
   readCalendarFile,
   writeCalendarFile,
 } from "@/lib/calendar-store";
-import { MAX_TITLE_LENGTH, MAX_TEXT_LENGTH, isCalendarDate, isCalendarDateTime } from "@/lib/calendar";
+import { MAX_TITLE_LENGTH, MAX_TEXT_LENGTH, isCalendarDate, isCalendarDateTime, normalizeCalendarColor } from "@/lib/calendar";
 import { getRequestIdentity, type WebIdentity } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 
@@ -121,6 +121,22 @@ export async function PATCH(
     ? existing.location
     : typeof raw.location === "string" ? raw.location.slice(0, MAX_TEXT_LENGTH) : undefined;
 
+  // Die Farbe folgt derselben Regel wie Beschreibung und Ort: fehlt sie im
+  // Request, bleibt die des Termins. Eine *unbrauchbare* Farbe dagegen ist
+  // ein Fehler — sie wuerde sonst stillschweigend verschwinden, und der
+  // Nutzer waere der Ansicht, seine Wahl sei angekommen.
+  let color = existing.color;
+  if (raw.color !== undefined) {
+    const normalized = normalizeCalendarColor(raw.color);
+    if (normalized === undefined) {
+      return NextResponse.json(
+        { error: "color must be a preset name or a hex color" },
+        { status: 400 },
+      );
+    }
+    color = normalized;
+  }
+
   const updated = normalizeCalendarEvent({
     id: existing.id,
     title,
@@ -129,6 +145,7 @@ export async function PATCH(
     allDay,
     description,
     location,
+    ...(color ? { color } : {}),
     // `createdAt` bleibt: der Zeitpunkt, an dem der Termin das erste Mal
     // existierte, aendert sich nicht, weil er bearbeitet wurde.
     createdAt: existing.createdAt,

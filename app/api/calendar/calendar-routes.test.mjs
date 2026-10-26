@@ -157,6 +157,80 @@ test("a request without a JSON content type is refused", async () => {
   assert.equal(response.status, 415);
 });
 
+// --- Die Farbe ------------------------------------------------------------------
+
+test("an event is created with a preset color", async () => {
+  const alice = createAccount("preset-farbe");
+  const response = await calendarRoute.POST(post("/api/calendar", alice, {
+    title: "Teammeeting",
+    start: "2026-03-14T15:00",
+    end: "2026-03-14T16:00",
+    color: "success",
+  }));
+  assert.equal(response.status, 201);
+  const body = await response.json();
+  assert.equal(body.event.color, "success");
+});
+
+test("an event is created with a custom hex color", async () => {
+  const alice = createAccount("hex-farbe");
+  const response = await calendarRoute.POST(post("/api/calendar", alice, {
+    title: "Teammeeting",
+    start: "2026-03-14T15:00",
+    end: "2026-03-14T16:00",
+    color: "#ff00aa",
+  }));
+  assert.equal(response.status, 201);
+  const body = await response.json();
+  assert.equal(body.event.color, "#ff00aa");
+});
+
+test("an invalid color is refused and never reaches the file", async () => {
+  const alice = createAccount("kaputte-farbe");
+  const response = await calendarRoute.POST(post("/api/calendar", alice, {
+    title: "Teammeeting",
+    start: "2026-03-14T15:00",
+    end: "2026-03-14T16:00",
+    color: "nonsense",
+  }));
+  // Der Client hat die Farbe gewaehlt — sie ist angekommen und unbrauchbar.
+  // Das gehoert gemeldet, nicht stillschweigend verworfen.
+  assert.equal(response.status, 400);
+
+  // Und der Termin ist nicht in der Datei: ein abgelehnter Anlegvorgang
+  // darf keinen halben Termin hinterlassen.
+  const listed = await calendarRoute.GET(get("/api/calendar", alice));
+  const body = await listed.json();
+  assert.deepEqual(body.events, []);
+});
+
+test("an invalid color is refused when changing an event", async () => {
+  const alice = createAccount("kaputte-farb-aenderung");
+  const created = await createEvent(alice, { title: "Teammeeting" });
+  const response = await eventRoute.PATCH(
+    patch(`/api/calendar/${created.id}`, alice, { color: "nonsense" }),
+    eventParams(created.id),
+  );
+  assert.equal(response.status, 400);
+
+  // Der Termin behält seine Farbe — die kaputte hat ihn nicht erreicht.
+  const listed = await calendarRoute.GET(get("/api/calendar", alice));
+  const body = await listed.json();
+  assert.equal(body.events[0].color, undefined);
+});
+
+test("an event without a color is stored without one", async () => {
+  const alice = createAccount("ohne-farbe");
+  const response = await calendarRoute.POST(post("/api/calendar", alice, {
+    title: "Teammeeting",
+    start: "2026-03-14T15:00",
+    end: "2026-03-14T16:00",
+  }));
+  assert.equal(response.status, 201);
+  const body = await response.json();
+  assert.equal(body.event.color, undefined);
+});
+
 // --- Mandantengrenze --------------------------------------------------------
 
 test("an account does not see another account's events", async () => {
