@@ -313,6 +313,97 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - **The zones follow the storage rule.** A `Z` is converted to the local time of the machine that runs the import; a `TZID` is not, because the wall time is what the calendar shows. The calendar knows no zones — the same decision as when storing an event.
 - `docs/calendar.md` has the rest.
 
+### Scheduled tasks start a normal session, and the timer is one timer
+- A scheduled task is a cron schedule, a model and a prompt. When it is due the
+  scheduler starts an **ordinary omp session** with that prompt, so the run
+  shows up in the tenant's normal history. There is no second kind of run and
+  no separate transcript: `lib/scheduler.ts` calls `startRpcSession` and
+  writes nothing else.
+- **Every run is a fresh session, deliberately.** Writing the prompt into an
+  existing session would interrupt a conversation the user is having — and
+  `send({type:"prompt"})` throws outright while a shell command is running
+  there. A fresh session is also why the idle reaper is not a problem: the run
+  is reaped after its own idle timeout like any other session.
+- **The session needs `owner`, or it is invisible to its own tenant.** Without
+  `owner`, `startRpcSession` stores the empty string as the owner and
+  `isRpcSessionVisibleTo` matches no account — the run would not appear in the
+  history that asked for it.
+- **The schedule math is `lib/schedule.ts` and has no `fs`.** Five fields,
+  `*` / number / `a-b` / `a-b/n` / `*/n` / comma lists, nothing else: `L`, `W`,
+  `#`, `@reboot` and six fields are refused with a typed error naming the field
+  and the token, not interpreted. Day-of-month and day-of-week combine with OR
+  when both are restricted (POSIX). Times are **server local time** — the agent
+  runs on the same machine, and hand-rolled zone math is where a schedule
+  starts firing at the wrong hour.
+- **`nextRunAfter` scans minute by minute**, bounded by `MAX_SCAN_MINUTES` =
+  2921 days. The number is measured, not guessed: it is the largest gap
+  between two 29 Februaries in the Gregorian calendar (2096 → 2104, over the
+  missing leap day 2100). Four years was the first attempt and it refused a
+  valid `0 8 29 2 *` scheduled from 2097. `lib/schedule.test.mjs` asserts the
+  number in the error message.
+- **The firing rule is pure.** `selectDueTasks(tasks, {lastTickMs, nowMs})`
+  takes no timer and no HTTP, so "what is due" is testable without waiting. It
+  fires when a task is enabled and a slot lies in `(lastTickMs, nowMs]`, once
+  per task per window, with the **first** slot of the window. A six-hour outage
+  therefore produces one run, not twenty-four: there is no catch-up storm and
+  no queue. The cursor is monotone, so a **backward** clock jump stops firing
+  until the clock catches up — the quiet direction, chosen on purpose: a missed
+  run is better than a doubled one.
+- **The timer is a singleton, and there is exactly one.** It lives on
+  `globalThis.__ompScheduler` (a module variable is empty again after the dev
+  server's hot reload, which would mean a second timer next to the first) and
+  it is armed for the *earliest* due slot across all accounts. A timer per task
+  would be one wakeup per task, nearly all of them finding nothing. It is
+  re-armed after every tick and by every API mutation (`rescheduleScheduler`),
+  so a changed schedule takes effect immediately instead of at the next
+  wakeup. The delay is capped at one hour (`MAX_TIMER_DELAY_MS`) so a task
+  scheduled weeks out cannot stop the process from noticing a changed file.
+- **The scheduler never keeps the UI from booting.** It is started from
+  `instrumentation.ts` — the only lifecycle hook Next offers — inside a
+  `try`/`catch` that logs and continues. A broken scheduler is a missing
+  feature; an instrumentation that throws is a server that does not start.
+- **`claimRun` is what stops a double fire.** The claim lives in the file, not
+  in memory, so it survives a restart and covers a second server process on the
+  same host. It compares `slotMs <= claimedSlotMs`, so a slot that is already
+  behind is past. The order is claim first, start second: two processes both
+  starting and then finding out is the failure the claim exists to prevent.
+  The check-and-write runs under a lock file (`<store>.lock`, `wx`, taken over
+  after 30 s by rename-and-verify, not rm-and-create); within one process the
+  guard is unnecessary because the section is synchronous, but two instances
+  on one filesystem are normal here.
+- **A second long-lived process is normal** (`scripts/deploy-local.sh` serves a
+  live and a verify instance from the same accounts), which is the reason the
+  claim is a file and not a `globalThis` lock. `lib/projects-sizes.ts` uses the
+  in-process lock because its unit of work is one registry *path* and a run it
+  loses only costs a measurement; a run this scheduler loses would cost a
+  duplicated agent session.
+- **Tasks live in `omp-web-scheduled-tasks.json`, one file per account**, in
+  `resolveTenantAgentDir(identity)` — the same shape, prefix, `0o600` atomic
+  write and path guard as the calendar and quick phrases
+  (`lib/scheduled-tasks-store.ts`).
+- **A malformed row is dropped, not repaired.** The app must never fail to boot
+  because of one bad row, and a normaliser must not invent fields: a missing
+  `createdAt` drops the row instead of stamping "now", because the user would
+  then believe they created it today. Only *optional* fields (`thinkingLevel`,
+  `lastRun*`, `claimedSlotMs`, `cwd`) degrade to absent when unreadable.
+- **`schemaVersion` is compared on read, and a mismatch refuses to write.** A
+  newer build may have added fields this one drops; overwriting would destroy
+  them, so every mutating helper throws with `field: "version"` (HTTP 409)
+  instead.
+- **No model list is hardcoded.** The store takes a `KnownModelLookup`, the
+  routes pass `modelRegistry.find(provider, modelId) !== undefined`, so there is
+  no second, stale copy of `config.yml`.
+- The UI is `components/ScheduledTasksView.tsx` + `hooks/useScheduledTasks.ts`,
+  reached as `?view=scheduled`; its delete confirmation is a state inside the
+  dialog, like the calendar's, because `window.confirm()` always returns false
+  in the desktop shell.
+- **This re-opens the "background work is request-triggered" stance.** The
+  projects dashboard measures only while somebody looks at it; a scheduled task
+  by definition has nobody looking at it, so this feature is the one timer in
+  the process. It is bounded by design — one timer, one wakeup per due slot, no
+  queue and no catch-up — so the load it creates without a request is a session
+  the user asked for in advance, not work on a TTL.
+
 ### The update check compares against this repository's releases
 - This fork is published as a GitHub release in `steimerbyte/omp-web` (`docs/release.md`). The npm package `omp-web` belongs to the **upstream** line and is a different build; the publish workflow is disabled here.
 - `lib/omp-updates.ts` therefore reads exactly one source: `https://api.github.com/repos/steimerbyte/omp-web/releases/latest`. The npm registry is not consulted at all, and every release link that leaves the server points at `steimerbyte/omp-web` — a payload that names another repository has its `html_url` replaced, not forwarded.

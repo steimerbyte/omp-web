@@ -18,6 +18,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { SubagentPanel } from "./SubagentPanel";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 import { CalendarView } from "./CalendarView";
+import { ScheduledTasksView } from "./ScheduledTasksView";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
@@ -177,7 +178,7 @@ export function AppShell() {
   // Which of the three views is showing. Seeded from `?view=` so a reload or a
   // shared link lands where the sender was, and kept in the URL below so it
   // survives the next reload too.
-  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar">(
+  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled">(
     () => initialNavigation.requestedView,
   );
   // The sidebar's *automatic* first cwd adoption is what would break a
@@ -830,6 +831,36 @@ export function AppShell() {
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
+  /**
+   * Eine Sitzung aus der Aufgabenansicht oeffnen.
+   *
+   * Es gibt keinen zweiten Weg, eine Sitzung anzusehen: der Lauf einer
+   * geplanten Aufgabe ist eine ganz normale Sitzung und steht deshalb in
+   * derselben Verlaufsliste. Die Kennung wird dort nachgeschlagen, weil
+   * `handleSelectSession` ein `SessionInfo` erwartet und nicht nur eine
+   * Kennung — und weil die Sitzung nach einem Neustart noch nicht im
+   * Client-Zustand steht.
+   *
+   * Ist sie (noch) nicht in der Liste — etwa weil der Lauf gerade erst
+   * gestartet ist —, wird die URL gesetzt: derselbe Weg, den ein geteilter
+   * Link nimmt, und der einzige, der auch einen frischen Client bedient.
+   */
+  const handleOpenScheduledSession = useCallback((sessionId: string) => {
+    void fetch("/api/sessions", { cache: "no-store" })
+      .then((response) => (response.ok ? (response.json() as Promise<{ sessions: SessionInfo[] }>) : null))
+      .then((body) => {
+        const target = body?.sessions.find((session) => session.id === sessionId);
+        if (target) {
+          handleSelectSession(target);
+          return;
+        }
+        router.push(`/?session=${encodeURIComponent(sessionId)}`, { scroll: false });
+      })
+      .catch((error) => {
+        console.error("Failed to open the session of the last run:", error);
+      });
+  }, [handleSelectSession, router]);
+
   const deliverSessionNotification = useCallback(({
     targetSession,
     title,
@@ -1085,6 +1116,7 @@ export function AppShell() {
   // `handleNewSession` and `handleCwdChange` each switch the view themselves.
   const showProjects = activeView === "projects";
   const showCalendar = activeView === "calendar";
+  const showScheduledTasks = activeView === "scheduled";
 
   // Keep the view in the URL. `replaceState` rather than a router navigation
   // so switching views never re-runs the server component tree — the
@@ -1094,6 +1126,7 @@ export function AppShell() {
     const url = new URL(window.location.href);
     if (activeView === "projects") url.searchParams.set("view", "projects");
     else if (activeView === "calendar") url.searchParams.set("view", "calendar");
+    else if (activeView === "scheduled") url.searchParams.set("view", "scheduled");
     else url.searchParams.delete("view");
     window.history.replaceState(window.history.state, "", url.toString());
   }, [activeView]);
@@ -1182,6 +1215,8 @@ export function AppShell() {
         showProjectsDashboard={activeView === "projects"}
         onShowCalendar={() => setActiveView("calendar")}
         showCalendar={activeView === "calendar"}
+        onShowScheduledTasks={() => setActiveView("scheduled")}
+        showScheduledTasks={activeView === "scheduled"}
         onBackgroundTaskDone={handleBackgroundTaskDone}
       />
       <div style={{ padding: "0 8px", flexShrink: 0 }}>
@@ -2031,6 +2066,8 @@ export function AppShell() {
             />
           ) : showCalendar ? (
             <CalendarView />
+          ) : showScheduledTasks ? (
+            <ScheduledTasksView onOpenSession={handleOpenScheduledSession} />
           ) : showChat ? (
             <ChatWindow
               key={sessionKey}

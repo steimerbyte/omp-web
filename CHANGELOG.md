@@ -386,6 +386,148 @@ What was run, with the numbers it produced:
 | `bun test` (`NODE_ENV=test bun test`) | 1446 pass, 0 fail, 1 skip — 1447 tests, 172 files |
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `8xWjlexFbq7R3EW26w41g`, 490 files under `.next/static/**/*.js` |
 
+## v0.14.0
+
+Released 2026-10-30.
+
+`Unreleased` above stays where it is, for the same reason as in `v0.13.0`:
+its contents are not shipped by any version number yet, and moving them under
+one would claim a checked state that does not exist.
+
+### Geplante Aufgaben
+
+**Der Agent kann jetzt zu einem Zeitpunkt laufen, den der Nutzer vorher
+bestimmt hat.** Eine geplante Aufgabe besteht aus Name, Zeitplan, Modell und
+Prompt; ist sie faellig, startet der Zeitplaner eine **gewoehnliche
+omp-Sitzung** mit diesem Prompt. Es gibt keinen zweiten Sitzungstyp und kein
+getrenntes Protokoll: der Lauf erscheint im normalen Verlauf des Kontos.
+
+**Jeder Lauf ist eine frische Sitzung, und das ist eine Entscheidung.** Den
+Prompt in eine bestehende Sitzung zu schreiben haette zwei Folgen, die beide
+falsch sind: er wuerde ein Gespraech unterbrechen, und `send({type:"prompt"})`
+wirft sogar, solange dort ein Shell-Befehl laeuft. Der Lauf traegt `owner` und
+`identity` mit, weil `startRpcSession` ohne `owner` den Leerstring speichert —
+die Sitzung waere dann fuer ihr eigenes Konto unsichtbar, waehrend sie laeuft.
+Weil es eine normale Sitzung ist, raeumt sie der vorhandene Leerlauf-Reaper
+nach ihrer eigenen Leerlaufzeit ab wie jede andere.
+
+**Der Zeitplan ist ein eigener, strenger Parser** (`lib/schedule.ts`): fuenf
+Felder, `*` / Zahl / `a-b` / `a-b/n` / `*/n` / Kommalisten — und nichts
+darueber hinaus. `L`, `W`, `#`, `@reboot` und sechs Felder werden mit einem
+typisierten Fehler abgelehnt, der Feld und Token nennt, statt interpretiert zu
+werden. Tag-des-Monats und Wochentag verknuepfen sich mit ODER, wenn beide
+eingeschraenkt sind (POSIX). Die Uhrzeit ist **Serverzeit**: der Agent laeuft
+auf derselben Maschine, und selbstgebaute Zeitzonenrechnung ist die Stelle, an
+der ein Zeitplan anfaengt, zur falschen Stunde zu feuern. Der Dialog zeigt
+`describeSchedule` waehrend des Tippens, damit man den Ausdruck lesen kann
+bevor man ihn speichert.
+
+**Ein Timer, nicht einer pro Aufgabe.** Er haengt an `globalThis` — eine
+Modulvariable waere nach dem Hot-Reload des Dev-Servers wieder leer, und dann
+liefen zwei Timer nebeneinander. Er wird auf den fruehesten faelligen Slot
+ueber alle Konten gestellt, nach jedem Tick und nach jeder Aenderung ueber die
+API neu berechnet, und auf eine Stunde gedeckelt, damit eine Aufgabe Wochen in
+der Zukunft den Prozess nicht daran hindert, eine geaenderte Datei zu
+bemerken. Gestartet wird er aus `instrumentation.ts` in einem `try`/`catch`:
+ein kaputter Zeitplaner ist ein fehlendes Feature, eine werfende
+Instrumentation ist ein Server, der nicht startet.
+
+**Der Claim liegt in der Datei, nicht im Speicher.** `claimRun` vergleicht
+`slotMs <= claimedSlotMs` unter einer Sperrdatei (`wx`, nach 30 s per
+Rename-and-Verify uebernommen), also ueberlebt der Claim einen Neustart und
+deckt eine zweite Instanz auf demselben Dateisystem ab — was hier normal ist,
+weil zwei Instanzen dieselben Konten bedienen. Reihenfolge: erst beanspruchen,
+dann starten. Zwei Prozesse, die beide starten und es danach merken, sind
+genau der Fehler, gegen den der Claim existiert.
+
+**Kein Nachholsturm.** Faellig ist eine Aufgabe, wenn ein Slot in
+`(lastTickMs, nowMs]` liegt — hoechstens einmal pro Aufgabe und Fenster, mit
+dem **ersten** Slot. Sechs Stunden Ausfall bei einem Viertelstundenplan
+ergeben einen Lauf, nicht vierundzwanzig. Es gibt bewusst keine Warteschlange
+und keinen Retry. Springt die Uhr rueckwaerts, feuert nichts, bis sie wieder
+aufholt: ein verpasster Lauf ist besser als ein doppelter.
+
+**Die Aufgaben liegen pro Konto in `omp-web-scheduled-tasks.json`**, im
+Agent-Verzeichnis des Kontos — dieselbe Form, dasselbe `0o600`, derselbe
+atomare Schreibvorgang und derselbe Pfadschutz wie Kalender und Quick Phrases.
+Ein `schemaVersion`-Vergleich beim Lesen verweigert das Schreiben bei
+Abweichung (HTTP 409), statt Felder zu vernichten, die eine neuere Fassung
+angelegt hat. Eine unlesbare Zeile wird verworfen und nicht repariert: die App
+darf wegen einer kaputten Zeile nicht nicht starten, und ein Normalisierer darf
+keine Felder erfinden — ein fehlendes `createdAt` verwirft die Zeile, statt
+"jetzt" zu stempeln, weil der Nutzer sonst glaubte, er haette sie heute
+angelegt.
+
+**Der `cwd` einer Aufgabe wird beim Schreiben *und* beim Lesen begrenzt.** Die
+API prueft ihn gegen die Konto-Home; eine von Hand bearbeitete Datei geht an
+dieser Pruefung vorbei, und weil der Besitz einer Sitzung aus ihrem `cwd`
+abgeleitet wird, waere ein fremder `cwd` eine Sitzung, die einem anderen Konto
+zugerechnet wird. Beim Lesen wird deshalb nur das Feld verworfen, nicht die
+Aufgabe; der Lauf faellt auf die Home des Kontos zurueck.
+
+**Modell und Zeitplan werden gegen lebende Quellen geprueft.** Die Route reicht
+`modelRegistry.find(provider, modelId)` in den Speicher hinein, statt eine
+zweite, veraltende Kopie von `config.yml` zu halten; der Dialog holt seine
+Modellliste aus `/api/models`. Ein unbekanntes Modellpaar oder ein
+ungueltiger Cron ergibt 400 und erreicht die Datei nicht.
+
+Die Ansicht haengt an `?view=scheduled` neben dem Kalender in der
+Seitenleiste. Die Loeschrueckfrage ist ein Zustand im Dialog selbst, nicht
+`window.confirm()`, aus demselben Grund wie beim Kalender: im Desktop-Webview
+gibt `window.confirm()` immer `false` zurueck, der Knopf taete dort nichts.
+
+**Das stellt die Haltung "Hintergrundarbeit ist request-getrieben" bewusst
+wieder her.** Das Projekt-Dashboard misst nur, solange jemand hinsieht; eine
+geplante Aufgabe hat per Definition niemanden, der hinsieht. Dies ist damit der
+eine Timer im Prozess. Er ist von der Bauart her begrenzt — ein Timer, ein
+Weckruf je faelligem Slot, keine Warteschlange, kein Nachholen —, die Last
+ohne Request ist also eine Sitzung, die der Nutzer vorher bestellt hat.
+`AGENTS.md` traegt den Abschnitt mit dieser Begruendung nach.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Kein Browser-Lauf gegen eine laufende Instanz — auch fuer den Zeitplaner
+  nicht.** Die Ansicht, der Dialog, die Modellauswahl und die
+  Loeschrueckfrage sind nicht von einem Menschen angeklickt worden.
+- **Das Feuern ist nur durch Tests belegt, nicht durch eine echte Uhr.** Was
+  geprueft ist: `selectDueTasks` (Fenster, erster Slot, ODER-Regel, gesperrte
+  und kaputte Zeilen), `claimRun` (Doppelclaim, Restart, zweite Instanz),
+  der Speicher (atomar, Sperre, Pfadschutz, Schema-Abweichung) und der Parser.
+  Was **nicht** geprueft ist: dass ein Prozess ueber Stunden mit einem echten
+  Timer wirklich zum richtigen Zeitpunkt feuert. Das passiert auf agent-pc
+  direkt nach diesem Release.
+- **`lastRunStatus: "ok"` heisst "gestartet", nicht "gelungen".** Die Sitzung
+  wird angestossen und der Prompt abgeschickt; ob der Lauf danach erfolgreich
+  war, zeichnet diese Anzeige nicht auf. Die Oberflaeche nennt es deshalb
+  "Gestartet" und nicht "Erfolgreich" — die Beschriftung ist absichtlich
+  schwaecher als das Feld. Wer den Ausgang wissen will, oeffnet die Sitzung
+  des letzten Laufs.
+- **Der Zeitplaner ist an eine einzelne Instanz je Host gebunden, was hier
+  genuegt**, aber nicht geprueft ist ein zweiter Host auf demselben
+  Netzwerk-Dateisystem — die Sperre ist eine Dateisperre und setzt ein
+  Dateisystem mit funktionierendem `wx` und `rename` voraus, nicht NFS-Semantik
+  mit ihrem eigenen Verhalten.
+- **`enabled` kann auf einer von Hand bearbeiteten Datei fehlen.** Der Parser
+  der Datei verwirft eine Zeile ohne boolesches `enabled` (`typeof raw.enabled
+  !== "boolean"` → Zeile entfaellt), was bedeutet: von Hand eine Aufgabe ohne
+  dieses Feld anzulegen macht sie unsichtbar, statt sie als aktiv zu lesen. Das
+  ist die vorsichtige Richtung, aber es ist eine Fußangel fuer den Betreiber.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1540 pass, 0 fail, 1 skip — 176 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `9KCWTVZWFA6hyyldWM_V6`, both `/api/scheduled-tasks` routes in the app-paths manifest |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
+`BUILD_ID` is random per build (`next.config.ts` sets no `generateBuildId`); it
+identifies the build that was checked, not a reproducible artifact.
+
 ## v0.11.0
 
 ### Layout
