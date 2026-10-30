@@ -262,29 +262,69 @@ function runCwd(identity: WebIdentity, task: ScheduledTask): string {
  * R4). Der Besitz ist ein Name, keine Rolle: auch ein Admin besitzt seine
  * Session unter seinem eigenen Namen.
  */
-async function runTask(identity: WebIdentity, task: ScheduledTask): Promise<void> {
+/**
+ * Der Start einer Session — als Parameter, nicht als feste Abhaengigkeit.
+ *
+ * Der Grund ist der Test: `runTaskNow` soll pruefen, *dass* der Handstart
+ * denselben Weg nimmt und `claimedSlotMs` stehen laesst, ohne dafuer eine
+ * echte Session mit Modell und SDK zu oeffnen. Ein `mock.module` waere der
+ * falsche Weg — es ist prozessweit und laesst sich nicht zuruecknehmen, also
+ * vergiftet es Testdateien, die dasselbe Modul spaeter brauchen (gemessen:
+ * sieben fremde Tests wurden rot). Der Standardwert ist der echte Start; die
+ * Signatur bleibt fuer jeden Aufrufer im Produktionscode unveraendert.
+ */
+type SessionStarter = typeof startRpcSession;
+
+async function runTask(identity: WebIdentity, task: ScheduledTask, starter: SessionStarter = startRpcSession): Promise<{ sessionId: string }> {
   const cwd = runCwd(identity, task);
+  // Eine eigene Kennung pro Lauf: `startRpcSession` fasst Aufrufer mit
+  // derselben Kennung zu *einer* Session zusammen.
+  const { session, realSessionId } = await starter(`__scheduled__${randomUUID()}`, "", cwd, {
+    initialModel: { provider: task.provider, modelId: task.modelId },
+    ...(task.thinkingLevel ? { thinkingLevel: task.thinkingLevel } : {}),
+    identity,
+    owner: identity.username,
+  });
+  await session.send({ type: "prompt", message: task.prompt });
+  markRun(identity, task.id, { at: Date.now(), sessionId: realSessionId, status: "ok" });
+  // Die neue Sitzung soll in der Verlaufsliste des Kontos sofort auftauchen
+  // und nicht erst nach Ablauf des Listen-Caches.
+  invalidateSessionListCache();
+  return { sessionId: realSessionId };
+}
+
+/**
+ * Eine Aufgabe sofort starten — der Weg hinter dem Knopf "Jetzt ausfuehren".
+ *
+ * Es ist derselbe `runTask` wie im Durchlauf: eine zweite Fassung wuerde
+ * frueher oder spaeter anders starten als der Zeitplan (Kennung, Besitzer,
+ * Modell, Cache), und dann liefe der Handstart nicht mehr dieselbe Sache.
+ *
+ * **Kein `claimRun`.** Ein Handstart darf keinen Slot beanspruchen und keinen
+ * verschieben: `claimedSlotMs` ist die Behauptung "diesen faelligen Slot hat
+ * schon jemand gestartet", und ein Klick um 07:59 darf den Slot um 08:00
+ * nicht verschlucken. Deshalb bleibt der naechste geplante Lauf, was er ohne
+ * den Klick gewesen waere.
+ *
+ * Anders als der Durchlauf schluckt diese Fassung den Fehler nicht: der Fehler
+ * geht an den Aufrufer, der ihn als Status zeigen kann. Vermerkt wird er in
+ * beiden Faellen — `lastRunStatus: "error"` ist die Wahrheit ueber den Lauf,
+ * auch wenn er nicht fahrplanmaessig war.
+ */
+export async function runTaskNow(
+  identity: WebIdentity,
+  task: ScheduledTask,
+  starter: SessionStarter = startRpcSession,
+): Promise<{ sessionId: string }> {
   try {
-    // Eine eigene Kennung pro Lauf: `startRpcSession` fasst Aufrufer mit
-    // derselben Kennung zu *einer* Session zusammen.
-    const { session, realSessionId } = await startRpcSession(`__scheduled__${randomUUID()}`, "", cwd, {
-      initialModel: { provider: task.provider, modelId: task.modelId },
-      ...(task.thinkingLevel ? { thinkingLevel: task.thinkingLevel } : {}),
-      identity,
-      owner: identity.username,
-    });
-    await session.send({ type: "prompt", message: task.prompt });
-    markRun(identity, task.id, { at: Date.now(), sessionId: realSessionId, status: "ok" });
-    // Die neue Sitzung soll in der Verlaufsliste des Kontos sofort auftauchen
-    // und nicht erst nach Ablauf des Listen-Caches.
-    invalidateSessionListCache();
+    return await runTask(identity, task, starter);
   } catch (error) {
-    console.error(`[scheduler] task ${task.id} of ${identity.username} failed to start:`, error);
     try {
       markRun(identity, task.id, { at: Date.now(), status: "error" });
     } catch (markError) {
       console.error(`[scheduler] task ${task.id}: the failed run could not be recorded:`, markError);
     }
+    throw error;
   }
 }
 
@@ -298,11 +338,23 @@ async function runTask(identity: WebIdentity, task: ScheduledTask): Promise<void
  *
  * Ein Fehler bei einer Aufgabe beendet den Durchlauf nicht: die naechste
  * Aufgabe hat damit nichts zu tun, und ein einzelner kaputter Eintrag darf
- * nicht der Grund sein, dass alle anderen nie laufen.
+ * nicht der Grund sein, dass alle anderen nie laufen. Der Fehler wird
+ * geschluckt, als `lastRunStatus: "error"` vermerkt, und die Zaehlung steigt
+ * nicht — der Tick meldet die Zahl der **erfolgreichen** Starts.
+ *
+ * `starter` und `identities` sind dieselben Test-Parameter wie bei
+ * `runTaskNow`: der Betrieb uebergibt sie nie, also laeuft hier der echte
+ * Session-Start ueber alle Konten. `identities` erspart dem Test, `USER` und
+ * `PI_CODING_AGENT_DIR` zu verbiegen — die sind prozessweit, wuerden also
+ * jede parallel laufende Testdatei mitverstellen.
  */
-export async function runSchedulerTick(window: DueWindow): Promise<number> {
+export async function runSchedulerTick(
+  window: DueWindow,
+  starter: SessionStarter = startRpcSession,
+  identities: readonly WebIdentity[] = listScheduleIdentities(),
+): Promise<number> {
   let started = 0;
-  for (const identity of listScheduleIdentities()) {
+  for (const identity of identities) {
     let tasks: ScheduledTask[];
     try {
       tasks = listTasks(identity);
@@ -319,8 +371,19 @@ export async function runSchedulerTick(window: DueWindow): Promise<number> {
         continue;
       }
       if (!claimed) continue;
-      await runTask(identity, task);
-      started += 1;
+      try {
+        await runTask(identity, task, starter);
+        started += 1;
+      } catch (error) {
+        // Hier wird der Fehler geschluckt, nicht weitergereicht: ein einzelner
+        // kaputter Eintrag darf den Durchlauf nicht beenden.
+        console.error(`[scheduler] task ${task.id} of ${identity.username} failed to start:`, error);
+        try {
+          markRun(identity, task.id, { at: Date.now(), status: "error" });
+        } catch (markError) {
+          console.error(`[scheduler] task ${task.id}: the failed run could not be recorded:`, markError);
+        }
+      }
     }
   }
   return started;

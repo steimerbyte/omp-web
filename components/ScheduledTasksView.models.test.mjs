@@ -495,3 +495,141 @@ test("Ein ungueltiger Cron-Ausdruck sperrt Speichern und meldet sich", async () 
     globalThis.fetch = tasksFetch;
   }
 });
+
+// --- "Jetzt ausfuehren" in der Zeile -----------------------------------------
+
+/** Eine gespeicherte Aufgabe, wie die Liste sie nach dem Start zeigt. */
+function taskView(overrides = {}) {
+  return {
+    id: "task-run-1",
+    name: "Nightly digest",
+    cron: "0 3 * * *",
+    prompt: "Summarise.",
+    provider: "buds-gateway",
+    modelId: "qwen3.8-27b",
+    enabled: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    nextRun: Date.now() + 3_600_000,
+    ...overrides,
+  };
+}
+
+test("Der Knopf 'Run now' startet die Aufgabe, zeigt den Lauf und aktualisiert Last run", async () => {
+  let posted = 0;
+  let resolveRun;
+  const gate = new Promise((resolve) => { resolveRun = resolve; });
+  const before = taskView();
+  const after = taskView({ lastRunAt: new Date().toISOString(), lastRunStatus: "ok", lastRunSessionId: "sitzung-9" });
+  let current = before;
+
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input?.url ?? input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/run") && method === "POST") {
+      posted += 1;
+      await gate;
+      current = after;   // ab jetzt liefert der Reload den gelaufenen Stand
+      return json({ sessionId: "sitzung-9" });
+    }
+    if (url.startsWith("/api/scheduled-tasks") && method === "GET") return json({ tasks: [current] });
+    return baseFetch(input, init);
+  };
+  try {
+    const { root } = await mountView("en");
+    const run = buttonByText("Run now");
+    assert.ok(run, "der Knopf 'Run now' fehlt in der Zeile");
+
+    // Waehrend der Anfrage: der Knopf ist aus und traegt den laufenden Text.
+    await act(async () => { run.click(); });
+    await settle();
+    const busy = buttonByText("Starting…");
+    assert.ok(busy, "waehrend des Starts fehlt der laufende Text");
+    assert.equal(busy.disabled, true, "der Knopf ist waehrend des Starts nicht gesperrt");
+    assert.equal(busy.getAttribute("aria-busy"), "true");
+
+    resolveRun();
+    await settle();
+    await settle();
+
+    assert.equal(posted, 1, "der Knopf hat mehr als einen Start ausgeloest");
+    assert.ok(buttonByText("Run now"), "nach dem Lauf steht der Knopf nicht wieder auf 'Run now'");
+    // Der Reload hat den neuen Stand geholt — dieselbe Auffrischung wie bei
+    // jeder anderen Aenderung, kein zweiter Weg.
+    // Der Reload hat den neuen Stand geholt — derselbe Weg wie bei jeder
+    // anderen Aenderung. Geprueft wird die Zeile: ein Lauf heisst nicht mehr
+    // "Never run", und der Status steht dahinter.
+    const rowText = win.document.body.textContent ?? "";
+    assert.ok(!rowText.includes("Never run"), "die Zeile zeigt nach dem Lauf noch 'Never run'");
+    assert.ok(rowText.includes("Started"), `der Status des Laufs fehlt: ${rowText}`);
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    globalThis.fetch = baseFetch;
+  }
+});
+
+test("Ein gescheiterter Handstart zeigt den Grund an der Zeile", async () => {
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input?.url ?? input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/run") && method === "POST") {
+      return new Response(JSON.stringify({ error: "Model is not available in the enabled scope: buds-gateway/gone" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.startsWith("/api/scheduled-tasks") && method === "GET") return json({ tasks: [taskView()] });
+    return baseFetch(input, init);
+  };
+  try {
+    const { root } = await mountView("en");
+    const run = buttonByText("Run now");
+    await act(async () => { run.click(); });
+    await settle();
+
+    const alerts = [...win.document.querySelectorAll('[role="alert"]')].map((n) => (n.textContent ?? "").trim());
+    assert.ok(
+      alerts.some((text) => text.includes("could not be started") && text.includes("not available in the enabled scope")),
+      `der Grund des gescheiterten Starts fehlt: ${JSON.stringify(alerts)}`,
+    );
+    // Und der Knopf ist wieder benutzbar — ein Fehlschlag sperrt die Zeile nicht.
+    assert.equal(buttonByText("Run now")?.disabled ?? false, false);
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    globalThis.fetch = baseFetch;
+  }
+});
+
+test("Eine deaktivierte Aufgabe laesst sich trotzdem von Hand starten", async () => {
+  // `enabled` sagt, ob der Takt sie startet — nicht, ob ein Mensch sie starten
+  // darf. Der Knopf ist deshalb auch bei einer deaktivierten Aufgabe aktiv.
+  let posted = 0;
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input?.url ?? input);
+    const method = init?.method ?? "GET";
+    if (url.endsWith("/run") && method === "POST") {
+      posted += 1;
+      return json({ sessionId: "sitzung-10" });
+    }
+    if (url.startsWith("/api/scheduled-tasks") && method === "GET") return json({ tasks: [taskView({ enabled: false, nextRun: null })] });
+    return baseFetch(input, init);
+  };
+  try {
+    const { root } = await mountView("en");
+    const run = buttonByText("Run now");
+    assert.ok(run, "der Knopf fehlt bei einer deaktivierten Aufgabe");
+    assert.equal(run.disabled, false, "eine deaktivierte Aufgabe darf man von Hand starten");
+    await act(async () => { run.click(); });
+    await settle();
+    assert.equal(posted, 1);
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    globalThis.fetch = baseFetch;
+  }
+});

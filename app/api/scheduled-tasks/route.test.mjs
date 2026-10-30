@@ -286,3 +286,125 @@ test.after(() => {
   scheduler.stopScheduler();
   rmSync(HOME_ROOT, { recursive: true, force: true });
 });
+
+// --- Jetzt ausfuehren ------------------------------------------------------------
+
+const runRoute = await jiti.import("./[id]/run/route.ts");
+
+/**
+ * Der Start wird ersetzt — ueber den Parameter von `runTaskNow`, nicht ueber
+ * `mock.module`.
+ *
+ * Ein Modul-Mock ist prozessweit und nicht rueckgaengig zu machen; er hat
+ * sieben fremde Testdateien rot gemacht, die `@/lib/session-reader` oder den
+ * Session-Start spaeter selbst importieren. Die Route bekommt den Ersatz
+ * deshalb durchgereicht: `runTaskNow` nimmt ihn als dritten Parameter.
+ */
+let runCalls = 0;
+let runFailure = null;
+
+async function fakeStarter() {
+  runCalls += 1;
+  if (runFailure) throw runFailure;
+  return { session: { send: async () => {} }, realSessionId: "sitzung-1" };
+}
+
+/** Die Route mit dem Ersatz-Start; der Handler selbst bleibt unveraendert. */
+function postRun(id, headers) {
+  return runRoute.POST(runRequest(`/api/scheduled-tasks/${id}/run`, headers), idParams(id), fakeStarter);
+}
+
+function runRequest(url, headers) {
+  return new Request(`http://localhost${url}`, { method: "POST", headers });
+}
+
+test("running without an identity is refused with 401 and starts nothing", async () => {
+  runCalls = 0;
+  const response = await postRun("x", ANON);
+  assert.equal(response.status, 401);
+  assert.equal(runCalls, 0);
+});
+
+test("running from another origin is refused with 403 and starts nothing", async () => {
+  runCalls = 0;
+  const headers = { ...createAccount("run-fremd"), host: "evil.example" };
+  const response = await postRun("x", headers);
+  assert.equal(response.status, 403);
+  assert.equal(runCalls, 0);
+});
+
+test("running an unknown id is a 404 and starts nothing", async () => {
+  runCalls = 0;
+  const headers = createAccount("run-fehlt");
+  const missing = "00000000-0000-4000-8000-000000000000";
+  const response = await postRun(missing, headers);
+  assert.equal(response.status, 404);
+  assert.equal(runCalls, 0);
+});
+
+test("running a task of another identity is a 404 with no side effect", async () => {
+  runCalls = 0;
+  const alice = createAccount("run-alice");
+  const bob = createAccount("run-bob");
+  const task = await createTask(alice);
+
+  const response = await postRun(task.id, bob);
+  // 404, nicht 403: die Aufgabe existiert in Bobs Datei nicht.
+  assert.equal(response.status, 404);
+  assert.equal(runCalls, 0);
+
+  // Und bei Alice ist nichts passiert.
+  const still = (await (await route.GET(get("/api/scheduled-tasks", alice))).json()).tasks[0];
+  assert.equal(still.lastRunAt, undefined);
+  assert.equal(still.lastRunSessionId, undefined);
+});
+
+test("a manual run answers with the session id and records the run", async () => {
+  runCalls = 0;
+  const headers = createAccount("run-ok");
+  const task = await createTask(headers);
+
+  const response = await postRun(task.id, headers);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { sessionId: "sitzung-1" });
+  assert.equal(runCalls, 1);
+
+  const stored = (await (await route.GET(get("/api/scheduled-tasks", headers))).json()).tasks[0];
+  assert.equal(stored.lastRunSessionId, "sitzung-1");
+  assert.equal(stored.lastRunStatus, "ok");
+  assert.ok(stored.lastRunAt, "lastRunAt fehlt");
+});
+
+test("a disabled task can be run manually and stays disabled", async () => {
+  runCalls = 0;
+  const headers = createAccount("run-aus");
+  const task = await createTask(headers, { enabled: false });
+
+  const response = await postRun(task.id, headers);
+  assert.equal(response.status, 200);
+  assert.equal(runCalls, 1);
+
+  const stored = (await (await route.GET(get("/api/scheduled-tasks", headers))).json()).tasks[0];
+  assert.equal(stored.enabled, false);
+  assert.equal(stored.lastRunStatus, "ok");
+  // Ein Handstart setzt keinen Slot: die Aufgabe bleibt ohne naechsten Lauf,
+  // weil sie deaktiviert ist — aber sie wurde auch nicht eingeschaltet.
+  assert.equal(stored.nextRun, null);
+});
+
+test("a failing start is a 500 and records the error", async () => {
+  runCalls = 0;
+  runFailure = new Error("Model is not available in the enabled scope: buds-gateway/gibt-es-nicht");
+  const headers = createAccount("run-fehler");
+  try {
+    const task = await createTask(headers);
+    const response = await postRun(task.id, headers);
+    assert.equal(response.status, 500);
+
+    const stored = (await (await route.GET(get("/api/scheduled-tasks", headers))).json()).tasks[0];
+    assert.equal(stored.lastRunStatus, "error");
+    assert.equal(stored.lastRunSessionId, undefined);
+  } finally {
+    runFailure = null;
+  }
+});

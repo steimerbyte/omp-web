@@ -54,6 +54,8 @@ export interface UseScheduledTasksResult {
   create: (input: ScheduledTaskInput) => Promise<ScheduledTaskView>;
   update: (id: string, input: Partial<ScheduledTaskInput>) => Promise<ScheduledTaskView>;
   remove: (id: string) => Promise<void>;
+  /** Eine Aufgabe sofort starten; loest danach denselben Reload aus wie jede Aenderung. */
+  runNow: (id: string) => Promise<string>;
 }
 
 /** Der Fehler einer Route, wie der Dialog ihn anzeigt. */
@@ -141,6 +143,19 @@ export function useScheduledTasks(): UseScheduledTasksResult {
     return body.task;
   }, [reload]);
 
+  /**
+   * Ein Handstart ist fuer die Ansicht eine Aenderung wie jede andere: die
+   * Route schreibt `lastRun*`, und der Nutzer soll das Ergebnis sofort sehen.
+   * Deshalb derselbe `reload` und keine zweite Auffrischung.
+   */
+  const runNow = useCallback(async (id: string): Promise<string> => {
+    const body = await requestJson<{ sessionId: string }>(`/api/scheduled-tasks/${encodeURIComponent(id)}/run`, {
+      method: "POST",
+    });
+    await reload();
+    return body.sessionId;
+  }, [reload]);
+
   const remove = useCallback(async (id: string): Promise<void> => {
     await requestJson<{ deleted: boolean }>(`/api/scheduled-tasks/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -148,5 +163,5 @@ export function useScheduledTasks(): UseScheduledTasksResult {
     await reload();
   }, [reload]);
 
-  return { tasks, error, reload, create, update, remove };
+  return { tasks, error, reload, create, update, remove, runNow };
 }

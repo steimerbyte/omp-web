@@ -682,6 +682,96 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `HR0h0lqWlHtem0O5urRzi`, 492 files under `.next/static/**/*.js` |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.14.3
+
+Released 2026-10-30.
+
+### Zeitplaner
+
+**Ein Knopf „Jetzt ausführen" an jeder Aufgabe.** Bis hierher liess sich eine
+geplante Aufgabe nur abwarten: man tippte einen Cron-Ausdruck, speicherte und
+sah dann zu, ob der Takt sie zur richtigen Zeit startet. Wer den Prompt
+ausprobieren wollte, musste ihn in eine gewoehnliche Sitzung kopieren — und
+damit etwas anderes testen als das, was der Zeitplaner tut. Der Knopf startet
+die Aufgabe mit genau demselben Weg, den der Takt nimmt: gleiche
+Session-Kennung, gleicher Besitzer, gleiches Modell, gleicher Cache.
+
+**Eine neue Route `POST /api/scheduled-tasks/[id]/run`.** Sie antwortet mit
+`{ sessionId }`. Die Waechter stehen in derselben Reihenfolge wie beim
+Nachbarn `[id]/route.ts`: erst der Ursprung (`403` bei fremdem Host oder
+fehlendem Origin), dann die Identitaet (`401` ohne Konto, `403` wenn das
+Konto die Aufgabendatei nicht lesen darf), dann die Existenz. Eine unbekannte
+**und** eine fremde Kennung ergeben beide `404`: die Aufgaben liegen pro Konto
+in getrennten Dateien, eine fremde existiert in dieser Datei nicht, und ein
+`403` wuerde verraten, dass es sie anderswo gibt.
+
+**Ein Handstart beansprucht keinen Slot — das ist die Zusicherung, an der der
+Knopf haengt.** `runTaskNow` ruft `claimRun` nicht auf. `claimedSlotMs` ist die
+Behauptung „diesen faelligen Slot hat schon jemand gestartet"; ein Klick um
+07:59 darf den Slot um 08:00 nicht verschlucken. Deshalb bleiben `nextRun` und
+`cron` einer Aufgabe nach einem Handstart, was sie vorher waren, und der
+naechste geplante Lauf feuert regulaer. Ein Test haelt das fest, indem er
+*nach* dem Handstart denselben Slot wirklich beansprucht: er muss noch zu
+haben sein, und ein zweites `claimRun` muss ihn dann ablehnen.
+
+**Eine deaktivierte Aufgabe darf laufen, und das ist eine Entscheidung.**
+`enabled` sagt „der Zeitplan soll sie starten", nicht „sie darf ueberhaupt
+nicht laufen". Wer deaktiviert und dann klickt, hat den Lauf ausdruecklich
+bestellt; ihn mit `409` abzuweisen hiesse, den ausdruecklichen Befehl gegen die
+eigene fruehere Einstellung auszuspielen. Die Aufgabe bleibt danach
+deaktiviert, und der Takt ist davon unberuehrt — ein Test prueft beides.
+
+**Ein gescheiterter Start wird sichtbar, nicht geschluckt.** Der Takt schluckt
+Fehler, weil ein einzelner kaputter Eintrag nicht den ganzen Durchlauf beenden
+darf; der Handstart reicht sie weiter, damit die Route einen Status liefern
+kann. Vermerkt wird der Fehlschlag in beiden Faellen als
+`lastRunStatus: "error"` — das ist die Wahrheit ueber den Lauf, auch wenn er
+nicht fahrplanmaessig war. In der Zeile steht der Grund unter der Aufgabe
+(`role="alert"`), nicht in der Meldungsleiste der Ansicht: bei mehreren
+Aufgaben waere eine gemeinsame Zeile nicht zuzuordnen.
+
+**Ein Test fuer den Durchlauf selbst.** Bisher war „ein Fehler beendet den Tick
+nicht" nur eine Absicht im Kommentar. Der neue Test legt zwei Aufgaben in
+dasselbe Fenster, laesst die erste werfen und prueft drei Dinge: die zweite
+wird trotzdem gestartet, der Tick wirft nicht, und gezaehlt wird nur der
+erfolgreiche Start. Der Fehler wird aus `selectDueTasks` genommen und nicht aus
+der Anlagereihenfolge — welche zuerst kommt, entscheidet die zufaellige UUID,
+und ein Test, der daran haengt, ist ein Test, der irgendwann grundlos rot wird.
+
+**Zwei Test-Naehte, die im Betrieb niemand uebergibt.** `runTaskNow` und
+`runSchedulerTick` nehmen `starter` und `identities` als Parameter mit dem
+echten Start beziehungsweise allen Konten als Vorgabe. Ein `mock.module` waere
+hier falsch: es ist prozessweit und laesst sich nicht zuruecknehmen, also
+vergiftet es Testdateien, die dasselbe Modul spaeter brauchen. Kein Aufrufer im
+Produktionscode setzt sie.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Die ausgelieferte Instanz.** Der Knopf ist gegen einen Produktionsbuild
+  geklickt worden, und die gestartete Sitzung wurde danach zurueckgelesen; die
+  Auslieferung auf `agent-pc` passiert im selben Arbeitsschritt direkt nach
+  diesem Release.
+- **Der Start ueber Minuten hinweg.** Geprueft ist, dass eine Sitzung mit dem
+  Prompt des Tasks entsteht und dass der Klick den Takt nicht verschiebt. Nicht
+  geprueft ist, dass der Agent die Aufgabe danach auch *erledigt* — das haengt
+  am Modell und am Prompt, nicht an diesem Knopf.
+- **Die Desktop-Bundles wurden nicht gebaut**, und `src-tauri/Cargo.toml` /
+  `src-tauri/tauri.conf.json` stehen weiter auf `0.2.10`.
+  `bun run desktop:sync-version` gleicht sie an und laeuft in
+  `publish-desktop.yml`, nicht in diesem Checkout.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1564 pass, 0 fail, 1 skip — 1565 tests, 178 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `r3XAnmMxcimau1286CC-V`, 493 files under `.next/static/**/*.js`, `/api/scheduled-tasks/[id]/run` in the app-paths manifest |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

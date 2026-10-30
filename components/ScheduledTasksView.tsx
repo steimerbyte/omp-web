@@ -142,10 +142,27 @@ export function ScheduledTasksView({ onOpenSession }: {
   onOpenSession?: (sessionId: string) => void;
 }) {
   const { t } = useI18n();
-  const { tasks, error, reload, create, update, remove } = useScheduledTasks();
+  const { tasks, error, reload, create, update, remove, runNow } = useScheduledTasks();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  /**
+   * Die Kennung der Aufgabe, die gerade von Hand laeuft — `null`, wenn keine.
+   *
+   * Nur eine gleichzeitige Anfrage: ein zweiter Klick auf dieselbe Zeile
+   * waehrend des Starts wuerde eine zweite Session oeffnen, und das ist nicht,
+   * was der Klick bedeutet.
+   */
+  const [runningId, setRunningId] = useState<string | null>(null);
+  /**
+   * Der Grund eines gescheiterten Handstarts, pro Aufgabe.
+   *
+   * Er steht an der Zeile und nicht in der Meldungsleiste der Ansicht: die
+   * Zeile ist der Ort, an dem geklickt wurde, und bei mehreren Aufgaben waere
+   * eine gemeinsame Zeile nicht zuzuordnen.
+   */
+  const [runError, setRunError] = useState<{ id: string; text: string } | null>(null);
+
 
   /**
    * Der Fehler eines Schreibvorgangs in der Sprache der Oberflaeche.
@@ -161,13 +178,34 @@ export function ScheduledTasksView({ onOpenSession }: {
    * seine Formulierung zu uebersetzen. Diese Funktion bildet deshalb den
    * Status ab und sucht nicht im Text.
    */
-  const failureText = useCallback((cause: unknown): string => {
+  const failureText = useCallback((cause: unknown, fallback = "scheduled.saveFailed"): string => {
     const status = (cause as { status?: number } | null)?.status;
     if (status === 409) return t("scheduled.saveFailedVersion");
     if (status === 503) return t("scheduled.saveFailedLock");
     const detail = cause instanceof Error ? cause.message : String(cause);
-    return status === undefined ? t("scheduled.saveFailed") : `${t("scheduled.saveFailed")} ${detail}`;
+    return status === undefined ? t(fallback) : `${t(fallback)} ${detail}`;
   }, [t]);
+
+  /**
+   * "Jetzt ausfuehren" — derselbe Weg wie der Zeitplan, nur von Hand.
+   *
+   * Der Status der Antwort wird genauso abgebildet wie beim Speichern
+   * (`failureText`): `503` heisst "gerade gesperrt", alles andere behaelt den
+   * Servertext als Detail. Der Start scheitert zum Beispiel an einem Modell,
+   * das die Registrierung nicht mehr kennt.
+   */
+  const handleRunNow = useCallback(async (task: ScheduledTaskView) => {
+    setActionError(null);
+    setRunError(null);
+    setRunningId(task.id);
+    try {
+      await runNow(task.id);
+    } catch (cause) {
+      setRunError({ id: task.id, text: failureText(cause, "scheduled.runFailed") });
+    } finally {
+      setRunningId(null);
+    }
+  }, [runNow, failureText]);
 
   /**
    * "Jetzt" fuer die relativen Zeiten, jede halbe Minute neu.
@@ -297,6 +335,9 @@ export function ScheduledTasksView({ onOpenSession }: {
                 nowMs={nowMs}
                 onToggle={() => void toggleEnabled(task)}
                 onEdit={() => { setActionError(null); setDialog({ mode: "edit", task }); }}
+                onRunNow={() => void handleRunNow(task)}
+                running={runningId === task.id}
+                runError={runError?.id === task.id ? runError.text : null}
                 onOpenSession={onOpenSession}
               />
             ))}
@@ -334,11 +375,16 @@ export function ScheduledTasksView({ onOpenSession }: {
 }
 
 /** Eine Zeile der Liste. */
-function TaskRow({ task, nowMs, onToggle, onEdit, onOpenSession }: {
+function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, onOpenSession }: {
   task: ScheduledTaskView;
   nowMs: number;
   onToggle: () => void;
   onEdit: () => void;
+  onRunNow: () => void;
+  /** Der Start dieser Aufgabe laeuft gerade. */
+  running: boolean;
+  /** Warum der letzte Handstart dieser Aufgabe gescheitert ist. */
+  runError: string | null;
   onOpenSession?: (sessionId: string) => void;
 }) {
   const { t } = useI18n();
@@ -445,6 +491,28 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onOpenSession }: {
           {t("scheduled.edit")}
         </button>
 
+        {/* Ein Handstart fragt nicht nach dem Zeitplan: `enabled` sagt, ob der
+            Takt die Aufgabe startet, nicht ob ein Mensch sie starten darf. */}
+        <button
+          type="button"
+          onClick={onRunNow}
+          disabled={running}
+          aria-busy={running}
+          style={{
+            padding: "3px 9px",
+            fontSize: 11,
+            fontFamily: "inherit",
+            cursor: running ? "default" : "pointer",
+            border: "1px solid var(--border)",
+            background: "none",
+            color: running ? "var(--text-dim)" : "var(--text-muted)",
+            borderRadius: 6,
+            opacity: running ? 0.7 : 1,
+          }}
+        >
+          {running ? t("scheduled.running") : t("scheduled.runNow")}
+        </button>
+
         {task.lastRunSessionId && onOpenSession ? (
           <button
             type="button"
@@ -464,6 +532,12 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onOpenSession }: {
           </button>
         ) : null}
       </div>
+
+      {runError ? (
+        <p style={{ margin: 0, fontSize: 11, color: "var(--warning, #ffb347)" }} role="alert">
+          {runError}
+        </p>
+      ) : null}
     </li>
   );
 }
