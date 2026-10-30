@@ -595,6 +595,93 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `cPvUt6zxPOfG3q9cDC8hn`, 492 files under `.next/static/**/*.js` |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.14.2
+
+Released 2026-10-30.
+
+### Zeitplaner
+
+**Der Dialog spricht jetzt die Sprache der Oberflaeche.** In `v0.14.0`/`v0.14.1`
+war seine Beschriftung deutsch und zwar in *jeder* Sprache: Presets
+("Stündlich", "Werktags um 08:00"), die Feldnamen des einfachen Editors
+("Minute", "Stunde", "Wochentag"), die Wochentagsnamen und die Beschreibung
+unter dem Cron-Feld kamen als fertige deutsche Saetze aus dem Quelltext. Wer
+die Oberflaeche auf Englisch oder Chinesisch stellte, bekam einen deutschen
+Dialog. Die Texte stehen jetzt als Katalogschluessel in `de`, `en` und `zh-CN`;
+`lib/schedule.ts` ist **sprachfrei** und liefert statt eines Satzes einen
+Deskriptor (`{ kind: "daily", hour: 8, minute: 0 }`, `{ kind: "weekly", weekday }`
+mit `Date#getDay`), den die Ansicht uebersetzt. Der rohe Cron-Ausdruck bleibt
+die Rueckfallbeschreibung fuer Formen, die kein Mensch so sagen wuerde.
+
+**Ein Fehlschlag von `/api/models` ist sichtbar.** Vorher wurde er verschluckt:
+der Dialog zeigte eine leere Modellauswahl und ein gesperrtes Speichern, ohne
+Grund. Fuer den Nutzer sah das aus wie "es ist kein Modell eingerichtet" — ein
+Zustand, gegen den er nichts tun kann. Der Grund steht jetzt unter der
+Auswahl, als `role="alert"`, mit dem uebersetzten Satz davor und dem
+Servertext als Detail. `null` (noch nicht geladen) und `[]` (geladen, aber
+leer) sind dafuer getrennte Zustaende.
+
+**Sonntag ist als `7` waehlbar.** `parseSchedule` akzeptiert `0` und `7` als
+Sonntag, das Auswahlfeld kannte nur `0`. Ein `<select>` ohne passende
+`<option>` zeigt in Chromium den ersten Eintrag: eine gespeicherte Aufgabe mit
+`0 8 * * 7` oeffnete den Editor auf "taeglich", und ein Speichern daraus machte
+den Sonntag stillschweigend zu "jeden Tag". Beide Schreibweisen stehen jetzt
+im Feld, und das Feld wird beim Speichern unveraendert uebernommen.
+
+**`400`/`409`/`503` werden zu Saetzen statt zu Entwicklertext.** Der Server
+antwortet im Fehlerfall mit englischem Text ("written by another version and
+this build writes 1"). Fuer `409` (andere Schemafassung) und `503` (Datei
+gerade gesperrt) gibt es jetzt einen uebersetzten Satz, weil das Zustaende
+sind und keine gewoehnlichen Fehlschlaege. Die Zuordnung laeuft ueber den
+HTTP-Status, nicht ueber den Text: `docs/i18n.md` verbietet, einen API-Fehler
+an seiner Formulierung zu uebersetzen. Andere Fehler behalten den Servertext,
+weil er das Feld nennt.
+
+**Die Zuordnung Preset → Cron ist festgeschrieben.** Ein Test vergleicht die
+vollstaendige Liste (fuenf Eintraege, Ausdruck und Reihenfolge) mit dem
+Literal. Sie ist eine Zusicherung und keine Beschriftung: ein Preset, das
+etwas anderes erzeugt als sein Name sagt, legt eine Aufgabe fuer eine Zeit an,
+die niemand gewaehlt hat.
+
+**Gefunden beim Zusammenbauen: die Live-Pruefung des Cron-Ausdrucks war
+stumm.** `describeSchedule` meldet einen ungueltigen Ausdruck seit diesem
+Release mit `null` statt mit einem Wurf — der Dialog hing aber noch am alten
+Vertrag (`try { describeSchedule(…) } catch`), und dieser `catch` ging nie mehr
+in Betrieb. Folge: `ok` blieb immer `true`, Speichern war fuer `0 8 L * *`
+freigegeben, kein roter Rand, keine Meldung. Die Rueckmeldung, fuer die die
+Pruefung existiert, war still verschwunden. Feld und Token kommen jetzt aus
+`parseSchedule`, das `ScheduleError` wirft; ein neuer Test haelt beides fest
+(Speichern gesperrt, `role="alert"`, `aria-invalid`, Feld und Token im Text,
+und wieder frei nach der Korrektur). Gegen den unkorrigierten Baum faellt er
+mit genau dieser Zusicherung.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Die ausgelieferte Instanz.** Der Dialog ist in Chromium gegen einen
+  Produktionsbuild in allen drei Sprachen geprueft (Presets, Editor-Felder,
+  Wochentagsnamen, Beschreibung), samt Umschalten der Sprache und einem
+  erzwungenen Fehlschlag von `/api/models`; die Auslieferung auf `agent-pc`
+  passiert im selben Arbeitsschritt direkt nach diesem Release.
+- **Die Uebersetzung selbst ist nicht gegengelesen.** Die chinesischen Texte
+  sind gesetzt, aber niemand mit der Sprache als Muttersprache hat sie
+  freigegeben; sie sind eine Uebersetzung, keine Zusicherung.
+- **Die Desktop-Bundles wurden nicht gebaut**, und `src-tauri/Cargo.toml` /
+  `src-tauri/tauri.conf.json` stehen weiter auf `0.2.10`.
+  `bun run desktop:sync-version` gleicht sie an und laeuft in
+  `publish-desktop.yml`, nicht in diesem Checkout.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1549 pass, 0 fail, 1 skip — 1550 tests, 177 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `HR0h0lqWlHtem0O5urRzi`, 492 files under `.next/static/**/*.js` |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

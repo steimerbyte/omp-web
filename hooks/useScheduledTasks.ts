@@ -60,6 +60,16 @@ export interface UseScheduledTasksResult {
 export interface ScheduledTaskRequestError extends Error {
   field?: string;
   token?: string;
+  /**
+   * Der HTTP-Status der Antwort.
+   *
+   * Er steht hier, weil die Route ihn bereits gesetzt hat und die Oberflaeche
+   * ihn sonst aus dem Text erraten muesste: `409` heisst "andere Schemafassung",
+   * `503` heisst "gerade gesperrt". Ein eigenes `code`-Feld in der Antwort
+   * waere ein zweiter Ausdruck derselben Aussage — der Status ist der
+   * maschinenlesbare Teil, den HTTP schon mitliefert.
+   */
+  status?: number;
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -67,6 +77,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; field?: string; token?: string };
     const error = new Error(body.error ?? `HTTP ${response.status}`) as ScheduledTaskRequestError;
+    error.status = response.status;
     if (body.field) error.field = body.field;
     if (body.token) error.token = body.token;
     throw error;

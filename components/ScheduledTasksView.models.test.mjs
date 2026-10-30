@@ -69,6 +69,25 @@ for (const name of Object.keys(win)) {
 globalThis.Event = win.Event;
 globalThis.EventTarget = win.EventTarget;
 
+/**
+ * React 19 entscheidet beim Auswerten von `react-dom`, ob es `onChange` an
+ * kontrollierten Feldern ueber `input` oder ueber den alten Polyfill-Pfad
+ * ausloest, und fragt dafuer nach `oninput` auf dem `document`. linkedom hat
+ * das nicht, also faellt die Antwort dauerhaft auf `false`, und `onChange`
+ * wird **nie** gerufen: das Cron-Feld bliebe in diesem Harness auf seinem
+ * Anfangswert, `canSave` waere konstant, und eine Pruefung der Live-Validierung
+ * waere nicht messbar. Quelle der Messung: `calendar-event-dialog.test.mjs`,
+ * `app/login/login-username-prefill.test.mjs`.
+ */
+win.document.oninput = null;
+win.document.onchange = null;
+win.HTMLElement.prototype.attachEvent = function attachEvent(type, handler) {
+  this.addEventListener(type.replace(/^on/, ""), handler);
+};
+win.HTMLElement.prototype.detachEvent = function detachEvent(type, handler) {
+  this.removeEventListener(type.replace(/^on/, ""), handler);
+};
+
 win.matchMedia = () => ({
   matches: false,
   media: "",
@@ -139,14 +158,65 @@ async function settle() {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
 }
 
-async function mountView() {
+/**
+ * Mountet die Ansicht — mit `locale` in der Sprache, die der Test sehen will.
+ *
+ * `I18nProvider` liest die Sprache aus `localStorage` (`pi-locale`) und
+ * registriert sie im Effekt, also muss der Wert *vor* dem ersten Render
+ * stehen. Ohne diesen Parameter liefe jeder Test in der Browsersprache des
+ * Harness, und "kein deutscher Text in der englischen Oberflaeche" waere nicht
+ * pruefbar.
+ */
+async function mountView(locale = "en") {
   win.document.body.innerHTML = "";
+  localStorage.setItem("pi-locale", locale);
   const container = win.document.createElement("div");
   win.document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => { root.render(React.createElement(I18nProvider, null, React.createElement(ScheduledTasksView, null))); });
   await settle();
   return { root, container };
+}
+
+/**
+ * Tippt in ein React-Eingabefeld, wie ein Browser es tut.
+ *
+ * Ein gesetztes `.value` allein loest an einem kontrollierten Feld nichts aus;
+ * React hoert auf `input`, und wenn `isInputEventSupported` beim Laden von
+ * `react-dom` auf `false` gefallen ist (linkedom kennt `document.oninput`
+ * nicht), nimmt es den alten Polyfill-Pfad und loest `onChange` ueber `keyup`
+ * auf dem aktiven Element aus. Deshalb laufen `focusin`, `input` und `keyup`
+ * zusammen — mit `input` allein blieb der Zustand gemessen leer
+ * (`calendar-event-dialog.test.mjs`, `app/login/login-username-prefill.test.mjs`).
+ */
+async function setInputValue(input, value) {
+  await act(async () => {
+    input.dispatchEvent(new win.Event("focusin", { bubbles: true }));
+  });
+  await act(async () => {
+    // Der native Setter, nicht `input.value = …`: React haengt einen
+    // Value-Tracker an die Instanz, und ein Schreiben ueber die eigene
+    // Eigenschaft aktualisiert ihn mit. Beim Event vergleicht React dann
+    // "alt == neu" und verwirft das `change` — das Feld saehe getippt aus,
+    // der Zustand bliebe der alte.
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value").set;
+    setter.call(input, value);
+    input.dispatchEvent(new win.Event("input", { bubbles: true }));
+    input.dispatchEvent(new win.Event("keyup", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+}
+
+/** Die Beschriftungen aller Preset-Knoepfe im Dialog, in ihrer Reihenfolge. */
+function presetLabels() {
+  const fieldset = win.document.querySelector('[data-slot="dialog-content"] fieldset');
+  return [...fieldset.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
+}
+
+/** Die Optionen des Wochentagsfeldes als `[value, label]`. */
+function weekdayOptions() {
+  const select = win.document.querySelector("#scheduled-weekday");
+  return [...select.querySelectorAll("option")].map((o) => [o.getAttribute("value"), (o.textContent ?? "").trim()]);
 }
 
 /** Ein Knopf nach seinem Text; die Beschriftung kommt aus dem Sprachpaket. */
@@ -207,8 +277,221 @@ test("Der Dialog bleibt benutzbar, wenn /api/models fehlschlaegt", async () => {
     assert.ok(select, "der Dialog ist bei einem Modell-Fehler nicht aufgegangen");
     assert.equal(select.querySelectorAll("option").length, 1, "erwartet nur den Platzhalter");
 
+    // Finding #1/#2: der Grund war unsichtbar. Ein leerer Kasten mit
+    // deaktiviertem Speichern sieht wie "es gibt keine Modelle" aus, obwohl die
+    // Anfrage gescheitert ist — und niemand kann etwas dagegen tun.
+    const alerts = [...win.document.querySelectorAll('[role="alert"]')].map((n) => (n.textContent ?? "").trim());
+    assert.ok(
+      alerts.some((text) => text.includes("could not be loaded")),
+      `kein sichtbarer Grund fuer die leere Modellliste: ${JSON.stringify(alerts)}`,
+    );
+
     await act(async () => { root.unmount(); });
   } finally {
     globalThis.fetch = failingFetch;
+  }
+});
+
+// --- Sprache der Oberflaeche (Finding #6/#7) -----------------------------------
+
+test("Die Presets und die Beschreibung stehen in der Sprache der Oberflaeche", async () => {
+  for (const [locale, expected] of [
+    ["en", ["Hourly", "Every 15 minutes", "Daily at 08:00", "Weekdays at 08:00", "Mondays at 08:00"]],
+    ["de", ["Stündlich", "Alle 15 Minuten", "Täglich um 08:00", "Werktags um 08:00", "Montags um 08:00"]],
+    ["zh-CN", ["每小时", "每 15 分钟", "每天 08:00", "工作日 08:00", "每周一 08:00"]],
+  ]) {
+    const { root } = await mountView(locale);
+    const open = buttonByText(locale === "de" ? "Neue geplante Aufgabe" : locale === "zh-CN" ? "新建计划任务" : "New scheduled task");
+    assert.ok(open, `der Knopf zum Anlegen fehlt in ${locale}`);
+    await act(async () => { open.click(); });
+    await settle();
+
+    assert.deepEqual(presetLabels(), expected, `Die Presets sind in ${locale} nicht in dieser Sprache`);
+
+    // Die Live-Beschreibung kommt aus dem Deskriptor und dem Katalog, nicht aus
+    // einem fertigen deutschen Satz in `lib/schedule.ts`.
+    await act(async () => { win.document.querySelector("#scheduled-cron").value = "0 8 * * *"; });
+    const cron = win.document.querySelector("#scheduled-cron");
+    await act(async () => {
+      cron.value = "0 8 * * *";
+      cron.dispatchEvent(new win.Event("input", { bubbles: true }));
+    });
+    await settle();
+    const help = (win.document.querySelector("#scheduled-cron-help").textContent ?? "").trim();
+    assert.equal(help, expected[2], `Die Beschreibung ist in ${locale} falsch: ${help}`);
+
+    await act(async () => { root.unmount(); });
+  }
+});
+
+test("In der englischen Oberflaeche steht kein deutscher Text im Dialog", async () => {
+  // Der eigentliche Befund aus #6/#7: gemischte Sprachen. Ein Test auf die
+  // Kataloge sieht das nicht — er sieht nur, dass die Schluessel existieren.
+  // "Minute" fehlt absichtlich: das Wort ist im Englischen dasselbe und
+  // taugt nicht als Leck-Test. "Stunde"/"Wochentag" sind es nicht.
+  const germanWords = ["Stündlich", "Täglich", "Werktags", "Montags", "Stunde", "Wochentag", "täglich", "werktags", "Sonntag", "Montag"];
+  const { root } = await mountView("en");
+  const open = buttonByText("New scheduled task");
+  assert.ok(open);
+  await act(async () => { open.click(); });
+  await settle();
+
+  const dialogText = win.document.querySelector('[data-slot="dialog-content"]').textContent ?? "";
+  for (const word of germanWords) {
+    assert.ok(!dialogText.includes(word), `deutscher Text in der englischen Oberflaeche: "${word}"`);
+  }
+  // Die Wochentagsnamen sind uebersetzt, nicht nur die drei Labels.
+  assert.ok(weekdayOptions().some(([, label]) => label === "Sunday"));
+  assert.ok(weekdayOptions().some(([, label]) => label === "Weekdays"));
+
+  await act(async () => { root.unmount(); });
+});
+
+// --- Sonntag als 7 (Finding #4) ------------------------------------------------
+
+test("Der Wochentag 7 ist waehlbar und bleibt beim Speichern Sonntag", async () => {
+  // Der Befund: `parseSchedule` akzeptiert 7 als Sonntag, das Auswahlfeld
+  // kannte den Wert nicht. Ein `<select>` ohne passende `<option>` zeigt in
+  // Chromium den ersten Eintrag — ein gespeicherter Sonntag wurde beim
+  // naechsten Speichern stillschweigend zu "taeglich".
+  const { root } = await mountView("en");
+  const open = buttonByText("New scheduled task");
+  await act(async () => { open.click(); });
+  await settle();
+
+  const values = weekdayOptions().map(([value]) => value);
+  assert.ok(values.includes("7"), `7 fehlt im Wochentagsfeld: ${JSON.stringify(values)}`);
+
+  // linkedom hat am `<select>` keinen `value`-Setter (nur einen Getter), also
+  // wird die Auswahl ueber `option.selected` gesetzt — das ist auch der Weg,
+  // den ein Browser beim Klicken nimmt.
+  await act(async () => {
+    const select = win.document.querySelector("#scheduled-weekday");
+    select.querySelector('option[value="7"]').selected = true;
+    select.dispatchEvent(new win.Event("change", { bubbles: true }));
+  });
+  await settle();
+
+  const cron = win.document.querySelector("#scheduled-cron");
+  assert.equal(cron.value, "0 8 * * 7", "der Wochentag 7 wurde nicht in den Cron geschrieben");
+  // Und die Beschreibung nennt ihn Sonntag — nicht Montag, nicht "taeglich".
+  const help = (win.document.querySelector("#scheduled-cron-help").textContent ?? "").trim();
+  assert.equal(help, "Sunday at 08:00");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Ein gespeicherter Cron mit Wochentag 7 oeffnet den Editor auf Sonntag", async () => {
+  // Die Gegenrichtung: der Wert kommt aus der Datei, nicht vom Klick.
+  const tasksFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input?.url ?? input);
+    if (url.startsWith("/api/scheduled-tasks") && (init?.method ?? "GET") === "GET") {
+      return json({
+        tasks: [{
+          id: "sunday-task",
+          name: "Sunday report",
+          cron: "0 8 * * 7",
+          prompt: "p",
+          provider: "buds-gateway",
+          modelId: "qwen3.8-27b",
+          enabled: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          nextRun: null,
+        }],
+      });
+    }
+    return tasksFetch(input, init);
+  };
+  try {
+    const { root } = await mountView("en");
+    const edit = buttonByText("Edit");
+    assert.ok(edit, "die Aufgabe wurde nicht gelistet");
+    await act(async () => { edit.click(); });
+    await settle();
+
+    assert.equal(win.document.querySelector("#scheduled-weekday").value, "7",
+      "der Editor hat den gespeicherten Sonntag nicht uebernommen");
+    assert.equal(win.document.querySelector("#scheduled-cron").value, "0 8 * * 7");
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    globalThis.fetch = tasksFetch;
+  }
+});
+
+// --- Live-Pruefung des Cron-Ausdrucks ------------------------------------------
+
+test("Ein ungueltiger Cron-Ausdruck sperrt Speichern und meldet sich", async () => {
+  // Regression aus dem Polish-Umbau: `describeSchedule` meldet einen kaputten
+  // Ausdruck mit `null` statt mit einem Wurf. Der Dialog hing aber noch am
+  // alten Vertrag (`try { describeSchedule(...) } catch`), also konnte `ok`
+  // nie mehr `false` werden — ein Ausdruck wie `0 8 L * *` liess sich
+  // speichern, ohne dass die Oberflaeche etwas sagte. Der Server haette ihn
+  // abgelehnt; die Rueckmeldung, fuer die die Live-Pruefung existiert, fehlte.
+  //
+  // Bearbeitet wird eine bestehende Aufgabe statt eine neue angelegt: dann
+  // sind Name, Prompt und Modell schon gesetzt, und `canSave` haengt allein am
+  // Ausdruck. Ein neuer Dialog muesste erst alle drei fuellen, und ein Fehler
+  // hier waere nicht vom Ausdruck zu unterscheiden.
+  const tasksFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : String(input?.url ?? input);
+    if (url.startsWith("/api/scheduled-tasks") && (init?.method ?? "GET") === "GET") {
+      return json({
+        tasks: [{
+          id: "cron-validation",
+          name: "Nightly report",
+          cron: "0 8 * * *",
+          prompt: "do the thing",
+          provider: "buds-gateway",
+          modelId: "qwen3.8-27b",
+          enabled: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          nextRun: null,
+        }],
+      });
+    }
+    return tasksFetch(input, init);
+  };
+  try {
+    const { root } = await mountView("en");
+    const edit = buttonByText("Edit");
+    assert.ok(edit, "die Aufgabe wurde nicht gelistet");
+    await act(async () => { edit.click(); });
+    await settle();
+
+    // Jedes Mal neu suchen: React tauscht Knoten beim Neu-Rendern, und eine
+    // festgehaltene Referenz misst dann das alte Element.
+    const saveDisabled = () => {
+      const save = buttonByText("Save task");
+      assert.ok(save, "der Speichern-Knopf fehlt");
+      return save.disabled;
+    };
+    const cronField = () => win.document.querySelector("#scheduled-cron");
+    const help = () => win.document.querySelector("#scheduled-cron-help");
+
+    // Gueltig: Speichern frei, keine Fehlermeldung.
+    assert.equal(saveDisabled(), false, "ein gueltiger Ausdruck darf Speichern nicht sperren");
+    assert.notEqual(help().getAttribute("role"), "alert", "ein gueltiger Ausdruck darf nicht als Fehler gelten");
+
+    // Ungueltig: gesperrt, als Fehler ausgezeichnet, Meldung mit Feld und Token.
+    await setInputValue(cronField(), "0 8 L * *");
+    assert.equal(saveDisabled(), true, "ein ungueltiger Ausdruck muss Speichern sperren");
+    assert.equal(help().getAttribute("role"), "alert", "der Fehler ist nicht als Meldung ausgezeichnet");
+    assert.equal(cronField().getAttribute("aria-invalid"), "true", "das Cron-Feld ist nicht als ungueltig markiert");
+    const text = (help().textContent ?? "").trim();
+    assert.ok(text.includes("not valid"), `der Fehler nennt nicht den Grund: ${JSON.stringify(text)}`);
+    assert.ok(text.includes("dayOfMonth") && text.includes("L"), `Feld und Token fehlen: ${JSON.stringify(text)}`);
+
+    // Und zurueck: ein wieder gueltiger Ausdruck gibt Speichern frei.
+    await setInputValue(cronField(), "0 8 * * *");
+    assert.equal(saveDisabled(), false, "Speichern blieb nach der Korrektur gesperrt");
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    globalThis.fetch = tasksFetch;
   }
 });

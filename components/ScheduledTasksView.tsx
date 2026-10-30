@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useScheduledTasks, type ScheduledTaskView } from "@/hooks/useScheduledTasks";
-import { describeSchedule, parseSchedule, SCHEDULE_PRESETS, ScheduleError } from "@/lib/schedule";
+import { describeSchedule, parseSchedule, SCHEDULE_PRESETS, ScheduleError, type ScheduleDescription } from "@/lib/schedule";
 import { MAX_TASK_NAME_LENGTH, MAX_TASK_PROMPT_LENGTH } from "@/lib/scheduled-task-limits";
 import {
   Dialog,
@@ -71,6 +71,39 @@ function relativeTime(targetMs: number, nowMs: number, t: (key: string, params?:
   return future ? t("scheduled.timeDays", { count: days }) : t("scheduled.timePastDays", { count: days });
 }
 
+/**
+ * Ein `ScheduleDescription` in der Sprache der Oberflaeche.
+ *
+ * `lib/schedule.ts` ist sprachlos und liefert nur die Form; die Woerter stehen
+ * im Katalog. Die Uhrzeit bleibt `HH:MM` — sie ist eine Zeit, kein Satz, und
+ * wird in jeder Sprache gleich gelesen. `weekday` ist `Date#getDay`, also
+ * `0` = Sonntag, und wird ueber dieselbe Tabelle benannt wie das Auswahlfeld.
+ */
+function describeIn(
+  description: ScheduleDescription | null,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string | null {
+  if (description === null) return null;
+  const clock = (hour: number, minute: number) =>
+    `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  switch (description.kind) {
+    case "everyMinute": return t("scheduled.describeEveryMinute");
+    case "everyMinutes": return t("scheduled.describeEveryMinutes", { count: description.step });
+    // Minute 0 heisst "jede Stunde"; jede andere Minute ist eine eigene Zeile,
+    // weil "stuendlich" sie nicht nennt.
+    case "hourly": return description.minute === 0
+      ? t("scheduled.describeHourly")
+      : t("scheduled.describeHourlyAtMinute", { count: description.minute });
+    case "daily": return t("scheduled.describeDaily", { time: clock(description.hour, description.minute) });
+    case "weekdays": return t("scheduled.describeWeekdays", { time: clock(description.hour, description.minute) });
+    case "weekly": return t("scheduled.describeWeekly", {
+      weekday: t(WEEKDAY_KEYS[description.weekday]),
+      time: clock(description.hour, description.minute),
+    });
+    case "custom": return description.expression;
+  }
+}
+
 /** Eine absolute Zeit in der Zone des Browsers — dieselbe Form wie im Kalender. */
 function absoluteTime(ms: number): string {
   const date = new Date(ms);
@@ -115,6 +148,28 @@ export function ScheduledTasksView({ onOpenSession }: {
   const [actionError, setActionError] = useState<string | null>(null);
 
   /**
+   * Der Fehler eines Schreibvorgangs in der Sprache der Oberflaeche.
+   *
+   * `409` und `503` sind keine gewoehnlichen Fehlschläge, sondern Zustaende:
+   * die Datei stammt aus einer anderen Schemafassung, oder ein anderer Prozess
+   * haelt gerade die Sperre. Fuer beide gibt es einen uebersetzten Satz, weil
+   * der Servertext eine Entwicklerzeile ist ("written by another version and
+   * this build writes 1") und dem Nutzer nicht sagt, was er tun kann.
+   *
+   * Alles andere — ein unbekanntes Modell, ein zu langer Prompt — behaelt den
+   * Servertext: er nennt das Feld, und `docs/i18n.md` verbietet, ihn ueber
+   * seine Formulierung zu uebersetzen. Diese Funktion bildet deshalb den
+   * Status ab und sucht nicht im Text.
+   */
+  const failureText = useCallback((cause: unknown): string => {
+    const status = (cause as { status?: number } | null)?.status;
+    if (status === 409) return t("scheduled.saveFailedVersion");
+    if (status === 503) return t("scheduled.saveFailedLock");
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return status === undefined ? t("scheduled.saveFailed") : `${t("scheduled.saveFailed")} ${detail}`;
+  }, [t]);
+
+  /**
    * "Jetzt" fuer die relativen Zeiten, jede halbe Minute neu.
    *
    * Ohne diesen Takt stuende "in 1 Min." auch noch eine Stunde spaeter da.
@@ -132,9 +187,9 @@ export function ScheduledTasksView({ onOpenSession }: {
     try {
       await update(task.id, { enabled: !task.enabled });
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : String(cause));
+      setActionError(failureText(cause));
     }
-  }, [update]);
+  }, [update, failureText]);
 
   const handleDelete = useCallback(async (task: ScheduledTaskView) => {
     setActionError(null);
@@ -143,11 +198,11 @@ export function ScheduledTasksView({ onOpenSession }: {
       await remove(task.id);
       setDialog(null);
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : String(cause));
+      setActionError(failureText(cause));
     } finally {
       setBusy(false);
     }
-  }, [remove]);
+  }, [remove, failureText]);
 
   /** Die Aufgabenliste — `null` heisst "noch nicht geladen". */
   const list = tasks;
@@ -263,7 +318,7 @@ export function ScheduledTasksView({ onOpenSession }: {
               else await update(id, input);
               setDialog(null);
             } catch (cause) {
-              setActionError(cause instanceof Error ? cause.message : String(cause));
+              setActionError(failureText(cause));
             } finally {
               setBusy(false);
             }
@@ -304,7 +359,7 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onOpenSession }: {
     >
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>{task.name}</span>
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{describeSchedule(task.cron)}</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{describeIn(describeSchedule(task.cron), t)}</span>
         {!task.enabled ? (
           <span
             style={{
@@ -428,6 +483,11 @@ interface EditorValue {
  * eine feste Stunde und ein Wochentagsfeld. Alles andere (`*` in der Minute,
  * Schritte, Listen im Monat) ist im Rohfeld besser aufgehoben als in einem
  * Formular, das den Ausdruck umschreiben muesste.
+ *
+ * Das Wochentagsfeld wird **unveraendert** uebernommen, auch `7`: beide
+ * Schreibweisen fuer Sonntag stehen in {@link WEEKDAY_VALUES}, damit ein
+ * gelesener Ausdruck beim Speichern derselbe bleibt. Ein Editor, der `7` auf
+ * `0` normalisiert, aendert einen Zeitplan, den niemand angefasst hat.
  */
 function toEditorValue(cron: string): EditorValue | null {
   const parts = cron.trim().split(/\s+/);
@@ -443,18 +503,38 @@ function toCron(value: EditorValue): string {
   return `${value.minute} ${value.hour} * * ${value.weekday}`;
 }
 
-/** Die ausgeschriebenen Wochentage fuer das Auswahlfeld. */
-const WEEKDAY_OPTIONS: readonly { value: string; label: string }[] = [
-  { value: "*", label: "täglich" },
-  { value: "1-5", label: "werktags" },
-  { value: "1", label: "Montag" },
-  { value: "2", label: "Dienstag" },
-  { value: "3", label: "Mittwoch" },
-  { value: "4", label: "Donnerstag" },
-  { value: "5", label: "Freitag" },
-  { value: "6", label: "Samstag" },
-  { value: "0", label: "Sonntag" },
+/**
+ * Die Namen der Wochentage, Index = `Date#getDay` (`0` = Sonntag).
+ *
+ * Dieselbe Tabelle benennt das Auswahlfeld und die Beschreibung, damit
+ * "Montags um 08:00" und `value="1"` nie zwei verschiedene Tage meinen.
+ */
+const WEEKDAY_KEYS: readonly string[] = [
+  "scheduled.weekdaySun",
+  "scheduled.weekdayMon",
+  "scheduled.weekdayTue",
+  "scheduled.weekdayWed",
+  "scheduled.weekdayThu",
+  "scheduled.weekdayFri",
+  "scheduled.weekdaySat",
 ];
+
+/**
+ * Die Werte des Wochentagsfeldes.
+ *
+ * `0` und `7` sind beide Sonntag, und beide stehen deshalb zur Wahl: ein
+ * gespeicherter Ausdruck `0 8 * * 7` landet beim Bearbeiten als `7` im Feld,
+ * und ein `<select>` ohne passende `<option>` zeigt sonst stillschweigend den
+ * ersten Eintrag — ein Sonntag wuerde beim naechsten Speichern zu "taeglich".
+ */
+const WEEKDAY_VALUES: readonly string[] = ["*", "1-5", "1", "2", "3", "4", "5", "6", "0", "7"];
+
+/** Der Katalogschluessel zu einem Feldwert; `7` ist Sonntag wie `0`. */
+function weekdayLabelKey(value: string): string {
+  if (value === "*") return "scheduled.weekdayEveryDay";
+  if (value === "1-5") return "scheduled.weekdayWeekdays";
+  return WEEKDAY_KEYS[Number(value) % 7];
+}
 
 /**
  * Der Dialog zum Anlegen und Bearbeiten.
@@ -492,6 +572,16 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
   const [enabled, setEnabled] = useState(task?.enabled ?? true);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [models, setModels] = useState<ModelOption[] | null>(null);
+  /**
+   * Warum die Modellliste leer ist — oder `null`, wenn sie geladen wurde.
+   *
+   * `null` und `[]` sind nicht dasselbe: eine geladene Liste ohne Eintraege
+   * heisst "es ist kein Modell konfiguriert", eine gescheiterte heisst "wir
+   * wissen es nicht". Ohne diesen Zustand sahen beide gleich aus, und der
+   * Grund war unsichtbar — dieselbe Anzeige wie `ModelErrorBanner` im
+   * Composer (`components/ChatInput.tsx`).
+   */
+  const [modelsError, setModelsError] = useState<string | null>(null);
 
   /**
    * Die Modellliste — dieselbe Quelle wie der Composer.
@@ -504,22 +594,36 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
    * darauf ist ein TypeError mitten im Rendern — der Dialog ersetzt dann die
    * ganze App durch Next' Fehlerseite. Die Form steht in
    * `lib/models-cache.ts:ModelsData`.
+   *
+   * Ein Fehlschlag wird **angezeigt** und nicht verschluckt: `modelError` aus
+   * einer 200-Antwort (die Registrierung konnte nicht geladen werden), `error`
+   * aus einer Fehlerantwort (400 fremdes `cwd`, 403 ausserhalb der erlaubten
+   * Wurzel, 401/503 der Sperre). Beide sind Servertext und bleiben als Detail
+   * stehen; davor steht der uebersetzte Satz aus dem Katalog.
    */
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/models")
-      .then((response) => (response.ok ? response.json() : {}))
-      .then((body: ModelsResponse) => {
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as ModelsResponse & { error?: string; modelError?: string };
         if (cancelled) return;
+        if (!response.ok) {
+          setModels([]);
+          setModelsError(`${t("scheduled.modelsFailed")} ${body.error ?? `HTTP ${response.status}`}`);
+          return;
+        }
         setModels((body.modelList ?? []).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name })));
+        setModelsError(body.modelError ? `${t("scheduled.modelsFailed")} ${body.modelError}` : null);
       })
-      .catch(() => {
-        if (!cancelled) setModels([]);
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        setModels([]);
+        setModelsError(`${t("scheduled.modelsFailed")} ${cause instanceof Error ? cause.message : String(cause)}`);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   /** Die drei Felder des einfachen Editors — `null`, wenn der Ausdruck sie nicht hergibt. */
   const [editor, setEditor] = useState<EditorValue | null>(() => toEditorValue(task?.cron ?? "0 8 * * *"));
@@ -534,19 +638,32 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
    * Der gepruefte Ausdruck — oder der Grund, warum er nicht geht.
    *
    * Die Pruefung laeuft live beim Tippen: wer `0 8 L * *` eingibt, sieht den
-   * Fehler mit Feld und Token, bevor er speichert. Der Server prueft
-   * denselben Ausdruck noch einmal — die Pruefung hier ist die Rueckmeldung,
-   * nicht die Absicherung.
+   * Fehler, bevor er speichert. Der Server prueft denselben Ausdruck noch
+   * einmal — die Pruefung hier ist die Rueckmeldung, nicht die Absicherung.
+   *
+   * Gemeldet wird `scheduled.invalidCron` und **nicht** der Satz aus
+   * `ScheduleError.message`: der ist englisch, nennt interne Feldnamen
+   * (`dayOfMonth`) und wuerde in einer deutschen Oberflaeche als fremder Text
+   * stehen (`docs/i18n.md`, "Do not translate an API error"). Das abgelehnte
+   * Feld und der Token bleiben trotzdem sichtbar, weil sie die eigentliche
+   * Auskunft sind: sie sagen, *wo* der Ausdruck klemmt.
+   *
+   * `describeSchedule` **wirft nicht** — es liefert `null` fuer einen
+   * ungueltigen Ausdruck. Feld und Token kommen deshalb aus `parseSchedule`,
+   * das `ScheduleError` wirft. Ein `try`/`catch` nur um `describeSchedule`
+   * ginge nie in den `catch`, `ok` bliebe immer `true`, und Speichern waere
+   * fuer `0 8 L * *` freigegeben: die Rueckmeldung, fuer die es diese Pruefung
+   * gibt, waere still verschwunden.
    */
   const parsed = useMemo(() => {
     try {
-      parseSchedule(cron);
-      return { ok: true as const, description: describeSchedule(cron) };
+      const schedule = parseSchedule(cron);
+      return { ok: true as const, description: describeSchedule(schedule.expression) };
     } catch (cause) {
       if (cause instanceof ScheduleError) {
-        return { ok: false as const, message: `${cause.field}: ${cause.token} — ${cause.message}` };
+        return { ok: false as const, field: cause.field, token: cause.token };
       }
-      return { ok: false as const, message: String(cause) };
+      return { ok: false as const, field: null, token: String(cause) };
     }
   }, [cron]);
 
@@ -642,7 +759,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                       borderRadius: 999,
                     }}
                   >
-                    {preset.label}
+                    {t(`scheduled.${preset.labelKey}`)}
                   </button>
                 ))}
               </div>
@@ -653,7 +770,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
               {editor ? (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 8 }}>
                   <div style={{ width: 64 }}>
-                    <label style={labelStyle} htmlFor="scheduled-minute">Minute</label>
+                    <label style={labelStyle} htmlFor="scheduled-minute">{t("scheduled.minute")}</label>
                     <input
                       id="scheduled-minute"
                       type="number"
@@ -669,7 +786,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                     />
                   </div>
                   <div style={{ width: 64 }}>
-                    <label style={labelStyle} htmlFor="scheduled-hour">Stunde</label>
+                    <label style={labelStyle} htmlFor="scheduled-hour">{t("scheduled.hour")}</label>
                     <input
                       id="scheduled-hour"
                       type="number"
@@ -685,7 +802,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                     />
                   </div>
                   <div style={{ minWidth: 120 }}>
-                    <label style={labelStyle} htmlFor="scheduled-weekday">Wochentag</label>
+                    <label style={labelStyle} htmlFor="scheduled-weekday">{t("scheduled.weekday")}</label>
                     <select
                       id="scheduled-weekday"
                       value={editor.weekday}
@@ -696,8 +813,8 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                       }}
                       style={inputStyle}
                     >
-                      {WEEKDAY_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
+                      {WEEKDAY_VALUES.map((value) => (
+                        <option key={value} value={value}>{t(weekdayLabelKey(value))}</option>
                       ))}
                     </select>
                   </div>
@@ -732,7 +849,9 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                 }}
                 role={parsed.ok ? undefined : "alert"}
               >
-                {parsed.ok ? parsed.description : parsed.message}
+                {parsed.ok
+                  ? describeIn(parsed.description, t)
+                  : `${t("scheduled.invalidCron")}${parsed.field ? ` (${parsed.field}: ${parsed.token})` : ""}`}
               </p>
               <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--text-dim)" }}>
                 {t("scheduled.cronHint")}
@@ -764,6 +883,14 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                   <option value={`${provider}\u0000${modelId}`}>{`${provider}/${modelId}`}</option>
                 ) : null}
               </select>
+              {/* Der Grund steht unter dem Feld, nicht in der Meldungsleiste
+                  der Ansicht: die liegt hinter dem Overlay und waere von hier
+                  aus unerreichbar. */}
+              {modelsError ? (
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--warning, #ffb347)" }} role="alert">
+                  {modelsError}
+                </p>
+              ) : null}
             </div>
 
             <div>

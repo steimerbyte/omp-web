@@ -1,5 +1,3 @@
-import { GERMAN_WEEKDAYS } from "./calendar";
-
 /**
  * Cron-Zeitplaene fuer geplante Agenten-Aufgaben.
  *
@@ -259,6 +257,14 @@ function matchesAt(schedule: ParsedSchedule, at: Date): boolean {
  * Der Preis ist eine Obergrenze von {@link MAX_SCAN_MINUTES} Schritten statt
  * eines Sprungs. Das passiert nur bei einem Plan, der ueber Jahre nichts
  * findet, und nur einmal pro Tick.
+ *
+ * shortcut: ein nie treffender Ausdruck kostet gemessen 208-261 ms pro Aufruf
+ * und laeuft synchron, also blockiert er die Route fuer diese Dauer — bei
+ * fuenf solchen Aufgaben in einer Liste eine Sekunde pro `GET`. Das ist
+ * hingenommen statt behoben, weil der Fall selten und die Suche trivial zu
+ * pruefen ist; sobald eine Liste mehrere tote Ausdruecke traegt oder die Route
+ * spuerbar haengt, wird die Schleife durch Feldarithmetik ersetzt oder ihr
+ * Ergebnis am Ausdruck zwischengespeichert.
  */
 const MAX_SCAN_MINUTES = 2921 * 24 * 60;
 
@@ -299,85 +305,111 @@ export function nextRunAfter(schedule: ParsedSchedule, afterMs: number): number 
 /** Eine Voreinstellung fuer die Auswahl im Dialog. */
 export interface SchedulePreset {
   id: string;
-  /** Deutsche Beschriftung, wie die uebrigen Texte der Oberflaeche. */
-  label: string;
+  /**
+   * Der Schluessel der Beschriftung im Sprachpaket, ohne Namensraum.
+   *
+   * Der Katalog-Schluessel ist `scheduled.<labelKey>`. Ein fertiger Satz
+   * waere hier falsch: dieses Modul ist rein, kennt keine Sprache der
+   * Oberflaeche und darf keine deutsche Zeile in ein englisches Interface
+   * tragen.
+   */
+  labelKey: string;
   cron: string;
-  description?: string;
 }
 
 /**
  * Die Voreinstellungen des Auswahldialogs.
  *
- * Deutsch wie der Rest der Oberflaeche (`components/CalendarView.tsx`), und die
- * Reihenfolge ist die Haeufigkeit: stuendlich und taeglich zuerst.
+ * Die Reihenfolge ist die Haeufigkeit: stuendlich und taeglich zuerst. Die
+ * Zuordnung `id → cron` ist eine Zusicherung und wird von `schedule.test.mjs`
+ * festgehalten — ein Preset, das etwas anderes erzeugt als sein Name sagt,
+ * legt eine Aufgabe fuer eine Zeit an, die niemand gewaehlt hat.
  */
 export const SCHEDULE_PRESETS: readonly SchedulePreset[] = Object.freeze([
-  { id: "hourly", label: "Stündlich", cron: "0 * * * *" },
-  { id: "every-15-minutes", label: "Alle 15 Minuten", cron: "*/15 * * * *" },
-  { id: "daily-0800", label: "Täglich um 08:00", cron: "0 8 * * *" },
-  { id: "weekdays-0800", label: "Werktags um 08:00", cron: "0 8 * * 1-5" },
-  { id: "weekly-monday-0800", label: "Montags um 08:00", cron: "0 8 * * 1" },
+  { id: "hourly", labelKey: "presetHourly", cron: "0 * * * *" },
+  { id: "every-15-minutes", labelKey: "presetEvery15Minutes", cron: "*/15 * * * *" },
+  { id: "daily-0800", labelKey: "presetDaily", cron: "0 8 * * *" },
+  { id: "weekdays-0800", labelKey: "presetWeekdays", cron: "0 8 * * 1-5" },
+  { id: "weekly-monday-0800", labelKey: "presetWeeklyMonday", cron: "0 8 * * 1" },
 ]);
-
-function two(value: number): string {
-  return String(value).padStart(2, "0");
-}
 
 function single(field: string): number | null {
   return /^\d+$/.test(field) ? Number(field) : null;
 }
 
 /**
- * Ein kurzer deutscher Satz fuer die Listenansicht.
+ * Ein erkanntes Muster eines Zeitplans — **ohne Text**.
  *
- * Erkannt werden die Formen, die ein Mensch auch so sagen wuerde; alles andere
- * faellt auf den rohen Ausdruck zurueck. Ein erfundener Satz fuer
- * `5,7,23 1-5 * * *` waere laenger und weniger genau als der Ausdruck selbst.
+ * Die Beschreibung eines Cron-Ausdrucks gehoert nicht hierher: dieses Modul
+ * ist rein und sprachlos, die Oberflaeche hat drei Kataloge. Ein fertiger
+ * deutscher Satz waere in einer englischen oder chinesischen Oberflaeche
+ * schlicht falsch. Die Form ist deshalb ein Deskriptor, den die Ansicht
+ * ueber `t(...)` in ihre Sprache bringt.
+ *
+ * `custom` heisst: der Ausdruck ist gueltig, aber keiner der Formen, die ein
+ * Mensch so sagen wuerde. Dann ist der Ausdruck selbst die beste Beschreibung.
  */
-export function describeSchedule(expression: string): string {
+export type ScheduleDescription =
+  /** Jede Minute (`* * * * *`). */
+  | { kind: "everyMinute" }
+  /** Alle `step` Minuten (Stern mit Schritt im Minutenfeld). */
+  | { kind: "everyMinutes"; step: number }
+  /** Jede Stunde, zu einer festen Minute (`m * * * *`). */
+  | { kind: "hourly"; minute: number }
+  /** Taeglich zu einer festen Zeit (`m h * * *`). */
+  | { kind: "daily"; hour: number; minute: number }
+  /** Montag bis Freitag zu einer festen Zeit (`m h * * 1-5`). */
+  | { kind: "weekdays"; hour: number; minute: number }
+  /** Ein einzelner Wochentag zu einer festen Zeit (`m h * * d`). */
+  | { kind: "weekly"; weekday: number; hour: number; minute: number }
+  /** Gueltig, aber nicht in Worten beschreibbar — der Ausdruck selbst. */
+  | { kind: "custom"; expression: string };
+
+/**
+ * Was der Ausdruck bedeutet, als Deskriptor — oder `null`, wenn er ungueltig ist.
+ *
+ * `weekday` ist `0` bis `6` mit `0` = Sonntag, wie `Date#getDay`: die
+ * Ansicht waehlt daraus den Namen aus ihrem Katalog.
+ */
+export function describeSchedule(expression: string): ScheduleDescription | null {
   let schedule: ParsedSchedule;
   try {
     schedule = parseSchedule(expression);
   } catch {
-    // `String()` und nicht `expression.trim()`: der Wert kommt aus einem
-    // Request-Body und ist zur Laufzeit nicht zwingend ein String. Die
-    // Beschreibung einer kaputten Eingabe ist die Eingabe, kein Absturz.
-    return String(expression).trim();
+    // Ein kaputter Ausdruck hat keine Bedeutung; die Ansicht zeigt das Feld
+    // rot und gar keine Beschreibung. `String()` waere hier eine erfundene
+    // Antwort auf eine ungueltige Frage.
+    return null;
   }
 
   const [minuteField, hourField, dayField, monthField, weekField] = schedule.expression.split(/\s+/);
   const everyDay = dayField === "*" && monthField === "*";
 
   if (dayField === "*" && monthField === "*" && weekField === "*") {
-    if (minuteField === "*" && hourField === "*") return "Jede Minute";
+    if (minuteField === "*" && hourField === "*") return { kind: "everyMinute" };
 
     const minuteStep = STAR_STEP.exec(minuteField);
     if (minuteStep && hourField === "*") {
       const step = Number(minuteStep[1]);
-      return step === 1 ? "Jede Minute" : `Alle ${step} Minuten`;
+      return step === 1 ? { kind: "everyMinute" } : { kind: "everyMinutes", step };
     }
 
     const minute = single(minuteField);
-    if (minute !== null && hourField === "*") {
-      return minute === 0 ? "Stündlich" : `Stündlich zur Minute ${two(minute)}`;
-    }
+    if (minute !== null && hourField === "*") return { kind: "hourly", minute };
   }
 
   const minute = single(minuteField);
   const hour = single(hourField);
-  if (minute === null || hour === null || !everyDay) return schedule.expression;
+  if (minute === null || hour === null || !everyDay) return { kind: "custom", expression: schedule.expression };
 
-  const time = `${two(hour)}:${two(minute)}`;
-
-  if (weekField === "*") return `Täglich um ${time}`;
-  if (weekField === "1-5") return `Werktags um ${time}`;
+  if (weekField === "*") return { kind: "daily", hour, minute };
+  if (weekField === "1-5") return { kind: "weekdays", hour, minute };
 
   const weekdays = weekField.split(",").map((day) => single(day));
   if (weekdays.length === 1 && weekdays[0] !== null) {
-    // `GERMAN_WEEKDAYS` beginnt am Montag, Cron bei Sonntag.
-    const name = GERMAN_WEEKDAYS[((weekdays[0] % 7) + 6) % 7];
-    return `${name}s um ${time}`;
+    // Cron kennt 0 und 7 als Sonntag; der Deskriptor traegt nur `Date#getDay`.
+    return { kind: "weekly", weekday: weekdays[0] % 7, hour, minute };
   }
 
-  return schedule.expression;
+  return { kind: "custom", expression: schedule.expression };
 }
