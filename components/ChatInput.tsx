@@ -24,6 +24,13 @@ import {
   buildEntriesFromFiles, buildAtInsertText, extractAtQuery, filterFileEntries,
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
+import {
+  MAX_CHAT_UPLOAD_LABEL,
+  appendUploadReferences,
+  formatFileSize,
+  uploadFileToCwd,
+  type UploadedFile,
+} from "@/lib/file-upload-client";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { formatTokenCount } from "@/lib/format-tokens";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -538,6 +545,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraft(draftKey)?.images) : []
   ));
+  /**
+   * Dateien, die bereits im Arbeitsordner liegen. Anders als Bilder sind sie
+   * kein Teil der Nachricht: der Server hat sie geschrieben, der Composer haelt
+   * nur die Referenz. Ein Entfernen des Chips loescht deshalb nichts auf der
+   * Platte — der Pfad verschwindet nur aus der Nachricht.
+   */
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
@@ -576,6 +591,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const composerAnchorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileUploadInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
   /**
@@ -593,9 +609,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
+  const uploadedFilesRef = useRef(uploadedFiles);
   const pendingImageCountRef = useRef(0);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
+  uploadedFilesRef.current = uploadedFiles;
 
   /**
    * Fuegt Text an der Cursorposition ein.
@@ -844,6 +862,60 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, []);
 
+  /**
+   * Chip entfernen, Datei behalten: der Server hat sie bereits in den
+   * Arbeitsordner geschrieben, und ein Anhang, den man versehentlich anfasst,
+   * darf keine Datei loeschen. Deshalb gibt es hier keinen DELETE-Aufruf.
+   */
+  const removeUploadedFile = useCallback((index: number) => {
+    setUploadedFiles((prev) => {
+      const next = prev.filter((_, position) => position !== index);
+      uploadedFilesRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const clearUploadedFiles = useCallback(() => {
+    uploadedFilesRef.current = [];
+    setUploadedFiles([]);
+    setUploadError(null);
+  }, []);
+
+  /**
+   * Die gewaehlten Dateien nacheinander hochladen.
+   *
+   * Ein Request je Datei: die Groessengrenze gilt pro Datei, und ein
+   * Fehlschlag nimmt die anderen Anhaenge nicht mit. Der Chip zeigt den Namen
+   * aus der Antwort der Route — der Client vergibt keinen.
+   */
+  const processUploadFiles = useCallback(async (files: File[]) => {
+    if (!cwd) {
+      setUploadError(t("chat.attachFileNoCwd"));
+      return;
+    }
+    setUploadError(null);
+    for (const file of files) {
+      const result = await uploadFileToCwd(cwd, file);
+      if (!result.ok) {
+        setUploadError(
+          result.kind === "tooLarge"
+            ? t("chat.uploadTooLarge", { size: MAX_CHAT_UPLOAD_LABEL })
+            : result.kind === "conflict"
+              ? t("chat.uploadConflict", { name: result.name ?? file.name })
+              : result.kind === "forbidden"
+                ? t("chat.uploadForbidden")
+                : t("chat.uploadFailed", { error: result.error }),
+        );
+        continue;
+      }
+      setUploadedFiles((prev) => {
+        const next = [...prev, result.file];
+        uploadedFilesRef.current = next;
+        return next;
+      });
+    }
+  }, [cwd, t]);
+
   const clearImages = useCallback(() => {
     attachedImagesRef.current = [];
     setAttachedImages((prev) => {
@@ -860,10 +932,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (draftKey) clearDraft(draftKey);
     if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
     clearImages();
+    clearUploadedFiles();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey]);
+  }, [clearImages, clearUploadedFiles, draftKey]);
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
@@ -899,6 +972,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, [draftKey]);
 
+  // Anhaenge gehoeren zu einer Sitzung: nach einem Wechsel des Arbeitsordners
+  // (oder der Sitzung) wäre der relative Pfad im Chip falsch. Die Chips fallen
+  // weg, die Dateien bleiben im alten Ordner liegen.
+  useEffect(() => {
+    clearUploadedFiles();
+  }, [cwd, draftKey, clearUploadedFiles]);
+
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -914,10 +994,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const handleSend = useCallback(async () => {
     const msg = value.trim();
-    if (!msg && !attachedImages.length) return;
+    const files = uploadedFiles;
+    if (!msg && !attachedImages.length && !files.length) return;
     if (isStreaming) return;
     onAudioUnlock?.();
-    if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
+    if (!attachedImages.length && !files.length && msg.startsWith("/") && onBuiltinCommand) {
       const result = await onBuiltinCommand(msg);
       if (result.handled) {
         if (!result.error) {
@@ -927,9 +1008,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
+    // Der Agent bekommt den Pfad als Text: die Datei liegt bereits im
+    // Arbeitsordner, in dem er laeuft.
+    const outgoing = appendUploadReferences(msg, files);
     clearInput();
-    onSend(msg, attachedImages.length ? attachedImages : undefined);
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+    onSend(outgoing, attachedImages.length ? attachedImages : undefined);
+  }, [value, attachedImages, uploadedFiles, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -1177,19 +1261,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!msg && !attachedImages.length) return;
     if (attachedImages.length) return;
     onAudioUnlock?.();
+    // Auch hier die Referenzen: sonst ginge eine gesteuerte Nachricht ohne den
+    // Anhang hinaus, obwohl der Chip einen verspricht.
+    const outgoing = appendUploadReferences(msg, uploadedFiles);
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
     if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
       clearInput();
-      onPromptWithStreamingBehavior(msg, streamingBehavior, attachedImages.length ? attachedImages : undefined);
+      onPromptWithStreamingBehavior(outgoing, streamingBehavior, attachedImages.length ? attachedImages : undefined);
       return;
     }
     clearInput();
     if (mode === "steer" && onSteer) {
-      onSteer(msg, attachedImages.length ? attachedImages : undefined);
+      onSteer(outgoing, attachedImages.length ? attachedImages : undefined);
     } else if (mode === "followup" && onFollowUp) {
-      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
+      onFollowUp(outgoing, attachedImages.length ? attachedImages : undefined);
     }
-  }, [value, attachedImages, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, uploadedFiles, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1375,7 +1462,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
          */
         const decided = classifyEnter(enterGestureRef.current, {
           nowMs: Date.now(),
-          hasDraft: valueRef.current.trim().length > 0 || attachedImages.length > 0,
+          hasDraft: valueRef.current.trim().length > 0 || attachedImages.length > 0 || uploadedFiles.length > 0,
           disabled: false,
           // Zusammensetzung und Menues sind oben schon abgefangen.
           isComposing: false,
@@ -1392,7 +1479,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, attachedImages]
+    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, attachedImages, uploadedFiles.length]
   );
 
   const handleInput = useCallback(() => {
@@ -1575,6 +1662,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />
+      {/* Anhaenge: kein `accept`, jede Datei ist erlaubt; die Grenze ist die
+          Groesse, nicht die Endung. */}
+      <input
+        ref={fileUploadInputRef}
+        type="file"
+        multiple
+        data-testid="composer-file-input"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          void processUploadFiles(files);
+          e.target.value = "";
+        }}
+      />
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         <ModelErrorBanner error={modelError} />
         <ModelSwitchErrorBanner failure={modelSwitchError} onDismiss={() => onDismissModelSwitchError?.()} />
@@ -1695,8 +1796,32 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {compactError}
           </div>
         )}
-        {/* Image previews */}
-        {attachedImages.length > 0 && (
+        {uploadError && (
+          <div
+            role="alert"
+            data-testid="composer-upload-error"
+            style={{
+              marginBottom: 8,
+              padding: "7px 10px",
+              background: "rgba(239,68,68,0.07)",
+              border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: 6,
+              color: "#ef4444",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {uploadError}
+          </div>
+        )}
+        {/* Anhaenge: Bilder und Dateien in **einer** Zeile. Der Datei-Chip ist
+            nur ein weiteres Kind desselben Flex-Containers — Name, Groesse und
+            ein Entfernen, das den Pfad aus der naechsten Nachricht nimmt (die
+            Datei bleibt auf der Platte). */}
+        {(attachedImages.length > 0 || uploadedFiles.length > 0) && (
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {attachedImages.map((img, i) => (
               <div key={i} style={{ position: "relative", flexShrink: 0 }}>
@@ -1722,6 +1847,49 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </button>
               </div>
             ))}
+            {uploadedFiles.length > 0 && (
+              <div style={{ display: "contents" }} data-testid="composer-file-chips">
+                {uploadedFiles.map((file, index) => (
+                  <div
+                    key={`${file.path}-${index}`}
+                    title={file.path}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      maxWidth: 260, minWidth: 0,
+                      padding: "3px 4px 3px 8px",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      background: "var(--bg-panel)",
+                      color: "var(--text)",
+                      fontSize: 11,
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    <span style={{ display: "flex", flexShrink: 0 }}>{getFileIcon(file.name, 13)}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {file.name}
+                    </span>
+                    <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{formatFileSize(file.size)}</span>
+                    <button
+                      type="button"
+                      aria-label={`${t("chat.removeFile")}: ${file.name}`}
+                      onClick={() => removeUploadedFile(index)}
+                      style={{
+                        width: 16, height: 16, borderRadius: "50%",
+                        background: "var(--bg-panel)", border: "1px solid var(--border)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        cursor: "pointer", padding: 0, color: "var(--text-muted)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                        <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2240,21 +2408,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           ) : (
             <button
               onClick={handleSend}
-              disabled={!value.trim() && !attachedImages.length}
+              disabled={!value.trim() && !attachedImages.length && !uploadedFiles.length}
               style={{
                 flexShrink: 0,
                 alignSelf: "flex-end",
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "7px 14px",
-                background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
+                background: (value.trim() || attachedImages.length || uploadedFiles.length) ? "var(--accent)" : "var(--bg-panel)",
                 border: "none",
                 borderRadius: 8,
-                color: (value.trim() || attachedImages.length) ? "#fff" : "var(--text-dim)",
-                cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
+                color: (value.trim() || attachedImages.length || uploadedFiles.length) ? "#fff" : "var(--text-dim)",
+                cursor: (value.trim() || attachedImages.length || uploadedFiles.length) ? "pointer" : "not-allowed",
                 fontSize: 13,
                 fontWeight: 600,
                 letterSpacing: "-0.01em",
-                boxShadow: (value.trim() || attachedImages.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
+                boxShadow: (value.trim() || attachedImages.length || uploadedFiles.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
                 transition: "background 0.15s, box-shadow 0.15s",
               }}
             >
@@ -2299,6 +2467,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <button
               onClick={() => fileInputRef.current?.click()}
              title={t("chat.attachImage")}
+              className="composer-attach-button"
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
                 width: 32, height: 32, padding: 0,
@@ -2322,6 +2491,46 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                 <circle cx="8.5" cy="8.5" r="1.5" />
                 <polyline points="21 15 16 10 5 21" />
+              </svg>
+            </button>
+            {/* Dateianhang. Ohne Arbeitsordner gibt es kein Ziel — dann ist der
+                Knopf aus und sagt im Tooltip, warum. */}
+            <button
+              type="button"
+              onClick={() => {
+                // Auch ohne `disabled` (programmatischer Klick, verlorenes
+                // Attribut) gibt es ohne Ziel keinen Picker.
+                if (!cwd) return;
+                fileUploadInputRef.current?.click();
+              }}
+              disabled={!cwd}
+              aria-label={t("chat.attachFile")}
+              title={cwd ? t("chat.attachFile") : t("chat.attachFileNoCwd")}
+              className="composer-attach-button"
+              data-testid="composer-attach-file"
+              style={{
+                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 32, height: 32, padding: 0,
+                background: "none", border: "none",
+                borderRadius: 9,
+                color: uploadedFiles.length ? "var(--accent)" : "var(--text-muted)",
+                cursor: cwd ? "pointer" : "not-allowed",
+                opacity: cwd ? 1 : 0.45,
+                transition: "background 0.12s, color 0.12s",
+              }}
+              onMouseEnter={(e) => {
+                if (!cwd) return;
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = uploadedFiles.length ? "var(--accent)" : "var(--text)";
+              }}
+              onMouseLeave={(e) => {
+                if (!cwd) return;
+                e.currentTarget.style.background = "none";
+                e.currentTarget.style.color = uploadedFiles.length ? "var(--accent)" : "var(--text-muted)";
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
             {/* Model selector — visible and usable while a switch is in flight.

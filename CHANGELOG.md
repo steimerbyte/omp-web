@@ -1115,6 +1115,109 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `f_buZIGYXKA5umDsBzB57`, 494 files under `.next/static/**/*.js`, `/api/model-roles/route` and `/api/agent/[id]/route` in the app-paths manifest |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.18.0
+
+Released 2026-10-30.
+
+### Dateianhang im Chat
+
+**Eine Papierklammer im Composer legt beliebige Dateien in das
+Arbeitsverzeichnis der Sitzung.** Sie steht neben dem Bildknopf, nimmt eine
+Datei auf einmal, und was ankommt, landet genau dort, wo der Agent sucht — kein
+Unterordner, kein Umweg.
+
+**Ein zweiter Endpunkt waere ein zweiter Fehlerpfad gewesen.** Der Upload
+existiert seit langem als `POST /api/files/**?type=upload`; die Klammer benutzt
+ihn unveraendert, mit `conflict=skip` und dem Feld `files`. Damit gibt es eine
+Stelle, an der Schreibrechte, Symlink-Aufloesung und Groessengrenzen entschieden
+werden, und nicht zwei, die auseinanderlaufen koennen.
+
+**`skip` statt `rename`.** Eine gleichnamige Datei bleibt unveraendert, der
+Server meldet sie in `skipped`, und der Composer sagt das. Ein clientseitig
+geratener Suffix waere ein Name, den der Agent nicht kennt — der Chip zeigte
+dann auf `bericht-2.pdf`, waehrend in `cwd` `bericht.pdf` liegt.
+
+**Der Chip ist eine Referenz, keine Kopie.** Beim Senden haengt der Composer
+`@<name>` an den Prompt, und die SDK loest die Erwaehnung relativ zum `cwd` auf
+und liest die Datei. Ein Zeilenbereich (`@name:12-14`) wird dabei nicht
+aufgeloest und darf nicht angehaengt werden. Steht die Erwaehnung schon im
+Entwurf — auch gequotet —, kommt keine zweite dazu; verglichen wird der aus der
+Erwaehnung ausgepackte Pfad, exakt so, wie die SDK ihn liest.
+
+**8 MB je Datei, clientseitig geprueft** (`lib/file-upload-client.ts`). Das ist
+eine Produktentscheidung und keine Notwendigkeit: ein Anhang soll in den Prompt
+passen und nicht minutenlang hochladen. Die Route selbst traegt seit diesem
+Release ihre eigenen Grenzen (siehe unten).
+
+Der Chip laesst sich entfernen, ohne die Datei zu loeschen — er ist ein Verweis,
+kein Besitz. Deutsche, englische und chinesische Beschriftung, Fehlermeldungen
+eingeschlossen; auf Touch-Geraeten ist der Knopf 44x44 px gross.
+
+### Upload-Grenzen
+
+**Der Proxy hat Bodies abgeschnitten, statt sie abzulehnen.** `next.config.ts`
+setzte `experimental.proxyClientMaxBodySize` auf 32 MB. Dieser Wert ist keine
+Ablehnung: Next beendet den Body-Klon stillschweigend
+(`node_modules/next/dist/server/body-streams.js`, `cloneBodyStream`, pusht `null`
+in beide Passthroughs), und der Handler liest einen mitten im Teil endenden
+Body. Die dokumentierten Grenzen der Route — 25 MB je Datei, 100 MB gesamt,
+101 MB je Request — waren damit oberhalb von etwa 32 MB **nicht erreichbar**,
+und ein zu grosser Multipart-Upload antwortete mit **500**
+`FormData parse error missing final boundary` statt mit einer Ablehnung.
+
+**Vorher und nachher, am Produktionsbuild gemessen:**
+
+| Fall | vorher | nachher |
+| --- | --- | --- |
+| roher 40-MB-POST | 33,4 MB kamen an, 8 MB still verloren, **200** | 40 MB vollstaendig |
+| Multipart 40 MB | **500** (Parserfehler) | **413** mit der Meldung der Route |
+| 3x20 MB in einem 60-MB-Request | unmoeglich (Klon-Grenze) | angenommen, alle sha256 gleich |
+| 120 MB gesamt | — | **413**, nichts geschrieben |
+
+**Die Klon-Grenze steht jetzt ueber der Route-Grenze, nicht darunter.** 104 MB
+(109 051 904 Bytes) gegen 105 906 176 Bytes Request-Limit der Route — 3 MB
+Luft, damit die Grenze, die der Code selbst zieht, die ist, die der Aufrufer
+sieht.
+
+**Ein abgeschnittener Body wird erkannt, nicht hingenommen.**
+`lib/bounded-form-data.ts` prueft die gelesene Laenge gegen `Content-Length`;
+ein zu kurzer Body wirft `RequestBodyTruncatedError`, und die Route antwortet
+**413** mit beiden Byte-Zahlen, statt einen halben Multipart-Body als
+Parserfehler zu melden. Eine Datei wird dabei nicht geschrieben.
+
+**Zwei Dokumente sagten das Gegenteil.** `lib/image-attachments.ts:5-24` und
+`docs/inventory-api.md:416-457` behaupteten, die Route-Grenzen seien oberhalb
+von 32 MB nicht durchsetzbar und der Proxy lehne ab — beides falsch, und beides
+jetzt korrigiert. `lib/write-access.ts:32-33` behauptete, das Home eines
+Mandanten sei grundsaetzlich nicht beschreibbar; auch das stimmt nicht, und der
+Test deckt jetzt eine Mandanten-Identitaet ab.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Kein echtes Touch-Geraet.** Die 44x44-px-Flaeche ist im Browser bei 390x844
+  gemessen, aber mit der Maus; wie sie sich unter einem Finger verhaelt, ist
+  damit nicht belegt.
+- **Der IME ist weiterhin nur im Unit-Test geprueft**, nicht an einer echten
+  Eingabemethode (aus v0.16.0, unveraendert).
+- **Die Tauri-Desktop-Shell wurde nicht gebaut.** `src-tauri/` steht weiter auf
+  `0.2.10`.
+- **Chips ueberleben keinen Remount.** Der Entwurf kennt Text und Bilder, keine
+  Dateiverweise; nach einem Neuladen der Ansicht ist der Chip weg, die Datei
+  liegt aber weiterhin in `cwd` und laesst sich per `@name` nennen. Das ist eine
+  Grenze des Entwurfs-Speichers, nicht des Uploads.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1661 pass, 0 fail, 1 skip — 1662 tests, 189 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `U4S1OEsbMbebZ-m3xHrQy`, 494 files under `.next/static/**/*.js` |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

@@ -31,12 +31,19 @@ import { PRESENT_SNIFF_BYTES } from "@/lib/present-files";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import {
+  MAX_UPLOAD_FILE_BYTES,
+  MAX_UPLOAD_REQUEST_BYTES,
+  MAX_UPLOAD_TOTAL_BYTES,
   inspectUploadTargets,
   parseUploadConflictStrategy,
   validateUploadFileNames,
   writeUploadedFileAtomicSync,
 } from "@/lib/file-upload";
-import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
+import {
+  parseFormDataWithinLimit,
+  RequestBodyTooLargeError,
+  RequestBodyTruncatedError,
+} from "@/lib/bounded-form-data";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -49,10 +56,6 @@ const IGNORED_SUFFIXES = [".pyc"];
 const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
-const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
-// Multipart boundaries and headers are not file bytes, but must be bounded too.
-const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
@@ -224,7 +227,21 @@ export async function POST(
       formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
-        return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+        return NextResponse.json({
+          error: `Uploads must total ${MAX_UPLOAD_TOTAL_BYTES / (1024 * 1024)}MB or less`,
+        }, { status: 413 });
+      }
+      if (error instanceof RequestBodyTruncatedError) {
+        // The body was cut by the transport, not by this route's own limit:
+        // `experimental.proxyClientMaxBodySize` ends the clone silently instead
+        // of refusing it, so the declared length is the only evidence left of
+        // what the caller meant to send. Reported as 413 because that is what
+        // happened — the payload was too large for the transport — and never
+        // as 500, which would say "the server broke".
+        return NextResponse.json({
+          error: `Upload request exceeded the ${MAX_UPLOAD_REQUEST_BYTES / (1024 * 1024)}MB transport limit `
+            + `(${error.received} of ${error.declared} bytes arrived); upload fewer or smaller files`,
+        }, { status: 413 });
       }
       throw error;
     }

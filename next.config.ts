@@ -38,19 +38,34 @@ const nextConfig: NextConfig = {
 
   experimental: {
     /**
-     * `proxy.ts` matches `/api/:path*`, so Next refuses oversized bodies with
-     * its default 10 MB limit before any route handler runs.
+     * Ceiling for every request body `proxy.ts` matches (`/api/:path*`).
      *
-     * A chat prompt carries its images inline as base64, which inflates them
-     * by 4/3, so the documented allowance of 10 images × 10 MB could never
-     * actually be sent. This value covers `MAX_ATTACHED_IMAGES_TOTAL_BYTES`
-     * plus that inflation and a margin for the JSON envelope — the transport
-     * is sized to the server-side budget, not the other way round.
+     * This is **not** a rejection limit. Next clones the body for the proxy and
+     * ends the clone silently once `bytesRead > proxyClientMaxBodySize`
+     * (`node_modules/next/dist/server/body-streams.js`, `cloneBodyStream`),
+     * pushing `null` into both streams; the route handler then reads a body
+     * that ends in the middle of a part. Measured on this build (production,
+     * 32 MB configured): a raw 40 MB POST arrived as 33 391 238 of 41 943 040
+     * bytes, and a 40 MB multipart upload failed as
+     * `FormData parse error missing final boundary` — an HTTP 500, not a 413.
      *
-     * Keep in sync with `MIN_PROXY_CLIENT_MAX_BODY_SIZE` in
-     * `lib/image-attachments.ts`; a test asserts they agree.
+     * So the only layer that can reject with a real status is the route, and
+     * this value has to sit strictly above the largest limit a route enforces
+     * itself. That is the upload route: `MAX_UPLOAD_REQUEST_BYTES` (101 MB) in
+     * `lib/file-upload.ts`, which answers 413 on its own. 104 MB leaves 3 MB
+     * of headroom above it, so a body the upload route accepts can never be
+     * truncated by construction.
+     *
+     * Two lower bounds also apply: the base64 expansion of
+     * `MAX_ATTACHED_IMAGES_TOTAL_BYTES` (a chat prompt carries its images
+     * inline, 4/3 inflation, `lib/image-attachments.ts`) and the 30 MB prompt
+     * ceiling of `app/api/agent/[id]/route.ts`. Both are far below 104 MB.
+     *
+     * Keep in sync with `MAX_UPLOAD_REQUEST_BYTES`; `lib/file-upload.test.mjs`
+     * asserts this value exceeds it, and `lib/image-attachments.test.mjs`
+     * asserts the image budget still fits.
      */
-    proxyClientMaxBodySize: "32mb",
+    proxyClientMaxBodySize: "104mb",
   },
   webpack: (config, { isServer, nextRuntime }) => {
     if (!isServer || nextRuntime === "edge") {

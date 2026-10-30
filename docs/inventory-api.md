@@ -417,7 +417,23 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 
 - **Kann**: Multipart-Upload in das Verzeichnis aus dem URL-Pfad. Grenzen: 25 MB
   pro Datei, 100 MB gesamt, 101 MB für den gesamten Request inklusive
-  Multipart-Boundaries und -Header.
+  Multipart-Boundaries und -Header (`MAX_UPLOAD_FILE_BYTES`,
+  `MAX_UPLOAD_TOTAL_BYTES`, `MAX_UPLOAD_REQUEST_BYTES` in `lib/file-upload.ts`).
+  Diese drei Grenzen sind **tatsächlich durchsetzbar**: `MAX_UPLOAD_REQUEST_BYTES`
+  liegt mit 106 954 752 Bytes strikt unter `experimental.proxyClientMaxBodySize`
+  (104 MB = 109 051 904 Bytes), Antwort ist ein 413 mit eigener Meldung.
+- **Das Transportlimit ist keine Ablehnung.** `proxyClientMaxBodySize` in
+  `next.config.ts` ist eine Klon-Grenze, kein Reject: Next beendet den Body-Klon
+  stillschweigend (`node_modules/next/dist/server/body-streams.js`,
+  `cloneBodyStream`, pusht `null` in beide Passthroughs), der Handler liest einen
+  mitten im Teil endenden Body. Gemessen am Produktionsbuild mit der alten
+  32-MB-Grenze: ein roher 40-MB-POST kam als 33 391 238 von 41 943 040 Bytes an;
+  ein 40-MB-Multipart-Upload endete als HTTP **500**
+  `FormData parse error missing final boundary`; ein 20-MB-Multipart-Upload kam
+  unversehrt an (sha256 der abgelegten Datei gleich der Quelle). Deshalb steht die
+  Klon-Grenze **über** der Route-Grenze statt darunter, und
+  `parseFormDataWithinLimit` meldet einen zu kurzen Body als
+  `RequestBodyTruncatedError` → 413 statt als Parserfehler → 500.
 - **Identität**: `identity` wird in die Hilfsfunktion **durchgereicht**
   (`getUploadDirectory(segments, getRequestIdentity(request.headers))`), nicht
   dort neu gelesen — die Entscheidung kommt so aus genau einer Stelle, und nichts
@@ -433,8 +449,39 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   Dateien nicht still überschreiben; `type=` und die Konfliktstrategie werden über
   `inspectUploadTargets`, `parseUploadConflictStrategy` und
   `validateUploadFileNames` ausgewertet. (e) Das Zielverzeichnis muss ein
-  existierendes Verzeichnis sein, kein Pfad im Leerlauf.
-- **Ort**: `app/api/files/[...path]/route.ts:88-148`, `:143-430`
+  existierendes Verzeichnis sein, kein Pfad im Leerlauf. (f) Einen gekürzten Body
+  nicht als „fertig" behandeln: die Länge im Stream wird gegen `Content-Length`
+  geprüft, und ein zu kurzer Body schreibt **keine** Datei.
+- **Ort**: `app/api/files/[...path]/route.ts:88-148`, `:180-300`,
+  `lib/file-upload.ts:5-23`, `lib/bounded-form-data.ts:1-76`
+
+### Anhang im Composer — derselbe `POST`, mit `conflict=skip`
+
+Die Papierklammer in `components/ChatInput.tsx` benutzt den Upload oben, sie hat
+keinen eigenen Endpunkt: `POST /api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=skip`
+mit Feld `files`. Geschrieben wird damit **in das Arbeitsverzeichnis der Sitzung**
+selbst — kein Unterordner, also auch kein zweites `mkdir` und kein zweiter
+Fehlerpfad.
+
+- **Konflikt**: `skip` lässt eine gleichnamige Datei unverändert, meldet sie in
+  `skipped`, und der Composer zeigt das als Meldung. Es gibt **kein** `rename`:
+  die Route kennt nur `error|overwrite|skip`, und ein clientseitig geratener
+  Suffix wäre ein Name, den der Agent nicht kennt.
+- **Grenze**: 8 MB je Datei, **clientseitig** geprüft (`lib/file-upload-client.ts`).
+  Die Grenze ist eine Produktentscheidung, keine Notwendigkeit: die Route trägt
+  seit dem Proxy-Fix (siehe oben, `MAX_UPLOAD_REQUEST_BYTES` unter der
+  Klon-Grenze) ihre 25/100/101 MB wirklich, und ein zu großer Body endet als
+  **413** mit eigener Meldung. Für den Composer bleibt es bei 8 MB, weil ein
+  Anhang im Chat etwas anderes ist als eine Dateiablage: er soll in den Prompt
+  passen und nicht minutenlang hochladen.
+- **Agent-Lesbarkeit**: der Chip ist nur eine Referenz; beim Senden hängt der
+  Composer `@<name>` an den Prompt, und die SDK löst `@`-Erwähnungen relativ
+  zum `cwd` auf und liest die Datei. Ein Zeilenbereich (`@name:12-14`) wird
+  dabei **nicht** aufgelöst und darf nicht angehängt werden. Nennt der Entwurf
+  die Datei bereits als `@name` (auch gequotet), wird kein zweiter Verweis
+  angehängt — verglichen wird der aus der Erwähnung ausgepackte Pfad, exakt,
+  wie die SDK ihn liest.
+- **Ort**: `lib/file-upload-client.ts`, `components/ChatInput.tsx`
 
 ### Datei speichern — `PUT` `/api/files/**`
 

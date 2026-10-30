@@ -7,9 +7,20 @@ export const MAX_ATTACHED_IMAGES = 10;
  * `MAX_ATTACHED_IMAGE_BYTES` bounds a single image, but the transport bounds
  * the whole request: `JSON.stringify` inlines every image as base64, which
  * inflates each byte by 4/3. Ten 10 MB attachments therefore serialize to
- * ~133 MB and are refused by the proxy before any route handler runs — the
- * per-image limit alone is not reachable. This aggregate is the limit that is
- * actually enforceable, so it is the one the transport is sized against.
+ * ~133 MB — more than `experimental.proxyClientMaxBodySize` allows, and the
+ * transport does **not** refuse an oversized request: Next ends its body clone
+ * silently once the size is passed (`next/dist/server/body-streams.js`,
+ * `cloneBodyStream`), so a route handler sees a body that stops in the middle
+ * of the JSON and answers a parse error, not a 413. Measured against a 32 MB
+ * ceiling on a production build of this code: a raw 40 MB request arrived as
+ * 33 391 238 of 41 943 040 bytes. This aggregate is the limit that is actually
+ * enforceable, so it is the one the transport is sized against — the per-image
+ * limit alone is not reachable.
+ *
+ * Every route that takes such a message checks this budget *before* the body
+ * is parsed, against `Content-Length`, so an over-budget message is answered
+ * with its own 413 instead of reaching the truncating clone
+ * (`app/api/agent/[id]/route.ts`, 30 MB) or the upload route's 413 (101 MB).
  */
 export const MAX_ATTACHED_IMAGES_TOTAL_BYTES = 20 * 1024 * 1024;
 

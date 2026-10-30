@@ -2,6 +2,26 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 
+/**
+ * Upload limits, enforced by the route itself.
+ *
+ * They live here rather than in the route because they are part of one
+ * contract with `experimental.proxyClientMaxBodySize` in `next.config.ts`, and
+ * a test has to compare the two. The transport cannot be the rejecting layer:
+ * Next ends its body clone silently above that size instead of refusing
+ * (`next/dist/server/body-streams.js`, `cloneBodyStream`), so a route that let
+ * the transport decide would receive a body cut in the middle of a part.
+ * Measured on a production build with the old 32 MB ceiling: a 40 MB multipart
+ * upload answered HTTP 500 `FormData parse error missing final boundary`.
+ *
+ * The ceiling therefore has to sit strictly above `MAX_UPLOAD_REQUEST_BYTES`,
+ * which makes truncation unreachable for any body this route accepts.
+ */
+export const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
+// Multipart boundaries and headers are not file bytes, but must be bounded too.
+export const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
+
 export const UPLOAD_CONFLICT_STRATEGIES = ["error", "overwrite", "skip"] as const;
 export type UploadConflictStrategy = typeof UPLOAD_CONFLICT_STRATEGIES[number];
 

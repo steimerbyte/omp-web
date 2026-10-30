@@ -225,10 +225,13 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
 - **Tastatur**: keine.
 - **Darf nicht**: (a) **Die Schreibmenge ist nicht die Lesemenge.** Sie entsteht aus den Teilen der
   Lesemenge, die ein echtes Projekt benennen, und erbt `/` **nie**
-  (`write-access.ts:20-38`): (1) ein Pfad in einem Session-cwd oder Projekt-Root **dieser**
+  (`write-access.ts:20-45`): (1) ein Pfad in einem Session-cwd oder Projekt-Root **dieser**
   Identität ist schreibbar; (2) `OMP_WEB_ALLOWED_ROOTS` ist schreibbar, weil ein Betreiber es
-  gesetzt hat; (3) **das Home-Verzeichnis selbst ist nicht schreibbar**, nur was unterhalb eines
-  Projekts darin liegt; (4) `/` und jeder andere Vorfahr eines Projekt-Root ist nicht schreibbar.
+  gesetzt hat; (3) **das eigene Home eines Mandanten ist eine Schreibwurzel** — gemessen:
+  `getWritableRoots({username:"alice",isAdmin:false})` enthält `<OMP_WEB_HOME_ROOT>/alice`, und
+  `isWritePathAllowed("<home>/x.txt",{mustExist:false})` ist `true`; die Home kommt über
+  `getAdditionalAllowedRoots` in die Lesemenge (`lib/allowed-roots.ts`), aus der die Schreibmenge
+  abgeleitet wird. Für einen Admin ist die Home `/` und fällt damit unter (4); (4) `/` und jeder andere Vorfahr eines Projekt-Root ist nicht schreibbar.
   (b) Warum das nicht nur Pinglichkeit ist: `renameSync("/etc/hosts", "/tmp/x")` braucht
   Schreibrecht auf **beiden** Seiten und **kein** Leserecht auf einer — ein Schreib-Guard, der die
   Lesemenge wiederverwendet, verschenkt beliebiges Schreiben auf jedem Pfad, den der Dienst
@@ -633,7 +636,7 @@ denen ein Hook **auf** eine Werkzeuggrenze wartet oder sie clientseitig vorwegni
 | Punkt | Grund |
 |---|---|
 | **`app/api/memory/**`** | Das Verzeichnis existiert nicht. Memory-Funktionen liegen in `lib/workspace-memory.ts` (ein `localStorage`-Spiegel, von `AppShell.tsx:46` benutzt) und unter `app/api/sessions/**`. |
-| **`isWritePathAllowed` für Nicht-Admin außerhalb eines Projekts** | Das Home selbst ist bewusst nicht schreibbar (`write-access.ts:33-35`). Ich habe keine Route gefunden, die ein Schreiben **in** die eigene Home ohne Projekt erlaubt — ob das Absicht oder eine Lücke ist, geht aus dem Code nicht hervor. **unklar**. |
+| ~~`isWritePathAllowed` für Nicht-Admin außerhalb eines Projekts~~ | **Geklärt.** Das eigene Home eines Mandanten **ist** eine Schreibwurzel (`write-access.ts:32-40`, gemessen: `getWritableRoots` enthält `<home>`, `isWritePathAllowed("<home>/x.txt",{mustExist:false})` ist `true`); die frühere Aussage „das Home selbst ist bewusst nicht schreibbar" war falsch. Was die Grenze leistet: der Konten-Root **über** dem Home und jedes fremde Home sind schreibgeschützt (`lib/write-access.test.mjs`, Mandantenfall). |
 | ~~`mcp/route.ts` Benutzer-Scope~~ | **Erledigt.** User-Scope ist Admin-only, Pfad mandantenfähig. Nicht-Admin bekommt dort eine leere Liste — gewollt, siehe Abschnitt 4. |
 | **Sessions-Routen ohne Identitätsprüfung** | Belegbar keine Prüfung (null Treffer über alle sechs Dateien), **unklar** ob das geprüft entschieden ist. Ich melde es als Fund. |
 | **`useAgentSession`** | 2261 Zeilen, nicht vollständig gelesen. Für Rechtefragen nicht zuständig (an den Routen belegt). |

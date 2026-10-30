@@ -29,8 +29,15 @@ import type { WebIdentity } from "./request-identity";
  *   writable;
  * - a path inside `OMP_WEB_ALLOWED_ROOTS` is writable, because an operator set
  *   it explicitly (admins only — it is in the admin branch of the read set);
- * - the home directory itself is NOT writable, only what is below a project in
- *   it — a bare home root would re-open the same hole one level down;
+ * - a tenant's own home directory **is** a writable root, and therefore so is
+ *   everything below it. That is not an oversight: the read set has always
+ *   contained it (`getAdditionalAllowedRoots`), and an account that cannot
+ *   write into the one directory that is his by definition has a lockout, not a
+ *   permission model. Measured: for `{username: "alice", isAdmin: false}` with
+ *   `OMP_WEB_HOME_ROOT=/tmp/x`, `getWritableRoots` is `{/tmp/x/alice}` and
+ *   `isWritePathAllowed("/tmp/x/alice/x.txt", {mustExist: false})` is true.
+ *   What this module narrows is the *reach*, not the home: nothing above a
+ *   project or a home is writable, and no account gets another's home.
  * - `/` and every other ancestor of a project root is NOT writable.
  *
  * Everything is resolved through realpath before the comparison, so a symlink
