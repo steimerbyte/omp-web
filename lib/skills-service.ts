@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { getAgentDir, loadSkills } from "@oh-my-pi/pi-coding-agent";
+import { cfgSkills } from "@oh-my-pi/pi-coding-agent/extensibility/settings";
 import { parseFrontmatter } from "@oh-my-pi/pi-utils";
 import type { SkillInfo, SkillsResponse } from "@/lib/api-types";
 import { annotateSkillsWithInstallInfo } from "@/lib/skill-lock";
@@ -35,7 +36,10 @@ export async function loadSkillsWithInstallInfo(
 ): Promise<SkillsResponse> {
   const agentDir = getAgentDir();
   const settings = await getSettingsForIdentity(identity, cwd);
-  const { skills, warnings } = await loadSkills({ cwd, ...settings.getGroup("skills") });
+  // `skills.*` sind einzelne Handles; `cfgSkills` fasst sie zu genau dem
+  // Optionsobjekt zusammen, das `loadSkills` erwartet (dieselbe Projektion,
+  // die `createAgentSession` intern benutzt).
+  const { skills, warnings } = await loadSkills({ cwd, ...cfgSkills.get(settings) });
 
   const infos: SkillInfo[] = skills.map((skill) => ({
     name: skill.name,

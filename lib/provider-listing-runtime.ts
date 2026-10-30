@@ -42,7 +42,7 @@ export async function collectProviderListingInputs(): Promise<ProviderListingInp
 
   const credentialTypes = new Map<string, ProviderCredentialType>();
   for (const id of ids) {
-    const stored = authStorage.listStoredCredentials(id);
+    const stored = authStorage.credentials.list(id);
     const type: ProviderCredentialType | undefined = stored.some((entry) => entry.credential.type === "oauth")
       ? "oauth"
       : stored.length > 0
@@ -53,7 +53,7 @@ export async function collectProviderListingInputs(): Promise<ProviderListingInp
 
   return [...ids].sort().map((id) => {
     const oauth = oauthByProvider.get(id);
-    const origin = authStorage.getCredentialOrigin(id);
+    const origin = authStorage.keys.source(id);
     return {
       id,
       name: oauth?.name ?? id,
@@ -62,7 +62,11 @@ export async function collectProviderListingInputs(): Promise<ProviderListingInp
       hasOAuth: Boolean(oauth),
       ...(oauth?.name ? { oauthName: oauth.name } : {}),
       status: {
-        configured: authStorage.hasAuth(id),
+        // `keys.source` replaced the removed `getCredentialOrigin`/`hasAuth`
+        // pair: the cascade answer is the origin, and "configured" is that
+        // answer existing — plus the keyless-mode marker, which `source`
+        // skips but which 18.1.x's `hasAuth` counted as a stored credential.
+        configured: origin !== undefined || authStorage.keys.keyless(id),
         ...(origin?.kind ? { source: origin.kind } : {}),
       },
       ...(credentialTypes.has(id) ? { credentialType: credentialTypes.get(id) } : {}),

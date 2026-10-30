@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import { cfgDefaultThinkingLevel } from "@oh-my-pi/pi-coding-agent/session/settings";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { Settings } from "@oh-my-pi/pi-coding-agent";
 import { formatRoleSelector } from "./model-roles";
 
@@ -50,7 +51,16 @@ export async function persistExplicitStartupPreferences(
     explicit.thinkingLevel
     && (explicit.thinkingLevel === "auto" || effective.supportsThinking || effective.thinkingLevel !== "off")
   ) {
-    settings.set("defaultThinkingLevel", (explicit.thinkingLevel === "auto" ? "auto" : effective.thinkingLevel) as never);
+    // Der Handle prueft gegen seine Deklaration, und `defaultThinkingLevel`
+    // kennt nur die Efforts plus `auto` — nicht `off`/`inherit`. `off` als
+    // gespeicherten Default zu schreiben war schon immer wirkungslos (der
+    // Default ist "high"); omp persistiert an derselben Stelle ebenfalls nur
+    // `auto` und konkrete Level (session/model-controls.ts).
+    if (explicit.thinkingLevel === "auto") {
+      cfgDefaultThinkingLevel.set(settings, "auto");
+    } else if (effective.thinkingLevel !== "off" && effective.thinkingLevel !== "inherit") {
+      cfgDefaultThinkingLevel.set(settings, effective.thinkingLevel);
+    }
   }
 
   await settings.flush();

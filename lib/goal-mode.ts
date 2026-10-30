@@ -1,4 +1,8 @@
-import type { Goal, GoalModeState } from "@oh-my-pi/pi-coding-agent/goals/state";
+import type { GoalModeState } from "@oh-my-pi/pi-coding-agent/goals/state";
+import { cfgGoalContinuationModes, cfgGoalEnabled } from "@oh-my-pi/pi-coding-agent/goals/settings";
+// `Goal` moved to pi-tui with the goal tool's renderer; goals/state re-imports
+// it from there and no longer re-exports it.
+import type { Goal } from "@oh-my-pi/pi-tui/tools/goal";
 import type { GoalModeSession, GoalStatusInfo } from "./omp-types";
 
 export type { GoalStatusInfo } from "./omp-types";
@@ -438,7 +442,7 @@ export class GoalModeController {
   #scheduleContinuation(): void {
     this.#cancelContinuation();
     if (this.#disposed) return;
-    if (!isGoalContinuationEnabled(this.#session.settings.get("goal.continuationModes"))) return;
+    if (!isGoalContinuationEnabled(cfgGoalContinuationModes.get(this.#session.settings))) return;
     if (this.#session.getPlanModeState?.()?.enabled) return;
     if (this.#suppressNextContinuation) return;
     const state = this.#session.getGoalModeState?.();
@@ -486,7 +490,7 @@ export class GoalModeController {
   }
 
   #goalSettingEnabled(): boolean {
-    return this.#session.settings.get("goal.enabled") !== false;
+    return cfgGoalEnabled.get(this.#session.settings) !== false;
   }
 
   #pausedGoal(): GoalModeState | undefined {

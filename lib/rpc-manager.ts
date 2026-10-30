@@ -1,4 +1,4 @@
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import {
   applyResolvedSystemPromptInputs,
   createAgentSession,
@@ -13,6 +13,7 @@ import { buildAvailableSlashCommands } from "@oh-my-pi/pi-coding-agent/slash-com
 import { BUILTIN_SLASH_COMMAND_DEFS } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { executeAcpBuiltinSlashCommand, type AcpBuiltinSlashCommandResult } from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
 import { discoverCustomToolPaths } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools";
+import { cfgEnabledModels } from "@oh-my-pi/pi-coding-agent/config/model-settings";
 import { initializeExtensions } from "@oh-my-pi/pi-coding-agent/modes/runtime-init";
 import { readPlanFile } from "@oh-my-pi/pi-coding-agent/plan-mode/plan-files";
 import {
@@ -457,7 +458,12 @@ export class AgentSessionWrapper {
         error instanceof Error ? error.message : error,
       );
     });
-    this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+    // Der SDK-Event ist seit 18.14 eine Union ohne Index-Signatur; der Bus
+    // reicht Frames dagegen als offene Records weiter (auch die synthetischen
+    // Extension-UI-Frames). Der Spread uebernimmt Feld fuer Feld in ein
+    // frisches Objekt — kein Cast, und die Felder bleiben unveraendert.
+    this.unsubscribe = this.inner.subscribe((sdkEvent) => {
+      const event: AgentEvent = { ...sdkEvent };
       if (event.type === "agent_end") {
         invalidateSessionListCache();
       }
@@ -1902,7 +1908,7 @@ export async function startRpcSession(
       const systemPrompts = await resolveSessionSystemPrompts(sessionCwd);
 
       const { modelRegistry } = runtime;
-      const scope = await resolveVisibleModels(modelRegistry, settings.get("enabledModels"), settings);
+      const scope = await resolveVisibleModels(modelRegistry, cfgEnabledModels.get(settings), settings);
       const defaultRole = readDefaultModelRole(settings);
       const hasExistingMessages = sessionManager.buildSessionContext().messages.length > 0;
       const initial = hasExistingMessages

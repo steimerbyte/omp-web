@@ -298,6 +298,93 @@ names neither the upstream repository nor the npm registry.
   its text at every width. At weight 600 the stem is a full pixel and the
   label reaches its own colour exactly.
 
+## v0.13.0
+
+Released 2026-10-30.
+
+`Unreleased` above stays where it is: its contents are not in `v0.12.0`
+either — the calendar work is in the eight commits this release cuts — and
+moving them under a version number would claim a shipped state that was never
+checked. This section carries only what this release changes. The header
+carries no date because no header in this file's own release history does;
+the date sits in this line instead.
+
+### Internal
+
+**The app now compiles against `@oh-my-pi/*` 18.14.0.** It was pinned to
+18.1.x, and the SDK's internals moved between the two lines: the app did not
+merely need a new version number, it named modules and functions that no
+longer exist. Five packages move together — `pi-coding-agent`, `pi-ai`,
+`pi-tui`, `pi-utils` and `pi-agent-core` — and `bun.lock` carries the same
+versions, so an install that ignores the lockfile cannot land on a
+half-migrated tree.
+
+**Settings are typed handles, not a schema table.** `Settings.get`,
+`Settings.set` and `Settings.getGroup` are gone; each setting is its own
+handle that reads and writes a scope (`cfgThemeDark.get(settings)`), and the
+handles live next to the domain they belong to
+(`session/settings`, `modes/settings`, `extensibility/settings`,
+`goals/settings`). `orderedSettings()` replaces the old
+`SETTINGS_SCHEMA`/`getType`/`getEnumValues`/`getUi`/`hasUi`/`isCredential`
+lookup, and the tab definitions (`SETTING_TABS`, `TAB_GROUPS`,
+`TAB_METADATA`) come from `@oh-my-pi/pi-tui/overlays/settings-defs`. The
+settings panel keeps the order it had, because `orderedSettings()` is the same
+order the schema carried.
+
+**`AuthStorage` is namespaced.** Stored credentials are reached through
+`authStorage.credentials.*` and API keys through `authStorage.keys.*`
+(`credentials.list`, `credentials.set`, `credentials.remove`, `keys.source`,
+`keys.keyless`), and OAuth goes through `authStorage.oauth.login`. The
+unnamespaced `set`/`remove`/`login`/`logout` calls and
+`listStoredCredentials`/`hasAuth`/`getCredentialOrigin` no longer exist. This
+touches `app/api/auth/**` and `lib/provider-listing-runtime.ts`.
+
+**`thinking` and `theme` live in `pi-tui`.** `ConfiguredThinkingLevel` and
+`parseConfiguredThinkingLevel` moved from
+`pi-coding-agent/thinking` to `pi-tui/thinking`, and the theme functions
+(`getResolvedThemeColors`, `getThemeExportColors`, `isLightTheme`) moved from
+`pi-coding-agent/modes/theme/theme` to `pi-tui/theme`.
+
+**`Goal` moved to `pi-tui/tools/goal`.** The goal *tool's* type comes from
+there now — it carries the tool's own renderer — while `GoalModeState` stays
+in `pi-coding-agent/goals/state`, which re-imports the type. The code uses
+both paths on purpose; that is not an oversight to be tidied up.
+
+**Runtime floor: bun >= 1.4.4.** All five packages declare `engines.bun:
+">=1.4.4"`. Moving `engines.bun` alone was not enough and a test caught it: the
+startup gate reads `MIN_BUN_VERSION` from `bin/runtime.js`, so the constant,
+`engines.bun` and the boundary fixtures in `lib/runtime.test.mjs` all moved
+together. `lib/runtime.test.mjs` asserts that the two agree, so the next bump
+cannot update one and forget the other. An older bun is now refused at startup
+with a message naming 1.4.4, instead of failing somewhere inside the agent.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **No interactive session was driven against a running instance.** The
+  build, the type check and the suite are green (see below), but nobody has
+  opened the app in a browser, signed in, and clicked through the settings
+  panel and the sign-in and sign-out routes that this release rewrites. That
+  happens during deployment, not here. A release that has not been signed into
+  is not a verified release (`docs/release.md`).
+- **`docs/release.md` asks for `bunx eslint components/ app/ lib/` before
+  tagging; it was not run for this release.** The gate below is typecheck,
+  tests and build.
+- **The desktop bundles were not built**, and `src-tauri/Cargo.toml` /
+  `src-tauri/tauri.conf.json` still read `0.2.10`. `bun run
+  desktop:sync-version` is the step that aligns them, and it runs inside
+  `publish-desktop.yml`, not in this checkout.
+
+What was run, with the numbers it produced:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1446 pass, 0 fail, 1 skip — 1447 tests, 172 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `8xWjlexFbq7R3EW26w41g`, 490 files under `.next/static/**/*.js` |
+
 ## v0.11.0
 
 ### Layout

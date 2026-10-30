@@ -145,8 +145,8 @@ export interface ModelRoleAssignment {
   selector?: string;
   /** Which persisted layer supplies the effective value. */
   source: ModelRoleScope | "default";
-  /** Full merge provenance, including runtime and config-overlay layers. */
-  provenance: "runtime" | "overlay" | "project" | "global" | "default";
+  /** Full merge provenance, including runtime, config-overlay and environment layers. */
+  provenance: "runtime" | "overlay" | "project" | "global" | "env" | "default";
   /** The model the selector currently resolves to, when it resolves at all. */
   resolved?: ModelRoleModelRef;
   /** Resolver complaint, e.g. a selector that matches nothing available. */

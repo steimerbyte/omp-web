@@ -45,7 +45,7 @@ const ANON = { host: "localhost" };
 
 /** Der Attrappen-Runtime. `calls` beweist, dass eine Route geschrieben hat. */
 function installFakeRuntime() {
-  const calls = { set: [], remove: [], logout: [], login: [] };
+  const calls = { set: [], remove: [], login: [] };
   globalThis.__ompRuntimePromise = Promise.resolve({
     agentDir: "/nonexistent/omp-web-test",
     settings: { getCwd: () => "/nonexistent" },
@@ -54,15 +54,22 @@ function installFakeRuntime() {
       hasProvider: (provider) => provider === NO_SUCH_PROVIDER,
     },
     authStorage: {
-      hasAuth: () => false,
-      getCredentialOrigin: () => undefined,
-      listStoredCredentials: () => [],
-      set: async (provider, credential) => calls.set.push({ provider, credential }),
-      remove: async (provider) => calls.remove.push(provider),
-      logout: async (provider) => calls.logout.push(provider),
-      login: async () => {
-        calls.login.push("started");
-        throw new Error("test runtime: login must not run in this test");
+      // omp 18.14 split the flat AuthStorage API into namespaces; the routes
+      // read through `keys` (the auth cascade) and `credentials` (stored rows).
+      keys: {
+        source: () => undefined,
+        keyless: () => false,
+      },
+      credentials: {
+        list: () => [],
+        set: async (provider, credential) => calls.set.push({ provider, credential }),
+        remove: async (provider) => calls.remove.push(provider),
+      },
+      oauth: {
+        login: async () => {
+          calls.login.push("started");
+          throw new Error("test runtime: login must not run in this test");
+        },
       },
     },
   });
@@ -321,7 +328,7 @@ test("a tenant cannot log the process account out of a provider", async (t) => {
   );
 
   await assertAdminDenial(response, "POST /api/auth/logout als Mandant");
-  assert.deepEqual(calls.logout, [], "die gespeicherte Zeile darf nicht geloescht worden sein");
+  assert.deepEqual(calls.remove, [], "die gespeicherte Zeile darf nicht geloescht worden sein");
 });
 
 test("an admin logout reaches the store once the provider resolves", async (t) => {
@@ -329,13 +336,13 @@ test("an admin logout reaches the store once the provider resolves", async (t) =
   t.after(removeFakeRuntime);
 
   // Der Admin kommt an `resolveOAuthLoginId` vorbei und scheitert dort an einem
-  // erfundenen Provider — nach dem Guard, vor dem `logout()`.
+  // erfundenen Provider — nach dem Guard, vor dem `credentials.remove()`.
   const response = await logoutRoute.POST(
     request(`/api/auth/logout/${NO_SUCH_PROVIDER}`, { method: "POST", headers: ADMIN }),
     params(NO_SUCH_PROVIDER),
   );
   assert.equal(response.status, 400, `erwartet 400, bekam ${response.status}`);
-  assert.deepEqual(calls.logout, []);
+  assert.deepEqual(calls.remove, []);
 });
 
 // ---------------------------------------------------------- provider list --

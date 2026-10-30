@@ -39,12 +39,16 @@ export async function GET(req: Request, { params }: Params) {
 
   const { provider } = await params;
   const { modelRegistry, authStorage } = await getOmpRuntime();
-  const origin = authStorage.getCredentialOrigin(provider);
+  const origin = authStorage.keys.source(provider);
   const models = modelRegistry.getAll().filter((model) => model.provider === provider).length;
   return NextResponse.json({
     provider,
     displayName: provider,
-    configured: authStorage.hasAuth(provider),
+    // `keys.source` is the whole cascade answer (runtime → config → OAuth →
+    // login key → env → stored key), so "configured" is that answer existing.
+    // `keys.keyless` adds the keyless-mode marker, which `source` skips but
+    // which the old `hasAuth` counted as a stored credential.
+    configured: origin !== undefined || authStorage.keys.keyless(provider),
     source: origin?.kind,
     models,
   });
@@ -66,8 +70,8 @@ export async function POST(req: Request, { params }: Params) {
       return NextResponse.json({ error: `Unknown provider: ${provider}` }, { status: 400 });
     }
     // omp stores one row per credential in `agent.db`; writing through
-    // AuthStorage keeps the CLI and omp-web on the same store and lock.
-    await authStorage.set(provider, { type: "api_key", key: apiKey.trim(), source: "login" });
+    // `credentials.set` keeps the CLI and omp-web on the same store and lock.
+    await authStorage.credentials.set(provider, { type: "api_key", key: apiKey.trim(), source: "login" });
     invalidateModelsCache();
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -87,14 +91,14 @@ export async function DELETE(req: Request, { params }: Params) {
   const { provider } = await params;
   try {
     const { authStorage } = await getOmpRuntime();
-    const stored = authStorage.listStoredCredentials(provider);
+    const stored = authStorage.credentials.list(provider);
     if (stored.some((entry) => entry.credential.type === "oauth")) {
       return NextResponse.json(
         { error: `${provider} is authenticated with OAuth, not an API key` },
         { status: 409 },
       );
     }
-    await authStorage.remove(provider);
+    await authStorage.credentials.remove(provider);
     invalidateModelsCache();
     invalidateOmpRuntime();
     return NextResponse.json({ success: true });
