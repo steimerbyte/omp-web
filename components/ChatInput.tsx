@@ -35,6 +35,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/hooks/useI18n";
 import { useQuickPhrases } from "@/hooks/useQuickPhrases";
 import { quickPhraseCaption } from "@/lib/quick-phrases";
+import { classifyEnter, createEnterGestureState, type EnterGestureState } from "@/lib/chat-input-enter";
 import { PRESET_DEFAULT, PRESET_FULL } from "@/lib/tool-presets";
 
 export interface AttachedImage {
@@ -525,6 +526,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
+  /**
+   * Der Zeitpunkt des letzten Enter — die ganze Erinnerung, die der Doppel-
+   * Enter braucht. Die Regel selbst steht in `lib/chat-input-enter.ts`; hier
+   * liegt nur der Zustand zwischen zwei Tastendruecken.
+   */
+  const enterGestureRef = useRef<EnterGestureState>(createEnterGestureState());
   const slashCommandsRequestedRef = useRef(false);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -1288,6 +1295,43 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
+
+        /**
+         * Der Doppel-Enter: zwei Anschlaege in schneller Folge sind **eine**
+         * Geste. Die Entscheidung selbst steht in `lib/chat-input-enter.ts`;
+         * hier wird sie nur angewandt.
+         *
+         * Gelesen wird `valueRef`, nicht `value`. Das ist der Unterschied, an
+         * dem die Geste sonst scheitert: `value` kommt aus dem Abschluss des
+         * letzten Renderns, und zwei Anschlaege im selben Frame sehen beide
+         * noch den alten Text. `clearInput` pflegt `valueRef` synchron, also
+         * sieht der zweite Anschlag, dass das Feld schon leer ist.
+         *
+         * Was das erste Enter getan hat, bleibt unangetastet: laeuft ein Turn,
+         * schickt `sendQueued` den Text als Steer; ohne Turn sendet
+         * `handleSend`. In beiden Faellen ist das Feld danach leer, und der
+         * zweite Anschlag findet nichts mehr vor — er wird verbraucht und
+         * nicht gesendet. Genau das verhindert zwei Fehler auf einmal: den
+         * doppelten Versand im Leerlauf und den zweimaligen Steer waehrend
+         * eines Turns.
+         *
+         * `gesture: true` faengt den einen Fall, in dem das Feld nach dem
+         * ersten Anschlag **noch** Inhalt hat: `handleSend` wartet bei einem
+         * Slash-Befehl auf `onBuiltinCommand`, bevor es leert. Ein zweiter
+         * Anschlag in diesem Fenster ist trotzdem die Geste und nicht eine
+         * zweite Eingabe.
+         */
+        const decided = classifyEnter(enterGestureRef.current, {
+          nowMs: Date.now(),
+          hasDraft: valueRef.current.trim().length > 0 || attachedImages.length > 0,
+          disabled: false,
+          // Zusammensetzung und Menues sind oben schon abgefangen.
+          isComposing: false,
+        });
+        enterGestureRef.current = decided.state;
+        if (decided.action.kind === "ignore") return;
+        if (decided.gesture) return;
+
         if (isStreaming && (onSteer || onFollowUp)) {
           // Default Enter sends as steer if available, else followup
           sendQueued(onSteer ? "steer" : "followup");
@@ -1296,7 +1340,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, attachedImages]
   );
 
   const handleInput = useCallback(() => {

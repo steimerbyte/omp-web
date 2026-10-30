@@ -878,6 +878,100 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `XhlGSZR1KxkQ1P7groG2F`, 494 files under `.next/static/**/*.js`, `/api/scheduled-settings` in the app-paths manifest |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.16.0
+
+Released 2026-10-30.
+
+### Neu: Doppel-Enter steuert sofort
+
+**Ein einzelnes Enter hat schon gesteuert — nur die Geste fehlte.** Laeuft ein
+Turn, schickt `ChatInput` die Eingabe bereits als Steer (`case "steer"` →
+`inner.steer()`), und der Text steht im Transkript, waehrend der Turn noch
+laeuft. Der Schalter war also vorhanden; was fehlte, war die *Geste*, mit der
+man ihn ohne Nachdenken trifft.
+
+**Was wirklich kaputt war: zwei schnelle Enter haben den Entwurf zweimal
+gesendet.** Am unveraenderten Build gemessen: zweimal Enter im Abstand von
+wenigen Millisekunden ergab zwei Nachrichten mit demselben Text. Der zweite
+Anschlag las noch den alten `value` — der Zustand aus dem Abschluss des letzten
+Renderns —, weil beide Anschlaege im selben Frame liegen. Genau daran ist die
+Geste vorher gescheitert.
+
+**Die Regel steht in `lib/chat-input-enter.ts`, nicht im Handler.**
+`DOUBLE_ENTER_WINDOW_MS = 400`, und die Grenze ist **einschliesslich**
+(`nowMs - previous <= DOUBLE_ENTER_WINDOW_MS`): zwei Anschlaege bei genau
+400 ms sind eine Geste, bei 401 ms sind es zwei Eingaben. `classifyEnter` ist
+ein reiner Zeitvergleich ohne DOM und gibt den Zustand fuer den naechsten Druck
+zurueck, damit ein Test ihn ohne Timer nachstellen kann, indem er `nowMs`
+vorgibt. Der Handler bleibt eine Uebersetzung von Tasten in Aufrufe.
+
+**Das erste Enter geht unveraendert seinen Weg, das zweite wird verbraucht.**
+Laeuft ein Turn, steuert das erste Enter wie bisher; ohne Turn sendet es wie
+bisher. In beiden Faellen ist das Feld danach leer, und der zweite Anschlag
+findet nichts mehr vor — er wird konsumiert statt gesendet. Damit sind zwei
+Fehler mit einem Griff weg: der doppelte Versand im Leerlauf und der zweite
+Steer waehrend eines Turns. Gelesen wird `valueRef.current`, nicht `value`;
+`clearInput` pflegt `valueRef` synchron, deshalb sieht der zweite Anschlag
+schon das leere Feld.
+
+**`Shift+Enter` und ein laufender IME bleiben unberuehrt.** `Shift+Enter` macht
+weiter einen Zeilenumbruch, und ein Zeichen, das ein IME gerade zusammensetzt
+(`nativeEvent.isComposing`, `keyCode 229`), ist keine Eingabe: es bestaetigt
+einen Kandidaten. Solche Anschlaege setzen den Zeitstempel zurueck, statt die
+halbe Geste einer spaeteren Eingabe zu werden.
+
+**Gemessen an einer laufenden Sitzung.** Steer-Text in
+`queuedMessages.steering` nach **106 ms**, im Transkript angekommen bei
+**2701 ms**, waehrend der Turn noch streamte, das Modell antwortete im selben
+Turn — und genau **eine** Nutzernachricht mit der Markierung.
+
+### Sicherheit: ein Mandant schrieb die globale Modellkonfiguration
+
+`PUT /api/model-roles` mit `scope: "global"` schreibt in die `config.yml` des
+**Prozesskontos**, nicht in die des Aufrufers. Ein Mandant konnte damit den
+Standard des Betreibers verschieben — und mit ihm den jeder anderen Sitzung.
+Gefunden im Mehrbenutzer-Audit (Zeile 30, Befund G1), nachgestellt mit zwei
+Mandanten: `bob PUT … scope:"global"` antwortete **200**, danach lasen `alice`
+und `admin` **bobs** Selector.
+
+Die Sperre sitzt **vor** dem Schreiben (`app/api/model-roles/route.ts:77-79`):
+`scope === "global"` und keine Admin-Identitaet ergibt **403**. Der eigene Satz
+eines Mandanten ist `scope: "project"` unter einem `cwd`, das er benutzen darf,
+und bleibt erlaubt. Auch ein Aufruf **ohne** `scope` gilt als `global` — der
+Default der Route darf nicht das Loch sein, das die Pruefung uebersieht.
+
+Geprueft mit der Datei, die danach auf der Platte liegt, nicht mit einer
+Attrappe: vier neue Tests laden die Route als echtes Modul und stellen eine
+isolierte `Settings` auf ein Wegwerf-Verzeichnis. `bob` global **403** bei
+byte-gleicher Prozess-`config.yml`, `admin` global **200**, `bob` eigenes
+`project` **200** und nur in seiner eigenen Datei.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Die ausgelieferte Instanz.** Beide Aenderungen werden gegen einen
+  Produktionsbuild in Chromium geprueft; die Auslieferung auf `agent-pc`
+  passiert im selben Arbeitsschritt direkt nach diesem Release.
+- **Der IME ist nur im Unit-Test geprueft**, nicht an einer echten
+  Eingabemethode: Zwei Wege sind abgedeckt (`isComposing`, `keyCode 229`), aber
+  welcher Browser ihn wann setzt, ist damit nicht belegt. Auf einer
+  Tastatur ohne IME ist der Zweig unerreichbar und die Geste unberuehrt.
+- **Die Desktop-Bundles wurden nicht gebaut**, und `src-tauri/Cargo.toml` /
+  `src-tauri/tauri.conf.json` stehen weiter auf `0.2.10`.
+  `bun run desktop:sync-version` gleicht sie an und laeuft in
+  `publish-desktop.yml`, nicht in diesem Checkout.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1607 pass, 0 fail, 1 skip — 1608 tests, 182 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `TerkEl6PVU82TcXRvCvwn`, 494 files under `.next/static/**/*.js`, `/api/model-roles/route` in the app-paths manifest |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

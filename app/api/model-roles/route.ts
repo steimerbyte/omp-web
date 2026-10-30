@@ -3,7 +3,7 @@ import { resolve } from "path";
 import { cfgEnabledModels } from "@oh-my-pi/pi-coding-agent/config/model-settings";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
-import { getRequestIdentity } from "@/lib/request-identity";
+import { getRequestIdentity, isAdminIdentity } from "@/lib/request-identity";
 import { getOmpRuntime, getSettingsForCwd } from "@/lib/omp-runtime";
 import { listModelRoles, writeModelRole, type ModelRoleScope } from "@/lib/model-roles";
 import { resolveVisibleModels } from "@/lib/model-scope";
@@ -70,6 +70,13 @@ export async function PUT(req: Request) {
     const role = body.role?.trim();
     if (!role) return NextResponse.json({ error: "role required" }, { status: 400 });
     const scope: ModelRoleScope = body.scope === "project" ? "project" : "global";
+    // `scope: "global"` writes the process account's `config.yml`, not the
+    // caller's (AGENTS.md:289: models.yml and config.yml are per account).
+    // Without this guard any tenant could repoint the operator's default model;
+    // their own set is `scope: "project"` under a cwd they are allowed to use.
+    if (scope === "global" && !isAdminIdentity(getRequestIdentity(req.headers))) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
     const selector = typeof body.selector === "string" ? body.selector.trim() : undefined;
 
     const runtime = await getOmpRuntime();
