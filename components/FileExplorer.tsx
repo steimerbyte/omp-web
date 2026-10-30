@@ -2292,7 +2292,12 @@ function Breadcrumb({
           // "Access denied".
           const navigable = !isLast && ancestors.includes(segment.fullPath);
           return (
-            <span key={segment.fullPath} style={{ display: "inline-flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+            /* `flexShrink: 0` und nicht `minWidth: 0`: die Pfadleiste scrollt
+               waagerecht (siehe `overflowX` am Elternteil), und ein
+               schrumpfendes Segment wurde dabei nicht scrollbar, sondern auf
+               zwei Zeichen zusammengedrueckt — "home/" als "h…". Die
+               Obergrenze je Name steht am Namen selbst (`maxWidth: 180`). */
+            <span key={segment.fullPath} style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
               {navigable ? (
                 <Pressable
                   type="button"

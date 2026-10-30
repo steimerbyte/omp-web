@@ -36,6 +36,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useQuickPhrases } from "@/hooks/useQuickPhrases";
 import { quickPhraseCaption } from "@/lib/quick-phrases";
 import { classifyEnter, createEnterGestureState, type EnterGestureState } from "@/lib/chat-input-enter";
+import { describeModelSwitchFailure, type ModelSwitchFailure } from "@/lib/model-switch-queue";
 import { PRESET_DEFAULT, PRESET_FULL } from "@/lib/tool-presets";
 
 export interface AttachedImage {
@@ -77,6 +78,9 @@ interface Props {
   modelRoles?: ModelRoleAssignment[];
   onRoleModelChange?: (role: string) => void;
   modelSwitching?: boolean;
+  /** Ein gescheiterter Wechsel; wird im Composer gezeigt, nicht als Notiz. */
+  modelSwitchError?: ModelSwitchFailure | null;
+  onDismissModelSwitchError?: () => void;
   onCompact?: () => void;
   onAbortCompaction?: () => void;
   isCompacting?: boolean;
@@ -445,6 +449,54 @@ export function ModelErrorBanner({ error }: { error?: string | null }) {
   return <ModelNoticeBanner tone="error" title="Model error" body={error} />;
 }
 
+/**
+ * Warum der letzte Modellwechsel nicht geklappt hat.
+ *
+ * Steht im Composer und nicht in der Notiz-Leiste: die Notiz verschwindet nach
+ * fuenf Sekunden, der Zustand („das Modell ist weiterhin das alte") bleibt. Der
+ * Text kommt aus dem Katalog, die Serverantwort wird angehaengt.
+ */
+export function ModelSwitchErrorBanner({
+  failure,
+  onDismiss,
+}: {
+  failure?: ModelSwitchFailure | null;
+  onDismiss: () => void;
+}) {
+  const { t } = useI18n();
+  if (!failure) return null;
+  return (
+    <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <ModelNoticeBanner
+          tone="error"
+          title={t("chat.modelSwitchFailedTitle")}
+          body={describeModelSwitchFailure(failure, t)}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        title={t("chat.dismiss")}
+        style={{
+          flexShrink: 0,
+          width: 22,
+          height: 22,
+          padding: 0,
+          border: "none",
+          borderRadius: 5,
+          background: "transparent",
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          lineHeight: 1,
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 /** Surfaces `enabledModels` patterns that matched nothing, so a typo is visible (#307). */
 export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
   if (!warnings || warnings.length === 0) return null;
@@ -459,7 +511,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, isAgentRunning, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
-  modelRoles, onRoleModelChange, modelSwitching,
+  modelRoles, onRoleModelChange, modelSwitching, modelSwitchError, onDismissModelSwitchError,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, effectiveThinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -1525,6 +1577,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       />
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         <ModelErrorBanner error={modelError} />
+        <ModelSwitchErrorBanner failure={modelSwitchError} onDismiss={() => onDismissModelSwitchError?.()} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {/* Queued steering / follow-up messages (delivered by omp on upcoming turns) */}
         {((queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0)) > 0 && (
@@ -2271,7 +2324,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
-            {/* Model selector — visible always, disabled while the session or switch is busy */}
+            {/* Model selector — visible and usable while a switch is in flight.
+                A running turn does not lock it either: the SDK states
+                "Active switches always take effect; if the current transcript is
+                too large for the target model, the next prompt's
+                compaction/error path owns that recovery" (agent-session.d.ts:
+                1122-1130). A click while a switch is in flight is queued, last
+                one wins. */}
             {(modelOptions.length > 0 || currentName || modelError) && onModelChange && (
                 <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
                   <button
@@ -2283,7 +2342,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         return !open;
                       });
                     }}
-                    disabled={isStreaming || modelSwitching}
                     aria-busy={modelSwitching || undefined}
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
@@ -2297,13 +2355,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       border: "none",
                       borderRadius: 9,
                       color: "var(--text-muted)",
-                      cursor: isStreaming || modelSwitching ? "not-allowed" : "pointer",
+                      cursor: "pointer",
                       fontSize: 12,
-                      opacity: isStreaming ? 0.5 : 1,
                       transition: "background 0.12s, color 0.12s",
                     }}
                     onMouseEnter={(e) => {
-                      if (isStreaming || modelSwitching) return;
                       e.currentTarget.style.background = "var(--bg-hover)";
                       e.currentTarget.style.color = "var(--text)";
                     }}

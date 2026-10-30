@@ -302,15 +302,6 @@ export function AppShell() {
 
   const handleSidebarPanelResize = useCallback((size: PanelSize) => {
     lastPanelSizeRef.current[SIDEBAR_PANEL_ID] = size.asPercentage;
-    // `.sidebar-container > *` keeps a fixed pixel width so the content does
-    // not reflow while the panel animates. The panel itself is sized by flex
-    // now, so the variable is an output of the library rather than the source
-    // of truth it used to be.
-    if (size.inPixels <= 0) return;
-    sidebarPanelElementRef.current?.style.setProperty(
-      "--sidebar-width",
-      `${Math.round(size.inPixels)}px`,
-    );
   }, []);
   const handleFilePanelResize = useCallback((size: PanelSize) => {
     // `collapse()` is a resize like any other and reports 0. Storing that 0
@@ -1372,8 +1363,14 @@ export function AppShell() {
           defaultSize={`${startingPanelLayout[CHAT_PANEL_ID]}%`}
           minSize={getChatMinWidth(isSplitViewport)}
         >
-        {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
+        {/* Die Kopfleiste des Chats ist eine Zeile, und auf 390px oder in einem
+            schmalen Chatbereich (768px Viewport minus 260px Leiste) passen
+            ihre Werkzeuge nicht mehr hinein: gemessen 656px bzw. 1015px
+            Inhalt bei 390px bzw. 508px Breite. Statt Werkzeuge zu verstecken
+            oder Text abzuschneiden, rollt die Zeile waagerecht — jedes Ziel
+            bleibt erreichbar, nichts wird abgeschnitten. `overflowY: hidden`
+            haelt den 36px hohen Streifen flach. */}
+        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "none", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
           <Pressable
              tint
              onClick={handleSidebarToggle}

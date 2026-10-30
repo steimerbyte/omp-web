@@ -241,6 +241,65 @@ function matchesAt(schedule: ParsedSchedule, at: Date): boolean {
 }
 
 /**
+ * Kann dieser Plan ueberhaupt jemals treffen?
+ *
+ * Die Suche in {@link nextRunAfter} findet einen Treffer oder laeuft
+ * {@link MAX_SCAN_MINUTES} Minuten lang vergeblich. Fuer einen Ausdruck wie
+ * `0 0 31 2 *` ist das reine Rechenzeit: der 31. Februar existiert in keinem
+ * Jahr. Gemessen kostete ein solcher Aufruf 208-261 ms — synchron, also
+ * blockierend, und zwar einmal pro `GET` und zweimal pro Takt.
+ *
+ * Diese Funktion beantwortet die Frage vorher, aus den Feldmasken statt aus
+ * dem Kalender: ein Plan ist unerfuellbar, wenn **kein** Monat im Monatsfeld
+ * einen Tag im Tagesdatum-Feld hat, den es in diesem Monat gibt.
+ *
+ * ### Warum nur bei freiem Wochentag
+ *
+ * POSIX verknuepft Tagesdatum und Wochentag mit ODER, sobald beide
+ * eingeschraenkt sind (siehe {@link matchesAt}). `0 0 31 2 1` heisst danach
+ * "jeder Montag im Februar **oder** jeder 31. Februar" — und der Montagsteil
+ * trifft. Ein Test, der das Tagesdatum allein ansieht, wuerde diesen Plan
+ * faelschlich fuer tot erklaeren und die Aufgabe nie wieder laufen lassen.
+ * Deshalb gilt die Aussage nur, wenn der Wochentag genau `*` ist: dann ist die
+ * Verknuepfung UND, und ein Tagesdatum ohne echten Kalendertag ist wirklich
+ * das Ende.
+ *
+ * Der Februar ist der einzige Monat, in dem die Antwort von der Jahreszahl
+ * abhaengt (29). Er zaehlt hier als "hat den 29.", weil es Jahre mit dem 29.
+ * Februar gibt; `0 8 29 2 *` ist damit erfuellbar, und zwar im naechsten
+ * Schaltjahr — genau das findet die Suche auch.
+ *
+ * Die uebrigen Felder koennen die Frage nicht toeten: Minuten und Stunden
+ * haben immer mindestens einen Eintrag, weil `parseField` einen leeren Ausdruck
+ * gar nicht erst zulaesst.
+ */
+export function isUnsatisfiable(schedule: ParsedSchedule): boolean {
+  // Ein eingeschraenkter Wochentag rettet jeden toten Kalendertag (ODER-Regel);
+  // dann ist die Frage nicht "nie", sondern "irgendwann ein Montag".
+  if (schedule.dayOfWeekRestricted) return false;
+
+  return !monthHasAnyListedDay(schedule);
+}
+
+/**
+ * Gibt es einen Monat, in dem mindestens ein aufgefuehrtes Tagesdatum existiert?
+ *
+ * Die Laengen sind die groessten, die der Monat je hat: der Februar bekommt 29,
+ * weil ein Schaltjahr zaehlt. Ein Tagesdatum, das nur im Februar fehlt (30.,
+ * 31.), macht den Plan nicht tot, solange ein anderer Monat es hat.
+ */
+function monthHasAnyListedDay(schedule: ParsedSchedule): boolean {
+  const longestDay = [0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  for (let month = 1; month <= 12; month += 1) {
+    if (!schedule.months[month]) continue;
+    for (let day = 1; day <= longestDay[month]; day += 1) {
+      if (schedule.daysOfMonth[day]) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 2921 Tage in Minuten — der groesste Abstand zwischen zwei 29. Februaren im
  * gregorianischen Kalender.
  *
@@ -258,13 +317,11 @@ function matchesAt(schedule: ParsedSchedule, at: Date): boolean {
  * eines Sprungs. Das passiert nur bei einem Plan, der ueber Jahre nichts
  * findet, und nur einmal pro Tick.
  *
- * shortcut: ein nie treffender Ausdruck kostet gemessen 208-261 ms pro Aufruf
- * und laeuft synchron, also blockiert er die Route fuer diese Dauer — bei
- * fuenf solchen Aufgaben in einer Liste eine Sekunde pro `GET`. Das ist
- * hingenommen statt behoben, weil der Fall selten und die Suche trivial zu
- * pruefen ist; sobald eine Liste mehrere tote Ausdruecke traegt oder die Route
- * spuerbar haengt, wird die Schleife durch Feldarithmetik ersetzt oder ihr
- * Ergebnis am Ausdruck zwischengespeichert.
+ * Ein nie treffender Ausdruck wird **vorher** erkannt: {@link isUnsatisfiable}
+ * beantwortet die Frage aus den Feldmasken, und {@link nextRunAfter} wirft
+ * dann sofort, statt 4,2 Mio. Minuten abzulaufen. Gemessen kostete `0 0 31 2 *`
+ * vorher 208-261 ms pro Aufruf, synchron in der Route; nachher liegt der
+ * Aufruf im Mikrosekundenbereich.
  */
 const MAX_SCAN_MINUTES = 2921 * 24 * 60;
 
@@ -280,6 +337,19 @@ const MAX_SCAN_MINUTES = 2921 * 24 * 60;
  * heisst nach.
  */
 export function nextRunAfter(schedule: ParsedSchedule, afterMs: number): number {
+  // Vor der Suche, nicht nach ihr: ein Plan, der nie trifft, soll nicht
+  // 4,2 Mio. Minuten lang geprueft werden, um dasselbe Ergebnis zu finden.
+  if (isUnsatisfiable(schedule)) {
+    // Dieselbe Meldung wie am Ende der Suche, und sie stimmt auch hier: gibt es
+    // nie einen Treffer, gibt es ihn erst recht nicht innerhalb der Frist. Der
+    // Aufrufer (und der bestehende Test) sieht keinen Unterschied ausser der
+    // Antwortzeit.
+    throw new ScheduleError(
+      "expression",
+      schedule.expression,
+      `No matching time within ${MAX_SCAN_MINUTES / 1440} days for "${schedule.expression}"`,
+    );
+  }
   if (!Number.isFinite(afterMs)) {
     throw new ScheduleError("expression", String(afterMs), "nextRunAfter needs a finite timestamp");
   }

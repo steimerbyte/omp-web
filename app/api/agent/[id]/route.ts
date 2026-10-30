@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { switchColdSessionModel } from "@/lib/cold-model-switch";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getRequestIdentity } from "@/lib/request-identity";
 import { requireSessionAccess } from "@/app/api/sessions/session-guard";
@@ -96,6 +97,23 @@ export async function POST(
           ? { code: "prompt_rejected", accepted: false }
           : {}),
       }, { status: 404 });
+    }
+
+    // Ein Modellwechsel braucht keine laufende Session. Den sonst folgenden
+    // `startRpcSession` (Extensions, Tools, System-Prompt, `createAgentSession`)
+    // zahlt der Nutzer als Wartezeit auf einen Klick, der nur einen Eintrag im
+    // Journal aendert — siehe `lib/cold-model-switch.ts`. Der Eintrag ist
+    // dieselbe Zeile, die `setModel` schreibt, und die SDK stellt das Modell
+    // beim naechsten Start daraus wieder her.
+    if (body.type === "set_model" || body.type === "set_role_model") {
+      const switched = body.type === "set_model"
+        ? await switchColdSessionModel(filePath, {
+          kind: "model",
+          provider: String(body.provider ?? ""),
+          modelId: String(body.modelId ?? ""),
+        })
+        : await switchColdSessionModel(filePath, { kind: "role", role: String(body.role ?? "") });
+      return NextResponse.json({ success: true, data: switched });
     }
 
     const { session } = await startRpcSession(id, filePath, undefined, {

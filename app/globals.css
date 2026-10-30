@@ -1235,6 +1235,47 @@ span.linenumber {
   min-height: 0;
   overflow: hidden;
 }
+/* Das Wortzeichen als ruhiger Hintergrund des Chatbereichs.
+ *
+ * Eine eigene, quadratische Ebene statt `background-size` mit Prozentwerten
+ * auf dem ganzen Bereich: `contain` in einem Bereich von 1180px Breite und
+ * 864px Hoehe haengt die Groesse sonst an zwei Kanten gleichzeitig, und `auto`
+ * ohne Breite und Hoehe im SVG loest auf die Vorgabegroesse 300x150 auf — das
+ * Zeichen wurde damit nicht mittig, sondern als Rechteck gezeichnet. Ein
+ * Quadrat mit `aspect-ratio: 1` und `contain` hat genau eine Groesse, und
+ * `translate(-50%, -50%)` setzt seinen Mittelpunkt.
+ *
+ * Die Ebene nimmt keine Zeigerereignisse an und ist kein waehlbarer Inhalt:
+ * ein Klick oder eine Textauswahl darueber geht an das, was darunter liegt.
+ *
+ * Die Deckkraft ist theme-abhaengig. Auf Weiss (#ffffff) ist der Farbstich
+ * bei 0,08 noch zu erkennen; auf Dunkel (#151820) braucht es weniger, weil
+ * derselbe helle Farbstich gegen den dunklen Grund mehr Kontrast hat.
+ * Gemessen an den Bildschirmfotos, nicht geschaetzt. */
+.chat-session-column::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 32%;
+  width: min(30%, 17rem);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  z-index: 0;
+  pointer-events: none;
+  background: url("/icons/omp-icon.svg") center / contain no-repeat;
+  opacity: 0.08;
+}
+html.dark .chat-session-column::before {
+  opacity: 0.05;
+}
+/* Jedes Kind des Chatbereichs liegt ueber der Ebene, auch wenn es selbst
+ * keine Position setzt. Ohne diese Zeile malten die nicht positionierten
+ * Ansichten (Projekte, Kalender, Zeitplan) ueber das Wasserzeichen, weil eine
+ * absolut positionierte Ebene in der Malreihenfolge hinter unpositionierten
+ * Blockinhalten liegt — man saehe das Zeichen also *auf* dem Inhalt. */
+.chat-session-column > * {
+  position: relative;
+}
 .subagent-column {
   display: flex;
   flex: 0 0 clamp(280px, 28vw, 360px);
@@ -1334,9 +1375,11 @@ span.linenumber {
  * inline `width` from the component would fight the flex basis and the
  * pixel-based `minSize`/`maxSize` would stop meaning anything.
  *
- * `--sidebar-width` and `--right-panel-width` are therefore outputs, not
- * inputs. `AppShell.tsx` writes them from `onResize` (`PanelSize.inPixels`),
- * and only the rules for the panels' children read them.
+ * `--right-panel-width` is therefore an output, not an input: `AppShell.tsx`
+ * writes it from `onResize` (`PanelSize.inPixels`), and only the rules for the
+ * right panel's children read it. The sidebar needs no such variable — its
+ * inner column is `width: 100%` of the panel (see `.sidebar-container > *`),
+ * which cannot disagree with the panel the way a second, measured number can.
  */
 .app-shell-split [data-panel] {
   transition: flex-grow 0.2s ease;
@@ -1362,10 +1405,100 @@ span.linenumber {
   .sidebar-container.sidebar-closed {
     border-right: none !important;
   }
-  /* keep inner content at fixed width so it doesn't reflow during animation */
+  /* Die Innenseite der Leiste ist genau so breit wie die Leiste.
+   *
+   * Vorher stand hier `width: var(--sidebar-width, 260px)` — die gemessene
+   * Breite des Panels. Das war ein zweiter Wert fuer dieselbe Sache, und die
+   * beiden konnten auseinanderlaufen (waehrend einer Animation, nach einem
+   * Wechsel zwischen Desktop und Telefon). Blieb der Wert zu gross, ragte
+   * der Inhalt aus dem Panel und die Leiste bekam einen waagerechten
+   * Rollbalken; blieb er zu klein, endete der Inhalt vor dem Rand. `100%`
+   * kann nicht danebenliegen. Dass der Inhalt waehrend der 200ms dauernden
+   * Breitenaenderung umbricht, ist der Preis dafuer und der harmlosere
+   * Fehler. */
   .sidebar-container > * {
-    width: var(--sidebar-width, 260px);
-    min-width: var(--sidebar-width, 260px);
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* Die vier Knoepfe der Kopfzeile.
+ *
+ * Zwei Spalten, nicht eine Zeile: bei der schmalsten Leiste (180px) blieben
+ * in einer Zeile rund 39px je Knopf — unter der Trefferflaeche und zu
+ * schmal fuer ein Wort. Im Raster sind es rund 77px, und die Beschriftung
+ * bleibt lesbar. `minmax(0, 1fr)` ist die Vorgabe, die ein Raster-Element
+ * wirklich schrumpfen laesst; ohne sie schiebt der laengste Text die Spalte
+ * auf. */
+.sidebar-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.sidebar-nav-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 44px; /* Trefferflaeche, auch mit dem Finger */
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
+}
+.sidebar-nav-button:hover {
+  background: var(--bg-selected);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent);
+}
+.sidebar-nav-button[aria-pressed="true"] {
+  background: var(--bg-selected);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sidebar-nav-button:disabled {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+.sidebar-nav-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sidebar-nav-button__icon {
+  display: flex;
+  flex: 0 0 auto;
+}
+.sidebar-nav-button__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Auf dem Telefon und auf Geraeten ohne Zeiger gibt es kein Hover. Die
+ * Reihenknoepfe ("neue Sitzung", Projektmenue) waren dort unsichtbar und
+ * unerreichbar; hier sind sie sichtbar und 44px gross. `!important`, weil die
+ * Groesse inline gesetzt ist — und der Zeigerzustand in einer
+ * `pointerEvents: none`-Regel endet. */
+@media (max-width: 640px), (hover: none) {
+  .sidebar-icon-button,
+  .sidebar-row-action {
+    width: 44px !important;
+    height: 44px !important;
+  }
+  .sidebar-row-action {
+    opacity: 1 !important;
+    pointer-events: auto !important;
   }
 }
 
@@ -1894,13 +2027,13 @@ html[data-omp-animations="off"] .omp-shimmer {
    COLLISION WARNING — `--sidebar-*` vs `--sidebar-width`.
    The tokens below are shadcn's colour semantics. `components/ui/sidebar.tsx`
    is a SEPARATE thing: it writes `--sidebar-width` / `--sidebar-width-icon`
-   as lengths. The app's own sidebar width is written under the same name —
-   not by the resizer any more, but from `Panel.onResize` in `AppShell.tsx`,
-   onto the panel element that `.sidebar-container` sits in. If shadcn's
-   SidebarProvider ever mounts in this tree, the two overwrite each other and
-   the app sidebar collapses to 16rem. shadcn's Sidebar is currently unimported
-   — keep it that way, or rename one of the two before it mounts. shadcn's
-   `--sidebar-*` COLOUR tokens are safe: they never appear in the resizer path.
+   as lengths. omp-web no longer writes a `--sidebar-width` of its own: the
+   sidebar's inner column is `width: 100%` of its panel. If shadcn's
+   SidebarProvider ever mounts in this tree, its length would then be a
+   variable nobody reads — harmless, which is better than the previous
+   collision. shadcn's Sidebar is currently unimported — keep it that way.
+   shadcn's `--sidebar-*` COLOUR tokens are safe: they never appear in the
+   resizer path.
    --------------------------------------------------------------------------- */
 
 :root {

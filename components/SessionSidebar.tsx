@@ -11,7 +11,6 @@ import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
-import { OmpWordmark } from "./OmpWordmark";
 
 declare global {
   interface Window {
@@ -68,6 +67,49 @@ function ToolbarIconButton({
     >
       {children}
     </Pressable>
+  );
+}
+
+/**
+ * Ein Knopf der Kopfzeile: Symbol, Beschriftung, ein Zustand.
+ *
+ * Die Beschriftung ist der Grund, warum es diese Komponente gibt: vier
+ * Symbole ohne Text waren in einer Leiste von 32px nicht zu erkennen und
+ * nicht zu treffen. Die volle Handlung steht weiter in `title`/`aria-label`
+ * — die kurze Beschriftung daneben ist die sichtbare Fassung davon.
+ *
+ * Das Aussehen steht in `globals.css` (`.sidebar-nav-button`): eine
+ * Zustandsvariable als Klasse waere hier ein zweiter Weg fuer dieselbe
+ * Sache, und `aria-pressed` ist der Zustand, den Screenreader ohnehin lesen.
+ */
+function SidebarNavButton({
+  onClick,
+  title,
+  label,
+  active,
+  disabled,
+  children,
+}: {
+  onClick?: () => void;
+  title: string;
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      aria-pressed={active}
+      disabled={disabled}
+      className="sidebar-nav-button"
+    >
+      <span className="sidebar-nav-button__icon" aria-hidden="true">{children}</span>
+      <span className="sidebar-nav-button__label">{label}</span>
+    </button>
   );
 }
 
@@ -385,100 +427,6 @@ const SidebarVirtuosoList = forwardRef<HTMLDivElement, ListProps>(function Sideb
 /** Replaces the 10px bottom padding the hand-built scroll container had. */
 function SidebarVirtuosoFooter() {
   return <div style={{ height: 10 }} />;
-}
-
-const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-
-function useScramble(target: string, running: boolean): string {
-  const [display, setDisplay] = useState(target);
-  const frameRef = useRef<number | null>(null);
-  const iterRef = useRef(0);
-
-  useEffect(() => {
-    if (!running) {
-      setDisplay(target);
-      return;
-    }
-    iterRef.current = 0;
-    const totalFrames = target.length * 4;
-
-    const step = () => {
-      iterRef.current += 1;
-      const progress = iterRef.current / totalFrames;
-      const resolved = Math.floor(progress * target.length);
-
-      setDisplay(
-        target
-          .split("")
-          .map((char, i) => {
-            if (char === " ") return " ";
-            if (i < resolved) return char;
-            return SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-          })
-          .join("")
-      );
-
-      if (iterRef.current < totalFrames) {
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        setDisplay(target);
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(step);
-    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
-  }, [target, running]);
-
-  return display;
-}
-
-function PiWebTitle() {
-  const [showVersion, setShowVersion] = useState(false);
-  const [scrambling, setScrambling] = useState(false);
-  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}/${process.env.NEXT_PUBLIC_OMP_VERSION ?? "0.0.0"}` : "omp";
-  const display = useScramble(target, scrambling);
-
-  const triggerScramble = useCallback((toVersion: boolean) => {
-    setShowVersion(toVersion);
-    setScrambling(true);
-    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
-  }, []);
-
-  const handleClick = useCallback(() => {
-    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
-
-    const next = !showVersion;
-    triggerScramble(next);
-
-    if (next) {
-      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
-    }
-  }, [showVersion, triggerScramble]);
-
-  useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
-
-  return (
-    <button
-      onClick={handleClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        background: "none",
-        border: "none",
-        padding: 0,
-        cursor: "default",
-        color: showVersion ? "var(--accent)" : "var(--text)",
-        minWidth: "6ch",
-      }}
-    >
-      <OmpWordmark
-        label={display}
-        labelStyle={showVersion ? { fontFamily: "var(--font-mono)", letterSpacing: "-0.01em" } : undefined}
-      />
-    </button>
-  );
 }
 
 export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onShowScheduledTasks, showScheduledTasks, onBackgroundTaskDone }: Props) {
@@ -1200,7 +1148,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minWidth: 0, overflow: "hidden" }}>
       {customPathOpen && (
         <DirectoryPicker
           busy={customPathValidating}
@@ -1221,172 +1169,65 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           flexShrink: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <PiWebTitle />
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              type="button"
-              onClick={onShowProjectsDashboard}
-              title={t("projects.title")}
-              aria-label={t("projects.title")}
-              aria-pressed={showProjectsDashboard}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 32, height: 32,
-                borderRadius: 7,
-                padding: 0,
-                flexShrink: 0,
-                cursor: "pointer",
-                border: `1px solid ${showProjectsDashboard ? "var(--accent)" : "var(--border)"}`,
-                background: showProjectsDashboard ? "var(--bg-selected)" : "var(--bg-hover)",
-                color: showProjectsDashboard ? "var(--accent)" : "var(--text-muted)",
-                transition: "background 0.3s, color 0.3s, border-color 0.3s",
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={onShowCalendar}
-              title={calendarText("calendar.open")}
-              aria-label={calendarText("calendar.open")}
-              aria-pressed={showCalendar}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 32, height: 32,
-                borderRadius: 7,
-                padding: 0,
-                flexShrink: 0,
-                cursor: "pointer",
-                border: `1px solid ${showCalendar ? "var(--accent)" : "var(--border)"}`,
-                background: showCalendar ? "var(--bg-selected)" : "var(--bg-hover)",
-                color: showCalendar ? "var(--accent)" : "var(--text-muted)",
-                transition: "background 0.3s, color 0.3s, border-color 0.3s",
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="17" rx="2" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={onShowScheduledTasks}
-              title={t("scheduled.open")}
-              aria-label={t("scheduled.open")}
-              aria-pressed={showScheduledTasks}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 32, height: 32,
-                borderRadius: 7,
-                padding: 0,
-                flexShrink: 0,
-                cursor: "pointer",
-                border: `1px solid ${showScheduledTasks ? "var(--accent)" : "var(--border)"}`,
-                background: showScheduledTasks ? "var(--bg-selected)" : "var(--bg-hover)",
-                color: showScheduledTasks ? "var(--accent)" : "var(--text-muted)",
-                transition: "background 0.3s, color 0.3s, border-color 0.3s",
-              }}
-            >
-              {/* Eine Uhr: der Zeitplan ist die Eigenschaft, die die Ansicht
-                  von allen anderen unterscheidet. */}
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" />
-                <polyline points="12 7 12 12 15.5 14" />
-              </svg>
-            </button>
-            <button
-              onClick={() => handleNewSession()}
-              disabled={!selectedCwd || undefined}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                background: "var(--bg-hover)",
-                border: "1px solid var(--border)",
-                color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
-                cursor: selectedCwd ? "pointer" : "not-allowed",
-                height: 32,
-                padding: "0 12px 0 10px",
-                borderRadius: 7,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: "-0.01em",
-                flexShrink: 0,
-                transition: "background 0.12s, color 0.12s, border-color 0.12s",
-              }}
-              title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
-              onMouseEnter={(event) => {
-                if (!selectedCwd) return;
-                event.currentTarget.style.background = "var(--bg-selected)";
-                event.currentTarget.style.color = "var(--accent)";
-                event.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.background = "var(--bg-hover)";
-                event.currentTarget.style.color = selectedCwd ? "var(--text-muted)" : "var(--text-dim)";
-                event.currentTarget.style.borderColor = "var(--border)";
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-                <line x1="6" y1="1" x2="6" y2="11" />
-                <line x1="1" y1="6" x2="11" y2="6" />
-              </svg>
-              {t("sidebar.new")}
-            </button>
-            <button
-              onClick={() => loadSessions(false, true)}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: sessionRefreshDone ? "color-mix(in srgb, var(--success) 18%, transparent)" : "var(--bg-hover)",
-                border: `1px solid ${sessionRefreshDone ? "color-mix(in srgb, var(--success) 40%, transparent)" : "var(--border)"}`,
-                color: sessionRefreshDone ? "var(--success)" : "var(--text-muted)",
-                cursor: "pointer",
-                width: 32, height: 32,
-                borderRadius: 7,
-                padding: 0,
-                flexShrink: 0,
-                transition: "background 0.3s, color 0.3s, border-color 0.3s",
-              }}
-              onMouseEnter={(event) => {
-                if (sessionRefreshDone) return;
-                event.currentTarget.style.background = "var(--bg-selected)";
-                event.currentTarget.style.color = "var(--accent)";
-                event.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-              }}
-              onMouseLeave={(event) => {
-                if (sessionRefreshDone) return;
-                event.currentTarget.style.background = "var(--bg-hover)";
-                event.currentTarget.style.color = "var(--text-muted)";
-                event.currentTarget.style.borderColor = "var(--border)";
-              }}
-              title={t("sidebar.refresh")}
-            >
-              {sessionRefreshDone ? (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                </svg>
-              )}
-            </button>
-          </div>
+        {/* Die vier Ziele der Leiste, je mit Beschriftung. Das Wortzeichen
+            stand hier und hat ihnen die Breite genommen; es liegt jetzt als
+            ruhiger Hintergrund hinter dem Chat (globals.css,
+            `.chat-session-column::before`). Ein Raster und keine Zeile: bei
+            der schmalsten Leiste (180px) bleiben so zwei Spalten von rund
+            77px statt vier von 39px — der Unterschied zwischen einem
+            lesbaren und einem abgeschnittenen Wort. */}
+        <div className="sidebar-nav">
+          <SidebarNavButton
+            onClick={onShowProjectsDashboard}
+            title={t("projects.title")}
+            label={t("sidebar.projects")}
+            active={showProjectsDashboard}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+            </svg>
+          </SidebarNavButton>
+          <SidebarNavButton
+            onClick={onShowCalendar}
+            title={calendarText("calendar.open")}
+            label={calendarText("calendar.short")}
+            active={showCalendar}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="17" rx="2" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+            </svg>
+          </SidebarNavButton>
+          <SidebarNavButton
+            onClick={onShowScheduledTasks}
+            title={t("scheduled.open")}
+            label={t("scheduled.short")}
+            active={showScheduledTasks}
+          >
+            {/* Eine Uhr: der Zeitplan ist die Eigenschaft, die die Ansicht
+                von allen anderen unterscheidet. */}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <polyline points="12 7 12 12 15.5 14" />
+            </svg>
+          </SidebarNavButton>
+          <SidebarNavButton
+            onClick={() => handleNewSession()}
+            disabled={!selectedCwd}
+            title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
+            label={t("sidebar.new")}
+          >
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <line x1="6" y1="1" x2="6" y2="11" />
+              <line x1="1" y1="6" x2="11" y2="6" />
+            </svg>
+          </SidebarNavButton>
         </div>
-
       </div>
 
 
@@ -1399,12 +1240,57 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           flexShrink: 0,
         }}
       >
-        <h2 style={{ margin: 0, flex: 1, color: "var(--text-muted)", fontSize: 13, fontWeight: 600, letterSpacing: "0.01em" }}>
+        <h2 style={{ margin: 0, flex: 1, minWidth: 0, color: "var(--text-muted)", fontSize: 13, fontWeight: 600, letterSpacing: "0.01em" }}>
           {t("sidebar.projects")}
         </h2>
+        {/* Der Aktualisieren-Knopf stand neben "Neu" in der Kopfzeile und hat
+            dort um Platz konkurriert. Er laedt die Projektliste — er gehoert
+            neben deren Ueberschrift. Gleiche Handlung, gleiche Rueckmeldung
+            (Haken bei Erfolg), nur der Ort ist der passende. */}
+        <button
+          onClick={() => loadSessions(false, true)}
+          className="sidebar-icon-button"
+          aria-label={t("sidebar.refresh")}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: sessionRefreshDone ? "color-mix(in srgb, var(--success) 18%, transparent)" : "none",
+            border: "none",
+            borderRadius: 6,
+            color: sessionRefreshDone ? "var(--success)" : "var(--text-muted)",
+            cursor: "pointer",
+            width: 28,
+            height: 28,
+            padding: 0,
+            flexShrink: 0,
+            transition: "background 0.3s, color 0.3s",
+          }}
+          onMouseEnter={(event) => {
+            if (sessionRefreshDone) return;
+            event.currentTarget.style.background = "var(--bg-hover)";
+            event.currentTarget.style.color = "var(--text)";
+          }}
+          onMouseLeave={(event) => {
+            if (sessionRefreshDone) return;
+            event.currentTarget.style.background = "none";
+            event.currentTarget.style.color = "var(--text-muted)";
+          }}
+          title={t("sidebar.refresh")}
+        >
+          {sessionRefreshDone ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+          )}
+        </button>
         <button
           type="button"
           onClick={handleCustomPathClick}
+          className="sidebar-icon-button"
           title={t("sidebar.addProject")}
           aria-label={t("sidebar.addProject")}
           style={{
@@ -1606,6 +1492,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                   onClick={() => handleNewSession(project)}
                   title={t("sidebar.newSessionTitle", { path: project })}
                   aria-label={t("sidebar.newSessionTitle", { path: project })}
+                  className="sidebar-row-action"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1653,6 +1540,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                       title={t("sidebar.projectActions")}
                       aria-label={t("sidebar.projectActions")}
                       aria-expanded={projectMenuOpen === project}
+                      className="sidebar-row-action"
                       style={{
                         display: "flex",
                         alignItems: "center",

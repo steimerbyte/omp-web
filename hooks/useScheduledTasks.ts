@@ -32,8 +32,16 @@ import type { ScheduledTask } from "@/lib/scheduled-tasks-store";
 
 /** Eine Aufgabe, wie die Route sie liefert: mit serverseitigem `nextRun`. */
 export interface ScheduledTaskView extends ScheduledTask {
-  /** Epoch-ms des naechsten Laufs, oder `null` (deaktiviert / trifft nie). */
-  nextRun?: number | null;
+  /**
+   * Der naechste Lauf, oder `null` wenn es keinen gibt.
+   *
+   * Nicht optional: die Route setzt das Feld **immer**, `null` eingeschlossen
+   * (`app/api/scheduled-tasks/route.ts:withNextRun`). Ein fehlendes Feld und
+   * ein `null` sahen vorher gleich aus, obwohl sie verschiedene Dinge meinen —
+   * fehlt es, hat der Server es nicht gesetzt, und das ist ein anderer Fall als
+   * "es gibt keinen Lauf".
+   */
+  nextRun: number | null;
 }
 
 /** Die Felder, die der Dialog schickt. */

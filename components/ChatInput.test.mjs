@@ -61,7 +61,23 @@ test("keeps the model selector visible when a model error leaves no options", ()
   assert.match(html, /title="No available models"/);
 });
 
-test("shows and locks the optimistic model while a switch is pending", () => {
+/**
+ * Das `<button>` des Modell-Ausloesers, als Zeichenkette.
+ *
+ * Die Attribute stehen in Renderreihenfolge, nicht in der Reihenfolge des
+ * Quelltexts — `disabled` kommt vor `title`. Ein Test, der beides in einer
+ * bestimmten Ordnung erwartet, prueft die Serialisierung statt das Verhalten.
+ * Deshalb wird das ganze Tag herausgeschnitten und darin gesucht.
+ */
+function modelTriggerTag(html) {
+  const titleAt = html.search(/title="(Change|Switching) model"/);
+  assert.ok(titleAt > 0, "der Modell-Ausloeser ist gerendert");
+  const start = html.lastIndexOf("<button", titleAt);
+  const end = html.indexOf(">", titleAt);
+  return html.slice(start, end + 1);
+}
+
+test("shows the optimistic model while a switch is pending and keeps the trigger usable", () => {
   const html = renderToStaticMarkup(
     React.createElement(
       I18nProvider,
@@ -78,11 +94,39 @@ test("shows and locks the optimistic model while a switch is pending", () => {
     ),
   );
 
-  assert.match(html, /title="Switching model"/);
-  assert.match(html, /aria-busy="true"/);
-  assert.match(html, /disabled=""/);
+  const tag = modelTriggerTag(html);
+  assert.match(tag, /title="Switching model"/);
+  assert.match(tag, /aria-busy="true"/);
+  assert.doesNotMatch(
+    tag,
+    /disabled=""/,
+    "der Ausloeser bleibt waehrend eines Wechsels bedienbar — ein Klick wird gebucht, nicht verworfen",
+  );
   assert.match(html, />DeepSeek V4 Flash</);
   assert.match(html, /animation:spin 0\.8s linear infinite/);
+});
+
+test("a running turn does not lock the model trigger either", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ChatInput, {
+        onSend() {},
+        onAbort() {},
+        onModelChange() {},
+        isStreaming: true,
+        model: { provider: "deepseek", modelId: "deepseek-v4-flash" },
+        modelList: [{ provider: "deepseek", id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" }],
+      }),
+    ),
+  );
+
+  assert.doesNotMatch(
+    modelTriggerTag(html),
+    /disabled=""/,
+    "die SDK laesst den Wechsel waehrend eines Laufs ausdruecklich zu (agent-session.d.ts:1122-1130)",
+  );
 });
 
 test("filters model options by name and id", () => {

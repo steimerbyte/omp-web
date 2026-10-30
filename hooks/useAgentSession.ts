@@ -16,6 +16,17 @@ import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { stripAnsi } from "@/lib/ansi";
 import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import {
+  acceptModelSwitch,
+  commandForTarget,
+  createModelSwitchQueue,
+  settleModelSwitch,
+  toModelSwitchFailure,
+  type ModelSwitchFailure,
+  type ModelSwitchQueue,
+  type ModelSwitchResult,
+  type ModelTarget,
+} from "@/lib/model-switch-queue";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { ContextUsage, GoalStatusInfo, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp-types";
 import type { ModelRoleAssignment } from "@/lib/api-types";
@@ -190,6 +201,18 @@ const PROMPT_SETTLE_MAX_MS = 20_000;
 const EVENT_STREAM_IDLE_GRACE_MS = 30_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
 const CONTEXT_USAGE_REFRESH_MS = 1000;
+/**
+ * Wartezeit fuer einen Modellwechsel.
+ *
+ * Nur fuer `set_model`/`set_role_model` gesetzt, nicht als Default in
+ * `sendAgentCommand`: ein `prompt` antwortet sofort und streamt danach, ein
+ * Limit dort wuerde einen laufenden Turn abschneiden. Hier ist der Server
+ * wirklich beschaeftigt — er rendert das Archiv neu, baut den System-Prompt und
+ * startet im kalten Fall eine ganze Session. 20 s lassen jede gemessene
+ * Kaltvariante (200 ms) durch und machen aus einem haengenden POST eine
+ * sichtbare Meldung statt einer endlosen Sperre.
+ */
+const MODEL_SWITCH_TIMEOUT_MS = 20_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const MAX_NOTICES = 5;
@@ -399,6 +422,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [currentModelOverride, setCurrentModelOverride] = useState<{ provider: string; modelId: string } | null>(null);
   const [pendingModel, setPendingModel] = useState<{ provider: string; modelId: string } | null>(null);
   const [modelSwitching, setModelSwitching] = useState(false);
+  const [modelSwitchError, setModelSwitchError] = useState<ModelSwitchFailure | null>(null);
   const [isCompacting, setIsCompacting] = useState(false);
   const [compactError, setCompactError] = useState<string | null>(null);
   const [compactResult, setCompactResult] = useState<CompactResultInfo | null>(null);
@@ -446,7 +470,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const promptRunIdRef = useRef(0);
   const contextUsageRequestIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
-  const modelSwitchPendingRef = useRef(false);
+  // Die Warteschlange des Modellwechsels (siehe lib/model-switch-queue.ts):
+  // hoechstens eine Anfrage, der letzte Klick gewinnt. Als Ref, weil ein
+  // Klick sie synchron veraendern muss — der zweite Klick kommt, bevor React
+  // neu rendert.
+  const modelSwitchQueueRef = useRef<ModelSwitchQueue>(createModelSwitchQueue());
+  const drainModelSwitchRef = useRef<((sid: string) => Promise<void>) | null>(null);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
 
@@ -518,7 +547,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
       setContextUsage(d.contextUsage ?? null);
-      setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
+      // Ein laufender Wechsel darf von einem parallelen Session-Laden nicht
+      // weggeraeumt werden; die Warteschlange ist die Quelle dieser Frage.
+      setCurrentModelOverride((current) => modelSwitchQueueRef.current.inFlight ? current : null);
       setError(null);
       setThinkingLevel((d.context.configuredThinkingLevel ?? d.context.thinkingLevel ?? "off") as ThinkingLevelOption);
       setEffectiveThinkingLevel(d.context.thinkingLevel);
@@ -1647,59 +1678,117 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [loadContext]);
 
-  const handleModelChange = useCallback(async (provider: string, modelId: string) => {
-    if (isNew) {
-      const selectedModel = { provider, modelId };
-      newSessionModelOverrideRef.current = selectedModel;
-      setNewSessionModel(selectedModel);
-      setPendingModel(selectedModel);
-      const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
-      if (!sid) return;
+  /**
+   * Erste Haelfte eines Wechsels: buchen. Die zweite ist `drainModelSwitch`,
+   * die dieselbe Buchung abarbeitet, gleich ob sie vom Klick oder vom Ende der
+   * vorigen Anfrage kommt.
+   */
+  const requestModelSwitch = useCallback((sid: string, target: ModelTarget) => {
+    const wasIdle = modelSwitchQueueRef.current.inFlight === null;
+    const accepted = acceptModelSwitch(modelSwitchQueueRef.current, target);
+    modelSwitchQueueRef.current = accepted.state;
+    if (!accepted.ok) return;
+    setModelSwitchError(null);
+    // Die Optimistik steht ab dem Klick, nicht erst nach der Antwort: die Pille
+    // ist die Rueckmeldung, dass der Klick angekommen ist.
+    if (target.kind === "model") {
+      setCurrentModelOverride({ provider: target.provider, modelId: target.modelId });
+    } else {
+      const resolved = modelRoles.find((candidate) => candidate.role === target.role)?.resolved;
+      if (resolved) setCurrentModelOverride({ provider: resolved.provider, modelId: resolved.modelId });
+    }
+    setModelSwitching(true);
+    // Nur ein Leerlauf startet den Durchlauf. Laeuft schon einer, nimmt der die
+    // Buchung von selbst mit — ein zweiter Durchlauf wuerde dieselbe
+    // Warteschlange parallel abarbeiten und zwei Anfragen schicken.
+    if (wasIdle) void drainModelSwitchRef.current?.(sid);
+  }, [modelRoles]);
+
+  /**
+   * Arbeitet die Warteschlange ab, bis nichts mehr offen ist.
+   *
+   * Die Optimistik ist bewusst: das gewaehlte Modell steht sofort, damit die
+   * Pille den Klick bestaetigt, bevor der Server geantwortet hat. Sie faellt
+   * erst, wenn der Server die Wahrheit geliefert hat — nicht schon beim
+   * Absenden.
+   */
+  const drainModelSwitch = useCallback(async (sid: string) => {
+    for (;;) {
+      const current = modelSwitchQueueRef.current.inFlight;
+      if (!current) break;
       try {
-        await sendAgentCommand(sid, { type: "set_model", provider, modelId });
-      } catch (e) {
-        console.error("Failed to set model:", e);
+        const result = await sendAgentCommand<ModelSwitchResult>(sid, commandForTarget(current), {
+          timeoutMs: MODEL_SWITCH_TIMEOUT_MS,
+        });
+        // Die Optimistik auf den bestaetigten Wert ziehen. Beim Rollenwechsel
+        // ist das das Rollen-Modell, nicht `models.default` — der Unterschied,
+        // der vorher als „falsches Modell" sichtbar wurde.
+        setCurrentModelOverride({
+          provider: result.provider,
+          modelId: result.id,
+        });
+        if (result.thinkingLevel) {
+          setThinkingLevel((result.configuredThinkingLevel ?? result.thinkingLevel) as ThinkingLevelOption);
+          setEffectiveThinkingLevel(result.thinkingLevel);
+        }
+        if (result.leafId !== undefined) setActiveLeafId(result.leafId);
+      } catch (error) {
+        console.error("Failed to switch model:", error);
+        // Die Optimistik zuruecknehmen: was der Server abgelehnt hat, darf
+        // nicht als gewaehlt stehen bleiben. Der sichtbare Grund kommt aus dem
+        // Composer, nicht aus einer Notiz, die nach fuenf Sekunden verschwindet.
+        setCurrentModelOverride(data?.context.model ?? null);
+        setModelSwitchError(toModelSwitchFailure(error));
+      } finally {
+        const settled = settleModelSwitch(modelSwitchQueueRef.current);
+        modelSwitchQueueRef.current = settled.state;
+        if (!settled.next) setModelSwitching(false);
       }
+      if (!modelSwitchQueueRef.current.inFlight) break;
+    }
+  }, [data?.context.model]);
+  drainModelSwitchRef.current = drainModelSwitch;
+
+  /**
+   * Ein Modellwechsel im Composer.
+   *
+   * Ein Klick wird gebucht, nie verworfen: laeuft schon eine Anfrage, merkt sich
+   * die Warteschlange den zuletzt gewuenschten Zustand und schickt ihn, sobald
+   * die laufende Anfrage beantwortet ist (`lib/model-switch-queue.ts`). Der
+   * frueher hier stehende stille `return` bei laufendem Wechsel war der
+   * stille Ausgang, den der Nutzer als „reagiert nicht" beschrieben hat.
+   *
+   * Nach dem Wechsel wird **nicht** die ganze Session neu geladen. Der Wechsel
+   * betrifft drei Felder, und alle drei stehen in der Antwort des Servers
+   * (`modelSwitchState()` in `lib/rpc-manager.ts`): Modell, Thinking-Level und
+   * der neue Leaf. Der fruehere `loadSession` hat stattdessen das komplette
+   * Transkript neu geholt und gerendert — bei 400 Nachrichten 584 KiB, bei
+   * 2000 Nachrichten ein Vielfaches davon — und dabei auf die asynchrone
+   * `appendModelChange`-Spuelung gewettet. Ohne Datei-Lesen gibt es dieses
+   * Wettrennen nicht mehr.
+   */
+  const handleModelChange = useCallback((provider: string, modelId: string) => {
+    const target = { provider, modelId };
+    if (isNew) {
+      newSessionModelOverrideRef.current = target;
+      setNewSessionModel(target);
+      setPendingModel(target);
+      setModelSwitchError(null);
       return;
     }
     const sid = sessionIdRef.current;
-    if (!sid || modelSwitchPendingRef.current) return;
-    const target = { provider, modelId };
-    const previousOverride = currentModelOverride;
-    modelSwitchPendingRef.current = true;
-    setCurrentModelOverride(target);
-    setModelSwitching(true);
-    try {
-      await sendAgentCommand(sid, { type: "set_model", provider, modelId });
-      // Pi persists model_change synchronously. Reload the canonical session so
-      // the model, thinking level, and active leaf all advance together.
-      modelSwitchPendingRef.current = false;
-      await loadSession(sid);
-    } catch (e) {
-      console.error("Failed to set model:", e);
-      modelSwitchPendingRef.current = false;
-      setCurrentModelOverride(previousOverride);
-      addNotice({
-        type: "error",
-        message: `Failed to switch model: ${e instanceof Error ? e.message : String(e)}`,
-      });
-      // A failed response can still follow a server-side write (for example, a
-      // dropped connection), so let the session file settle the displayed model.
-      await loadSession(sid);
-    } finally {
-      modelSwitchPendingRef.current = false;
-      setModelSwitching(false);
-    }
-  }, [addNotice, currentModelOverride, isNew, loadSession, setNewSessionModel]);
+    if (!sid) return;
+    void requestModelSwitch(sid, { kind: "model", provider, modelId });
+  }, [isNew, requestModelSwitch]);
 
   /**
-   * Switch the session onto the model configured for one of omp's roles.
+   * Wechsel auf das Modell einer omp-Rolle (Fast, Architect, …).
    *
-   * The role is sent along, not just the model, so the transcript records which
-   * role drove the change — the same thing `/model` does in the TUI, and what
-   * lets omp resolve retry fallbacks for that role later.
+   * Der Rollenwechsel laeuft durch dieselbe Warteschlange: sonst koennten ein
+   * Modell- und ein Rollenklick gleichzeitig in `setModel` laufen, und die SDK
+   * dokumentiert das nicht als nebenlaeufig sicher.
    */
-  const handleRoleModelChange = useCallback(async (role: string) => {
+  const handleRoleModelChange = useCallback((role: string) => {
     const assignment = modelRoles.find((candidate) => candidate.role === role);
     const resolved = assignment?.resolved;
     if (!resolved) return;
@@ -1715,16 +1804,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       newSessionModelOverrideRef.current = selectedModel;
       setNewSessionModel(selectedModel);
       setPendingModel(selectedModel);
+      setModelSwitchError(null);
+      return;
     }
-    const sid = sessionIdRef.current ?? (isNew ? await ensuringNewSessionRef.current : null);
+    const sid = sessionIdRef.current;
     if (!sid) return;
-    try {
-      await sendAgentCommand(sid, { type: "set_role_model", role });
-      if (!isNew) setCurrentModelOverride({ provider: resolved.provider, modelId: resolved.modelId });
-    } catch (e) {
-      console.error("Failed to set role model:", e);
-    }
-  }, [isNew, modelRoles, setNewSessionModel]);
+    void requestModelSwitch(sid, { kind: "role", role });
+  }, [isNew, modelRoles, requestModelSwitch]);
+
+  const clearModelSwitchError = useCallback(() => setModelSwitchError(null), []);
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -2246,7 +2334,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, newSessionModel, toolPreset, thinkingLevel,
     effectiveThinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
-    isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats,
+    isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching,
+    modelSwitchError, clearModelSwitchError, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, subagents,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,

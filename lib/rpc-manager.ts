@@ -249,6 +249,15 @@ function appendSlashCommand(
 export const BROWSER_NATIVE_SLASH_COMMANDS = ["fork", "goal"] as const;
 
 /**
+ * Registry metadata that does not describe the browser handler. omp 18.10 gave
+ * /fork pane/window/tab subcommands that open the fork in a terminal
+ * multiplexer; the browser fork ignores them, so it keeps its own description.
+ */
+const BROWSER_NATIVE_DESCRIPTIONS: Partial<Record<(typeof BROWSER_NATIVE_SLASH_COMMANDS)[number], string>> = {
+  fork: "Create a new fork from a previous message",
+};
+
+/**
  * Keep the browser palette aligned with omp's own command registry and
  * discovery pipeline. Shared text/ACP builtins and every discovered
  * extension/custom/MCP/file/skill command come from the SDK discovery;
@@ -268,14 +277,17 @@ export async function getAvailableSlashCommands(session: AgentSessionLike): Prom
   for (const name of BROWSER_NATIVE_SLASH_COMMANDS) {
     const builtin = BUILTIN_SLASH_COMMAND_DEFS.find((def) => def.name === name);
     if (!builtin) continue;
+    const browserDescription = BROWSER_NATIVE_DESCRIPTIONS[name];
     const hint = builtin.inlineHint;
+    // A browser-specific description means the registry's subcommands don't apply.
+    const subcommands = browserDescription ? undefined : builtin.subcommands;
     appendSlashCommand(commands, seenNames, {
       name: builtin.name,
       aliases: builtin.aliases,
-      description: builtin.description,
+      description: browserDescription ?? builtin.description,
       source: "builtin",
       ...(hint ? { input: { hint } } : {}),
-      ...(builtin.subcommands ? { subcommands: builtin.subcommands } : {}),
+      ...(subcommands ? { subcommands } : {}),
     });
   }
 
@@ -914,7 +926,7 @@ export class AgentSessionWrapper {
         await this.inner.setModel(model, role);
         invalidateModelsCache();
         invalidateSessionListCache();
-        return { id: model.id, provider: model.provider, ...(role ? { role } : {}) };
+        return { id: model.id, provider: model.provider, ...(role ? { role } : {}), ...this.modelSwitchState() };
       }
 
       case "set_role_model": {
@@ -924,7 +936,7 @@ export class AgentSessionWrapper {
         await this.inner.setModel(model, role);
         invalidateModelsCache();
         invalidateSessionListCache();
-        return { id: model.id, provider: model.provider, role };
+        return { id: model.id, provider: model.provider, role, ...this.modelSwitchState() };
       }
 
       case "fork": {
@@ -1246,6 +1258,39 @@ export class AgentSessionWrapper {
 
   private getExtensionStatuses(): Array<{ key: string; text: string }> {
     return Array.from(this.extensionStatuses, ([key, text]) => ({ key, text }));
+  }
+
+  /**
+   * Was ein Modellwechsel im Client nachziehen muss, ohne die Session neu zu
+   * laden.
+   *
+   * Der Wechsel selbst geht durch die SDK (`setModel`) und schreibt einen
+   * `model_change`-Eintrag. Was der Browser davon braucht, sind drei Werte:
+   * das Modell, das jetzt gilt, den Thinking-Level, den die SDK dabei neu
+   * angewendet hat (`#reapplyThinkingLevel`), und den Leaf nach dem Eintrag.
+   *
+   * Der frueher folgende `GET /api/sessions/<id>` hat stattdessen das ganze
+   * Transkript gelesen und neu gerendert — teuer und, bei einer gerade erst
+   * gestarteten Session, auch falsch: die Route liest dann die Datei, und
+   * `appendModelChange` spuelt asynchron. Diese drei Werte stehen im
+   * Speicher und koennen nicht hinter der Spuelung zurueckbleiben.
+   */
+  private modelSwitchState(): {
+    thinkingLevel?: string;
+    configuredThinkingLevel?: string;
+    leafId: string | null;
+  } {
+    // `agent` und `sessionManager` sind in Tests und bei einer noch nicht
+    // vollstaendig aufgebauten Session nicht gesetzt. Ein fehlender Wert ist
+    // hier kein Fehler: der Client laesst das Feld dann einfach stehen.
+    const thinkingLevel = this.inner.agent?.state?.thinkingLevel;
+    return {
+      ...(thinkingLevel ? { thinkingLevel } : {}),
+      ...(typeof this.inner.configuredThinkingLevel === "function"
+        ? { configuredThinkingLevel: this.inner.configuredThinkingLevel() }
+        : {}),
+      leafId: this.inner.sessionManager?.getLeafId?.() ?? null,
+    };
   }
 
   private getExtensionWidgets(): ExtensionWidgetItem[] {

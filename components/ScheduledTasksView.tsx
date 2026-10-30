@@ -363,6 +363,7 @@ export function ScheduledTasksView({ onOpenSession }: {
           error={actionError}
           home={cwdSettings?.home ?? ""}
           folders={cwdSettings?.folders ?? []}
+          defaultCwd={cwdSettings?.defaultCwd ?? null}
           onCancel={() => { setActionError(null); setDialog(null); }}
           onSave={async (input, id) => {
             setActionError(null);
@@ -403,7 +404,7 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, r
   onOpenSession?: (sessionId: string) => void;
 }) {
   const { t } = useI18n();
-  const nextRun = typeof task.nextRun === "number" ? task.nextRun : null;
+  const nextRun = task.nextRun;
   const lastRunMs = task.lastRunAt ? Date.parse(task.lastRunAt) : null;
 
   return (
@@ -442,7 +443,14 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, r
         <span>
           {t("scheduled.nextRun")}:{" "}
           {nextRun === null
-            ? t("scheduled.noNextRun")
+            ? task.enabled
+              // Ein eingeschalteter Plan ohne naechsten Lauf ist kein
+              // ausgeschalteter: der Ausdruck trifft nie (31. Februar). Ohne
+              // diesen Unterschied sahen "ich habe es abgeschaltet" und "der
+              // Plan ist tot" gleich aus, und der Nutzer suchte den Fehler an
+              // der falschen Stelle.
+              ? t("scheduled.neverMatches")
+              : t("scheduled.noNextRun")
             : `${relativeTime(nextRun, nowMs, t)} · ${absoluteTime(nextRun)}`}
         </span>
         <span>
@@ -641,7 +649,7 @@ function weekdayLabelKey(value: string): string {
  * sie den Hauptthread. Der erste Klick schaltet deshalb in einen
  * Bestaetigungszustand, der zweite loescht.
  */
-function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folders }: {
+function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folders, defaultCwd }: {
   task: ScheduledTaskView | null;
   busy: boolean;
   error?: string | null;
@@ -659,6 +667,8 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folde
   /** Die waehlbaren Ordner und die Home — dieselbe Quelle wie die Einstellungen. */
   home: string;
   folders: string[];
+  /** Der Standardordner des Kontos; `null` heisst "die Home". */
+  defaultCwd: string | null;
 }) {
   const { t } = useI18n();
 
@@ -708,9 +718,49 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folde
    * Wurzel, 401/503 der Sperre). Beide sind Servertext und bleiben als Detail
    * stehen; davor steht der uebersetzte Satz aus dem Katalog.
    */
+  /**
+   * Der Ordner, dessen Modelle gelten — **dieselbe Auflösung wie der Zeitplaner**.
+   *
+   * `task.cwd ?? Kontostandard ?? Home`, also exakt die Reihenfolge aus
+   * `lib/scheduler.ts:runCwd`. Sie steht hier nachgebaut und nicht importiert,
+   * weil dieser Wert nur fuer die Modellliste gebraucht wird (welche Modelle
+   * sind in *diesem* Projekt sichtbar) — aber sie muss mit dem Lauf
+   * uebereinstimmen, sonst zeigt der Dialog Modelle an, die der Lauf nicht
+   * bekommt, oder umgekehrt.
+   *
+   * `null` nur, solange die Einstellungen noch nicht geladen sind: dann wird
+   * ohne `?cwd=` gefragt, was die Route auf `process.cwd()` fallen laesst —
+   * derselbe Zustand wie vor dieser Aenderung, und der naechste Lauf der
+   * Effekte holt es nach.
+   */
+  const modelsCwd = cwd ?? defaultCwd ?? home ?? "";
+
+  /**
+   * **Ein** Ort fuer die Modellliste, und sie wird neu geladen, wenn sich der
+   * Ordner aendert.
+   *
+   * Ohne `?cwd=` loest die Route `process.cwd()` auf — das Verzeichnis des
+   * Servers, nicht des Projekts. Fuer einen Nicht-Administrator, dessen
+   * erlaubte Wurzeln diese nicht enthaelt, ist die Antwort dann `403`, und
+   * die Liste bleibt leer, egal wie oft man es erneut versucht (Befund #3).
+   * Der Composer (`hooks/useAgentSession.ts`) und `ModelRolesPanel` schicken
+   * den Ordner laengst mit; hier fehlte er.
+   *
+   * Ein Fehlschlag wird **angezeigt** und nicht ersetzt: es gibt keine
+   * Antwort von `/api/models`, die ein Feld `models` traegt — alle Fehlerkoerper
+   * sind `{error}`. Eine erfundene leere Liste an dieser Stelle war der zweite
+   * Teil des Befunds (#2): der Grund verschwand, und uebrig blieb ein leeres
+   * Auswahlfeld ohne Erklaerung.
+   *
+   * Beim Ordnerwechsel bleibt eine bereits gewaehlte Modellkennung stehen: ob
+   * sie im neuen Projekt noch existiert, sagt erst die neue Liste, und der
+   * Hinweis darunter (`:989`) zeigt es an. Sie hier zu loeschen waere ein
+   * Datenverlust auf Verdacht.
+   */
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/models")
+    const query = modelsCwd ? `?cwd=${encodeURIComponent(modelsCwd)}` : "";
+    void fetch(`/api/models${query}`)
       .then(async (response) => {
         const body = await response.json().catch(() => ({})) as ModelsResponse & { error?: string; modelError?: string };
         if (cancelled) return;
@@ -730,7 +780,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folde
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, [t, modelsCwd]);
 
   /** Die drei Felder des einfachen Editors — `null`, wenn der Ausdruck sie nicht hergibt. */
   const [editor, setEditor] = useState<EditorValue | null>(() => toEditorValue(task?.cron ?? "0 8 * * *"));

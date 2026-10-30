@@ -972,6 +972,149 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `TerkEl6PVU82TcXRvCvwn`, 494 files under `.next/static/**/*.js`, `/api/model-roles/route` in the app-paths manifest |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.17.0
+
+Released 2026-10-30.
+
+### Layout
+
+**Die Wortmarke verlaesst die Kopfzeile.** Sie stand in der Seitenleiste ueber
+den vier Knoepfen und kostete genau die Breite, die denen fehlte. Jetzt stehen
+die vier als beschriftetes Raster: zwei Spalten, zwei Reihen, **116,5 x 44 px**
+je Knopf — gemessen bei 1440x900 und bei 390x844, in beiden Faellen dieselben
+Masse, weil das Raster an der Spalte haengt und nicht am Fenster. Ein Knopf ist
+damit 44 px hoch, das ist die kleinste Flaeche, die ein Finger zuverlaessig
+trifft.
+
+**Der Grund fuer den waagerechten Ueberlauf war ein Selektor, nicht ein
+Wert.** `.sidebar-container > *` erbte die Breite des Elternelements, und ein
+Element, das breiter ist als seine Spalte, macht die Spalte scrollbar statt
+sich zu kuerzen. Die Regel ist jetzt auf `width: 100%` und `min-width: 0`
+gesetzt; `min-width` ist der Teil, der das Kuerzen erlaubt, `width` allein
+haette den Ueberlauf nur verschoben.
+
+**Das OMP-Zeichen steht als Wasserzeichen hinter dem Gespraech.** Zentriert,
+`min(42%, 22rem)` gross, Deckkraft **0,08** im hellen und **0,05** im dunklen
+Schema, `pointer-events: none` — es ist Hintergrund, kein Ziel. Die niedrigeren
+Werte als zuerst geplant sind Absicht: bei 0,12 war das Zeichen hinter Text mit
+zwei Zeilen Abstand noch als Kontur zu lesen.
+
+**Trefferflaechen unter 44 px sind auf Touch-Geraeten angehoben.** Unter
+`@media (max-width: 640px), (hover: none)` werden die Werkzeugknoepfe der Zeile
+und die Zeilenaktionen auf 44x44 px gebracht und die Aktionen dauerhaft
+eingeblendet, statt erst beim Ueberfahren zu erscheinen — auf einem Geraet ohne
+Zeiger gibt es kein Ueberfahren.
+
+### Modellwechsel
+
+**Der Modellwaehler in einem Gespraech mit Verlauf war tot oder langsam.** Drei
+Ursachen, jede gemessen, jede einzeln behoben:
+
+**Ein Klick, der waehrend eines laufenden Wechsels kam, wurde verworfen.**
+`if (modelSwitchPendingRef.current) return` warf jeden zweiten Klick weg, und
+der Ausloeser war waehrend der Anfrage `disabled`. Jetzt gibt es eine
+Warteschlange, in der der **letzte** Klick gewinnt — nicht der erste, nicht
+beide — und die Anfrage bricht nach **20 s** ab, statt den Knopf fuer immer
+gesperrt zu lassen.
+
+**Nach jedem Wechsel wurde das ganze Transkript neu geladen.** Die Route gibt
+jetzt die geaenderten Felder zurueck — Modell, Thinking-Level und den neuen
+Leaf — und der Client uebernimmt sie, statt `GET /api/sessions/<id>` zu rufen.
+Gemessen an einer Sitzung mit **2000 Nachrichten**: **0** `GET
+/api/sessions/<id>` nach dem Wechsel (vorher einer), und die Beschriftung
+wechselt in **585 ms** statt **708 ms**. Die 123 ms sind der Request, der
+wegfaellt; der Rest ist die Antwort der Route.
+
+**Eine kalte Sitzung wurde innerhalb des POST gestartet.** Der Wechsel in einer
+Sitzung, die noch nicht geladen war, baute sie im Request auf und oeffnete dabei
+einen `EventSource` — der Client wartete auf ein Ereignis, das er selbst
+ausgeloest hatte. Jetzt schreibt der Wechsel den Journal-Eintrag direkt:
+**528 ms**, kein `EventSource`.
+
+### Zeitplaner-Haertung
+
+**Ein Cron-Ausdruck, der nie zutrifft, kostete einen Durchlauf durch die
+Jahre.** `0 0 31 2 *` — der 31. Februar — wurde Minute fuer Minute vorwaerts
+gesucht, **246,7 ms** je Aufruf, synchron, im Request. `isUnsatisfiable` prueft
+jetzt die Feldmasken: ein Monat, dessen Tage im Tagesfeld nicht vorkommen, oder
+ein Wochentag, der im Monatsraster nicht existiert, ist in **0,1 ms** erkannt,
+und die Antwort ist `null` statt eines Datums im Jahr 2400.
+
+**Ein nie zutreffender Ausdruck sieht jetzt anders aus als ein abgeschalteter
+Task.** Beides ergab vorher „kein naechster Lauf"; das eine heisst „du hast ihn
+ausgeschaltet", das andere „dieser Ausdruck wird nie wahr". Die Zeile sagt
+welches (`scheduled.neverMatches`), und `nextRun` ist nicht mehr optional,
+sondern `null` mit Grund.
+
+**Der Modelldialog fragt die Liste jetzt fuer das Projekt der Aufgabe ab.**
+`/api/models` ohne `cwd` loest auf `process.cwd()` des Servers auf; fuer einen
+Mandanten, dessen erlaubte Wurzeln das nicht enthalten, antwortet die Route
+**403** und die Liste kam leer zurueck — ein leerer Katalog sah wie „es gibt
+keine Modelle" aus. Der Aufruf traegt jetzt `?cwd=<Projekt der Aufgabe>` und
+laedt neu, wenn das Arbeitsverzeichnis im Dialog wechselt. Schlaegt er fehl,
+steht der Fehler da, statt einer erfundenen leeren Liste.
+
+### Upstream-Port
+
+Fuenf Stuecke aus `ddallabenetta/omp-web` uebernommen, jedes einzeln geprueft
+und mit seinem Test:
+
+- **Die `.jl`-Sprachzuordnung** im Dateibetrachter
+  (`app/api/files/[...path]/route.ts`, `route.language.test.mjs`).
+- **`BROWSER_NATIVE_DESCRIPTIONS`** fuer `/fork` — der Browser beschreibt die
+  Gabelung selbst, statt sie dem Modell zu ueberlassen (`lib/agent-client.ts`).
+- **`SessionIdentity`, `RuntimeSessionBinding` und
+  `canApplySessionIdentity`** (`lib/types.ts`) — die Typen, an denen die
+  Sitzungsbindung haengt.
+- **Die Fortsetzungs-API von `workspace-memory`**
+  (`lib/workspace-memory.ts`, `workspace-memory.test.mjs`).
+- **PR #106: `ModelsConfigFile.invalidate()`** in `invalidateOmpRuntime`
+  (`lib/omp-runtime.ts`, `omp-runtime.test.mjs`) — eine geaenderte
+  `models.yml` wird jetzt auch dann gesehen, wenn der Prozess sie schon einmal
+  gelesen hat.
+
+### README
+
+**Die README beschreibt jetzt das Produkt, das hier laeuft.** Die alte Fassung
+sagte „this fork adds: …" und listete fuenf Punkte; tatsaechlich sind
+Konten, Zeitplaner, Kalender, Terminal, Dateiarbeit und Steuerung eigenes
+Arbeitsgebiet, und `docs/inventory-api.md` zaehlt 69 Routen. Neu sind ein
+Abschnitt *What is in flight* fuer das Unveroeffentlichte, die gemessenen
+Zahlen aus frueheren Releases, und Korrekturen an Stellen, an denen der Text
+dem Code widersprach — der Kalender bot `PUT` an, die Route kennt nur `PATCH`;
+ein Thinking-Block wird nicht mitgestreamt, sondern per `blockIndex` geholt;
+und der `#quick-start`-Anker, auf den `docs/docker.md` zeigt, existierte nicht.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Der IME ist nur im Unit-Test geprueft**, nicht an einer echten
+  Eingabemethode. Aus der Steuerungs-Geste in v0.16.0 sind zwei Wege abgedeckt
+  (`isComposing`, `keyCode 229`); welcher Browser ihn wann setzt, ist damit
+  nicht belegt.
+- **Kein echtes Telefon und kein Touch-Geraet.** Die 44-px-Regeln sind bei
+  390x844 im Browser gemessen, aber mit der Maus und ohne echte Touch-Eingabe;
+  wie sich die Ziele unter einem Finger verhalten, ist damit nicht belegt.
+- **Die Tauri-Desktop-Shell wurde nicht gebaut.** `src-tauri/` steht weiter auf
+  `0.2.10`; `bun run desktop:sync-version` gleicht sie an und laeuft in
+  `publish-desktop.yml`, nicht in diesem Checkout.
+- **Die `runtimeId`-Familie aus Upstream (PR #134, 20 Commits) wurde bewusst
+  nicht uebernommen.** Sie ordnet Sitzungen einer Laufzeit-Kennung zu, waehrend
+  unsere Mandantentrennung auf dem Eigentuemer der Sitzung beruht; beides
+  nebeneinander ergaebe zwei Wahrheiten darueber, wem eine Sitzung gehoert. Das
+  ist eine Architekturentscheidung, kein Port.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1646 pass, 0 fail, 1 skip — 1647 tests, 187 files (two consecutive runs) |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `f_buZIGYXKA5umDsBzB57`, 494 files under `.next/static/**/*.js`, `/api/model-roles/route` and `/api/agent/[id]/route` in the app-paths manifest |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

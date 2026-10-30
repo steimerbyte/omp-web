@@ -225,7 +225,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, modelRoles, toolPreset, thinkingLevel,
     effectiveThinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
-    isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
+    isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching,
+    modelSwitchError, clearModelSwitchError, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, subagents,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
@@ -404,6 +405,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       modelRoles={modelRoles}
       onRoleModelChange={handleRoleModelChange}
       modelSwitching={modelSwitching}
+      modelSwitchError={modelSwitchError}
+      onDismissModelSwitchError={clearModelSwitchError}
       onCompact={session || isNew ? handleCompact : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}

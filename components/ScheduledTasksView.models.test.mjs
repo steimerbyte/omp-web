@@ -132,6 +132,11 @@ const MODELS_RESPONSE = {
   roles: [],
 };
 
+/** Die Home des Kontos in diesem Harness. */
+const HOME = "/srv/ome/home";
+/** Ein zweites Projekt, damit ein Ordnerwechsel waehlbar ist. */
+const PROJECT_B = "/srv/ome/home/projekt-b";
+
 const json = (body) => new Response(JSON.stringify(body), {
   status: 200,
   headers: { "content-type": "application/json" },
@@ -140,10 +145,31 @@ const json = (body) => new Response(JSON.stringify(body), {
 // Scoped and put back afterwards: `lib/http-dispatcher.ts` snapshots
 // `globalThis.fetch` when it loads (see `DialogFocus.test.mjs`).
 const originalFetch = globalThis.fetch;
+
+/**
+ * Die Anfragen an `/api/models`, in der Reihenfolge, in der sie abgingen.
+ *
+ * Der Befund #3 ist "der Ordner wird nicht mitgeschickt" — das ist eine
+ * Eigenschaft der *Anfrage*, nicht des Zustands. Ohne diese Liste liesse sich
+ * nur pruefen, dass irgendwann Modelle ankommen, und das taten sie vorher auch
+ * (mit `process.cwd()` des Servers).
+ */
+const modelsRequests = [];
+
+/**
+ * Die Antwort auf `/api/models`; ein Test kann sie ersetzen, um einen
+ * Fehlerkoerper zu erzwingen.
+ */
+let modelsResponder = () => json(MODELS_RESPONSE);
+
 globalThis.fetch = async (input) => {
   const url = typeof input === "string" ? input : String(input?.url ?? input);
-  if (url.startsWith("/api/models")) return json(MODELS_RESPONSE);
-  if (url.startsWith("/api/scheduled-tasks")) return json({ tasks: [] });
+  if (url.startsWith("/api/models")) {
+    modelsRequests.push(url);
+    return modelsResponder();
+  }
+  if (url.startsWith("/api/scheduled-tasks")) return tasksResponder();
+  if (url.startsWith("/api/scheduled-settings")) return json({ defaultCwd: null, home: HOME, folders: [HOME, PROJECT_B] });
   return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
 };
 test.after(() => { globalThis.fetch = originalFetch; });
@@ -632,4 +658,159 @@ test("Eine deaktivierte Aufgabe laesst sich trotzdem von Hand starten", async ()
   } finally {
     globalThis.fetch = baseFetch;
   }
+});
+
+// --- Befund #3: der Ordner gehoert an die Modellanfrage ------------------------
+
+/**
+ * Waehlt einen Ordner im Auswahlfeld des Dialogs.
+ *
+ * linkedom hat an `<select>` keinen `value`-Setter (dieselbe Notiz steht in
+ * `lib/scheduled-settings.test.mjs`): die Zuweisung wirft "Attempted to assign
+ * to readonly property". Die Option wird deshalb direkt markiert, das ist der
+ * Zustand, den der Browser beim Klicken herstellt.
+ */
+async function selectFolder(value) {
+  const select = win.document.querySelector("#scheduled-cwd");
+  assert.ok(select, "das Arbeitsordner-Feld fehlt");
+  const option = [...select.querySelectorAll("option")].find((o) => o.getAttribute("value") === value);
+  assert.ok(option, `der Ordner ${value} steht nicht in der Auswahl: ${[...select.querySelectorAll("option")].map((o) => o.getAttribute("value")).join(", ")}`);
+  await act(async () => {
+    for (const other of select.querySelectorAll("option")) other.selected = false;
+    option.selected = true;
+    select.dispatchEvent(new win.Event("change", { bubbles: true }));
+  });
+  await settle();
+}
+
+/** Oeffnet den Anlegen-Dialog und gibt die Container zurueck. */
+async function openDialog() {
+  const open = buttonByText("New scheduled task");
+  assert.ok(open, "der Knopf zum Anlegen fehlt");
+  await act(async () => { open.click(); });
+  await settle();
+}
+
+test("die Modellanfrage traegt den effektiven Arbeitsordner", async () => {
+  modelsRequests.length = 0;
+  modelsResponder = () => json(MODELS_RESPONSE);
+  const { root } = await mountView();
+  await openDialog();
+
+  // Ohne eigene Angabe: `null ?? Kontostandard ?? Home` — hier der Standard
+  // aus `/api/scheduled-settings` (`defaultCwd: null`), also die Home.
+  assert.ok(modelsRequests.length > 0, "es wurde keine Modellanfrage gestellt");
+  const url = modelsRequests.at(-1);
+  assert.ok(
+    url.includes(`?cwd=${encodeURIComponent(HOME)}`),
+    `die Anfrage nennt den Ordner nicht: ${url}`,
+  );
+  root.unmount();
+});
+
+test("ein Ordnerwechsel laedt die Modellliste neu, fuer den neuen Ordner", async () => {
+  modelsRequests.length = 0;
+  modelsResponder = () => json(MODELS_RESPONSE);
+  const { root } = await mountView();
+  await openDialog();
+
+  const before = modelsRequests.length;
+  // Ein Ordner, den `assertUsableCwd` akzeptiert: unter der Home.
+  const OTHER = PROJECT_B;
+  await selectFolder(OTHER);
+  await settle();
+
+  assert.ok(modelsRequests.length > before, "der Ordnerwechsel hat keine neue Anfrage ausgeloest");
+  const urls = modelsRequests.slice(before);
+  assert.equal(urls.length, 1, `genau eine neue Anfrage: ${JSON.stringify(urls)}`);
+  assert.ok(
+    urls[0].includes(`?cwd=${encodeURIComponent(OTHER)}`),
+    `die neue Anfrage nennt den neuen Ordner nicht: ${urls[0]}`,
+  );
+  root.unmount();
+});
+
+test("ein Fehlerkoerper wird angezeigt, statt eine leere Liste zu erfinden", async () => {
+  modelsRequests.length = 0;
+  modelsResponder = () => new Response(JSON.stringify({ error: "Access denied" }), {
+    status: 403,
+    headers: { "content-type": "application/json" },
+  });
+  const { root } = await mountView();
+  await openDialog();
+
+  // Der Dialog haengt ueber ein Portal an `document.body`, nicht am Container
+  // der Ansicht — deshalb wird dort gelesen, wo der Nutzer ihn sieht.
+  const dialog = win.document.querySelector('[data-slot="dialog-content"]');
+  assert.ok(dialog, "der Dialog ist nicht aufgegangen");
+  assert.ok(
+    (dialog.textContent ?? "").includes("Access denied"),
+    `der Servertext fehlt in der Oberflaeche: ${(dialog.textContent ?? "").slice(0, 300)}`,
+  );
+  root.unmount();
+  modelsResponder = () => json(MODELS_RESPONSE);
+});
+
+// --- Befund #12/#13: deaktiviert, nie treffend, Feld fehlt --------------------
+
+/** Mountet die Ansicht mit einer festen Aufgabenliste. */
+/**
+ * Die Aufgaben, die der naechste Abruf zurueckgibt.
+ *
+ * Ueber eine Variable und nicht ueber einen zweiten `fetch`-Wrapper: der
+ * Wrapper oben ist beim Laden von `lib/http-dispatcher.ts` gesnapshottet
+ * (siehe `DialogFocus.test.mjs`), ein spaeter gesetztes `globalThis.fetch`
+ * kaeme fuer die Komponente zu spaet an. Die Liste hier wird bei jedem Aufruf
+ * gelesen.
+ */
+let tasksResponder = () => json({ tasks: [] });
+
+async function mountWithTasks(tasks) {
+  tasksResponder = () => json({ tasks });
+  try {
+    return await mountView();
+  } finally {
+    tasksResponder = () => json({ tasks: [] });
+  }
+}
+
+const baseTask = {
+  id: "t1",
+  name: "Nachtlauf",
+  cron: "0 8 * * *",
+  prompt: "Fasse zusammen.",
+  provider: "buds-gateway",
+  modelId: "qwen3.8-27b",
+  cwd: null,
+  enabled: true,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  lastRunAt: null,
+};
+
+test("ein eingeschalteter Plan ohne naechsten Lauf zeigt 'trifft nie'", async () => {
+  // `nextRun: null` bei `enabled: true` heisst: der Ausdruck trifft nie
+  // (31. Februar). Das ist ein anderer Zustand als "ich habe die Aufgabe
+  // abgeschaltet", und die Zeile muss ihn benennen.
+  const { root, container } = await mountWithTasks([{ ...baseTask, enabled: true, nextRun: null }]);
+  const text = container.textContent ?? "";
+  assert.ok(text.includes("This schedule never occurs"), `der Text fehlt: ${text.slice(0, 300)}`);
+  assert.equal(text.includes("No upcoming run"), false, "und nicht der Text fuer einen abgeschalteten Plan");
+  root.unmount();
+});
+
+test("eine abgeschaltete Aufgabe zeigt weiterhin 'kein naechster Lauf'", async () => {
+  const { root, container } = await mountWithTasks([{ ...baseTask, enabled: false, nextRun: null }]);
+  const text = container.textContent ?? "";
+  assert.ok(text.includes("No upcoming run"), `der Text fehlt: ${text.slice(0, 300)}`);
+  assert.equal(text.includes("This schedule never occurs"), false, "eine abgeschaltete Aufgabe trifft nicht 'nie'");
+  root.unmount();
+});
+
+test("eine faellige Aufgabe zeigt den Zeitpunkt, nicht 'nie'", async () => {
+  const when = Date.now() + 3_600_000;
+  const { root, container } = await mountWithTasks([{ ...baseTask, enabled: true, nextRun: when }]);
+  const text = container.textContent ?? "";
+  assert.equal(text.includes("This schedule never occurs"), false);
+  assert.equal(text.includes("No upcoming run"), false, "es gibt einen naechsten Lauf");
+  root.unmount();
 });
