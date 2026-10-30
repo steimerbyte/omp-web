@@ -44,6 +44,8 @@ export interface ScheduledTaskInput {
   provider: string;
   modelId: string;
   thinkingLevel?: string | null;
+  /** Absolut und im Konto, oder `null` fuer "Standardordner des Kontos". */
+  cwd?: string | null;
   enabled?: boolean;
 }
 

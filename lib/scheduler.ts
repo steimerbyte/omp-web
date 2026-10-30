@@ -4,6 +4,7 @@ import { listWebAccounts } from "../bin/web-auth-store.js";
 import { getUserHome, type WebIdentity } from "./request-identity";
 import { startRpcSession } from "./rpc-manager";
 import { nextRunAfter, parseSchedule } from "./schedule";
+import { readScheduledSettings } from "./scheduled-settings";
 import {
   claimRun,
   listTasks,
@@ -234,9 +235,26 @@ export function listScheduleIdentities(env: NodeJS.ProcessEnv = process.env): We
   return identities;
 }
 
-/** Das Arbeitsverzeichnis eines Laufs: das der Aufgabe, sonst die Home des Kontos. */
+/**
+ * Das Arbeitsverzeichnis eines Laufs.
+ *
+ * Die Reihenfolge ist die der Frage "was hat der Nutzer gemeint": die Angabe an
+ * *dieser* Aufgabe schlaegt die Voreinstellung des Kontos ("Arbeitsordner" in
+ * den Einstellungen), und erst wenn beides fehlt, die Home des Kontos. Damit
+ * ist die Konto-Einstellung ein Default im Wortsinn: sie aendert jede Aufgabe,
+ * die keine eigene Angabe hat, und keine, die eine hat.
+ *
+ * Die eine Stelle fuer beide Wege — der Durchlauf und `runTaskNow` rufen
+ * dieselbe Funktion. Ein zweiter Aufloeser wuerde frueher oder spaeter eine
+ * andere Reihenfolge haben, und dann startete der Handstart in einem anderen
+ * Verzeichnis als der Zeitplan.
+ *
+ * `readScheduledSettings` wirft nicht und liefert `null` fuer eine kaputte
+ * Datei: eine unlesbare *Vorliebe* darf den Lauf nicht verhindern, sie faellt
+ * auf die Home zurueck.
+ */
 function runCwd(identity: WebIdentity, task: ScheduledTask): string {
-  return task.cwd ?? getUserHome(identity);
+  return task.cwd ?? readScheduledSettings(identity).defaultCwd ?? getUserHome(identity);
 }
 
 /**

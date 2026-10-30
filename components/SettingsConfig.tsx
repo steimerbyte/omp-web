@@ -7,6 +7,7 @@ import { PluginsConfig } from "./PluginsConfig";
 import { AccessConfig } from "./AccessConfig";
 import { UsersConfig } from "./UsersConfig";
 import { QuickPhrasesConfig } from "./QuickPhrasesConfig";
+import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 import { AnimationsConfig } from "./AnimationsConfig";
 import { Skeleton } from "./motion/Skeleton";
 import { SearchableSelect } from "./SearchableSelect";
@@ -26,7 +27,7 @@ import type {
 } from "@/lib/settings-api";
 import styles from "./SettingsConfig.module.css";
 
-type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "access" | "users" | "quickPhrases" | "animations" | `settings:${string}`;
+type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "access" | "users" | "quickPhrases" | "scheduled" | "animations" | `settings:${string}`;
 
 interface SettingsConfigProps {
   cwd?: string | null;
@@ -46,6 +47,7 @@ const CORE_SECTIONS: Array<{ id: SettingsSection; label: string; icon: string; r
   { id: "access", label: "Access", icon: "access" },
   { id: "users", label: "Accounts", icon: "users", requiresAdmin: true },
   { id: "quickPhrases", label: "Quick phrases", icon: "quickPhrases" },
+  { id: "scheduled", label: "Scheduled tasks", icon: "tasks" },
   { id: "animations", label: "Animations", icon: "animations" },
 ];
 
@@ -387,7 +389,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
           <div className={styles.closeRail}><button type="button" className={styles.closeButton} onClick={close}><span>Close settings</span><span aria-hidden="true">×</span></button></div>
         </aside>
         <main className={styles.content}>
-          {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : section === "animations" ? <AnimationsConfig /> : renderGenericSettings()}
+          {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : section === "scheduled" ? <ScheduledTasksSettings /> : section === "animations" ? <AnimationsConfig /> : renderGenericSettings()}
         </main>
       </div>
     </div>

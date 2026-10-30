@@ -772,6 +772,112 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `r3XAnmMxcimau1286CC-V`, 493 files under `.next/static/**/*.js`, `/api/scheduled-tasks/[id]/run` in the app-paths manifest |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.15.0
+
+Released 2026-10-30.
+
+### Neu: Arbeitsordner fuer geplante Aufgaben
+
+**Eine Aufgabe darf in einem anderen Ordner starten als der Home des Kontos.**
+Bisher lief jeder geplante Lauf in der Home des Kontos. Fuer einen Prompt, der
+in einem Projekt arbeitet, ist das der falsche Ort: der Agent oeffnete die
+Home, sah dort Unterordner und musste den Pfad im Prompt erraten. Jetzt hat
+jede Aufgabe ein Feld *Arbeitsordner*, und die Einstellungen haben denselben
+Wert als Voreinstellung fuer das ganze Konto.
+
+**Die Aufloesung ist `task.cwd` → Kontostandard → Home.** Die Angabe an *dieser*
+Aufgabe schlaegt den Kontostandard, und erst wenn beides fehlt, die Home. Damit
+ist die Konto-Einstellung ein Default im Wortsinn: sie aendert jede Aufgabe,
+die keine eigene Angabe hat, und keine, die eine hat. Beide Wege — der
+Zeitplaner-Durchlauf und der Handstart — rufen dieselbe Funktion `runCwd`. Ein
+zweiter Aufloeser haette frueher oder spaeter eine andere Reihenfolge, und dann
+startete der Handstart in einem anderen Verzeichnis als der Zeitplan.
+
+**Die Pruefung ist serverseitig und in dieser Reihenfolge: absolut → innerhalb
+der Konto-Home → existiert → ist ein Verzeichnis → auch aufgeloest innerhalb
+der Home.** Ein abgelehnter Ordner antwortet als `400` mit `field: "cwd"`, in
+derselben Form wie `name` und `cron`. Die letzte Stufe faengt den Symlink, der
+lexikalisch drinnen und echt draussen liegt. Die Grenze steht bewusst **vor**
+der Bestandspruefung: andernfalls verriete der Unterschied zwischen "gibt es
+nicht" und "ist kein Verzeichnis", was ausserhalb der Home liegt.
+
+**Warum die Grenze genau die Konto-Home ist und nicht weiter.** Der Besitz
+einer Sitzung wird aus ihrem `cwd` abgeleitet (`lib/session-reader.ts`); ein
+Lauf in fremder Home waere eine Sitzung eines anderen Kontos. `assertCwd` im
+Aufgabenspeicher zieht dieselbe Grenze und wirft beim Lesen jeden `cwd`
+ausserhalb davon weg. Eine *weitere* Grenze — etwa `getAllowedFileRoots`, das
+auch Projektordner ausserhalb der Home kennt — wuerde einen Pfad speichern, den
+der Speicher beim naechsten Lesen stillschweigend verwirft: der Lauf fiele ohne
+Meldung auf die Home zurueck, obwohl der Nutzer einen Ordner gewaehlt und
+"gespeichert" gesehen hat. Es gibt deshalb eine Grenze, nicht zwei.
+
+**Der Standard liegt in `omp-web-scheduled-settings.json`, nicht in
+`config.yml`.** `config.yml` gehoert omp; ein Feld dort waere eine Einstellung,
+die omp beim naechsten Speichern nicht kennt und weglaesst. Dieselbe
+Begruendung und derselbe Ort wie bei `omp-web-quick-phrases.json`. Die Datei
+wird atomar und mit `0o600` geschrieben, und auch beim *Lesen* wird die Grenze
+geprueft: eine von Hand bearbeitete Datei geht an jeder API-Pruefung vorbei, und
+ein `defaultCwd` ausserhalb der Home faellt deshalb auf `null` zurueck statt
+einen Lauf in fremder Home zu starten. Eine unlesbare *Vorliebe* darf einen
+Durchlauf nicht beenden.
+
+**Im Dialog bleibt ein gespeicherter Ordner sichtbar, auch wenn er nicht in der
+Liste steht.** Die Auswahl bietet Home, die Projektordner und "Custom path…".
+Ein Pfad, der in keiner dieser Listen ist (Projekt entfernt, von Hand gesetzt),
+wird als eigener Eintrag angezeigt statt stillschweigend auf
+"Voreinstellung" zurueckzuspringen — sonst wuerde das blosse Oeffnen des
+Dialogs die Angabe loeschen. Das Feld "Custom path…" aendert nichts, bis ein
+Pfad getippt ist; ein sofortiges `null` waere eine Loeschung, die niemand
+bestellt hat.
+
+### Behoben: EXPLORER zeigte „Failed to load files (HTTP 404)"
+
+`encodeFilePathForApi("/")` gab den **leeren String** zurueck: `"/".split("/")`
+ergibt zwei leere Segmente, und beide fielen durch `.filter(Boolean)`. Der
+Client fragte damit `/api/files/?type=list` — eine URL ohne Pfad. Next leitet
+sie mit `308` auf `/api/files` um, und dort greift keine Route: `[...path]` ist
+ein nicht-optionaler Catch-all, also matcht `/api/files` gar nichts, und die
+Antwort war `404`. Sichtbar wurde das in der Seitenleiste als „Failed to load
+files (HTTP 404)" statt der Ordnerliste — fuer jedes Konto, dessen Home `/`
+ist, also fuer Administratoren.
+
+Der Fix ist eine Zeile: ein Pfad aus lauter Schraegstrichen kodiert jetzt als
+das **eine** Segment `%2F`, das die Route zu `/` zurueckdekodiert. Alle anderen
+Pfade bleiben byte-identisch, und das steht als Gegenprobe im Test
+(`/home/me/workspace` kodiert weiter zu `home/me/workspace`, ein Dateiname mit
+Leerzeichen und Prozentzeichen weiter zu `tmp/a%20b%25c`). Dazu kommt ein Test,
+dass die Allowlist unveraendert bleibt — `<home-root>` und `/etc` werden
+weiterhin mit `403` abgelehnt, der Fix hat die Grenze nicht verschoben — und
+drei Komponenten-Tests, die ihren Pfad aus der URL ableiteten, falten fuehrende
+Schraegstriche jetzt genauso wie `filePathFromSegments`.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Die ausgelieferte Instanz.** Beide Aenderungen sind gegen einen
+  Produktionsbuild in Chromium geprueft (Explorer listet und navigiert, das
+  Feld steht im Dialog, der Kontostandard greift, die Aufgabenangabe schlaegt
+  ihn); die Auslieferung auf `agent-pc` passiert im selben Arbeitsschritt
+  direkt nach diesem Release.
+- **Ein Lauf in einem Ordner ausserhalb der Konto-Home ist nicht vorgesehen**,
+  und das ist eine Grenze und kein Versehen (siehe oben, Sitzungsbesitz). Wer
+  das braucht, braucht zuerst eine andere Besitzregel.
+- **Die Desktop-Bundles wurden nicht gebaut**, und `src-tauri/Cargo.toml` /
+  `src-tauri/tauri.conf.json` stehen weiter auf `0.2.10`.
+  `bun run desktop:sync-version` gleicht sie an und laeuft in
+  `publish-desktop.yml`, nicht in diesem Checkout.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1585 pass, 0 fail, 1 skip — 1586 tests, 180 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `XhlGSZR1KxkQ1P7groG2F`, 494 files under `.next/static/**/*.js`, `/api/scheduled-settings` in the app-paths manifest |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

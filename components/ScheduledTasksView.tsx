@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useScheduledTasks, type ScheduledTaskView } from "@/hooks/useScheduledTasks";
+import { useScheduledSettings } from "@/hooks/useScheduledSettings";
+import { CwdPicker } from "./CwdPicker";
 import { describeSchedule, parseSchedule, SCHEDULE_PRESETS, ScheduleError, type ScheduleDescription } from "@/lib/schedule";
 import { MAX_TASK_NAME_LENGTH, MAX_TASK_PROMPT_LENGTH } from "@/lib/scheduled-task-limits";
 import {
@@ -143,6 +145,14 @@ export function ScheduledTasksView({ onOpenSession }: {
 }) {
   const { t } = useI18n();
   const { tasks, error, reload, create, update, remove, runNow } = useScheduledTasks();
+  /**
+   * Die Ordnerliste und die Konto-Home fuer das Auswahlfeld im Dialog.
+   *
+   * Aus den *Einstellungen* und nicht aus `/api/projects`: die Einstellungen
+   * liefern schon genau die Ordner, die `assertUsableCwd` akzeptiert, und ein
+   * zweiter Aufruf waere eine zweite Liste mit einem zweiten Cache.
+   */
+  const { settings: cwdSettings } = useScheduledSettings();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -338,6 +348,7 @@ export function ScheduledTasksView({ onOpenSession }: {
                 onRunNow={() => void handleRunNow(task)}
                 running={runningId === task.id}
                 runError={runError?.id === task.id ? runError.text : null}
+                runCwd={task.cwd ?? cwdSettings?.defaultCwd ?? cwdSettings?.home ?? ""}
                 onOpenSession={onOpenSession}
               />
             ))}
@@ -350,6 +361,8 @@ export function ScheduledTasksView({ onOpenSession }: {
           task={dialog.mode === "edit" ? dialog.task : null}
           busy={busy}
           error={actionError}
+          home={cwdSettings?.home ?? ""}
+          folders={cwdSettings?.folders ?? []}
           onCancel={() => { setActionError(null); setDialog(null); }}
           onSave={async (input, id) => {
             setActionError(null);
@@ -375,7 +388,7 @@ export function ScheduledTasksView({ onOpenSession }: {
 }
 
 /** Eine Zeile der Liste. */
-function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, onOpenSession }: {
+function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, runCwd, onOpenSession }: {
   task: ScheduledTaskView;
   nowMs: number;
   onToggle: () => void;
@@ -385,6 +398,8 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, o
   running: boolean;
   /** Warum der letzte Handstart dieser Aufgabe gescheitert ist. */
   runError: string | null;
+  /** Wo der Lauf startet: eigener Ordner, sonst Standardordner, sonst Home. */
+  runCwd: string;
   onOpenSession?: (sessionId: string) => void;
 }) {
   const { t } = useI18n();
@@ -439,6 +454,11 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, o
               ? ` · ${t("scheduled.statusError")}`
               : ""}
         </span>
+        {/* Der Ordner steht an der Zeile, nicht nur im Dialog: "in welchem
+            Verzeichnis laeuft das" ist die Frage, die man sich beim Ansehen
+            einer Liste stellt, und die Antwort darf nicht zwei Klicks
+            entfernt sein. */}
+        <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{runCwd}</span>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -621,7 +641,7 @@ function weekdayLabelKey(value: string): string {
  * sie den Hauptthread. Der erste Klick schaltet deshalb in einen
  * Bestaetigungszustand, der zweite loescht.
  */
-function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
+function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folders }: {
   task: ScheduledTaskView | null;
   busy: boolean;
   error?: string | null;
@@ -632,9 +652,13 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
     prompt: string;
     provider: string;
     modelId: string;
+    cwd: string | null;
     enabled: boolean;
   }, id: string | null) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
+  /** Die waehlbaren Ordner und die Home — dieselbe Quelle wie die Einstellungen. */
+  home: string;
+  folders: string[];
 }) {
   const { t } = useI18n();
 
@@ -644,6 +668,15 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
   const [provider, setProvider] = useState(task?.provider ?? "");
   const [modelId, setModelId] = useState(task?.modelId ?? "");
   const [enabled, setEnabled] = useState(task?.enabled ?? true);
+  /**
+   * Der Arbeitsordner dieser Aufgabe; `null` heisst "Standardordner des Kontos".
+   *
+   * `undefined` in der gespeicherten Aufgabe und `null` in diesem Zustand sind
+   * dasselbe: keine eigene Angabe. Der Dialog braucht die Unterscheidung nicht,
+   * die API schon — deshalb wird beim Speichern `null` geschickt und nicht
+   * `undefined`, wenn der Nutzer "Standardordner" gewaehlt hat.
+   */
+  const [cwd, setCwd] = useState<string | null>(task?.cwd ?? null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [models, setModels] = useState<ModelOption[] | null>(null);
   /**
@@ -750,7 +783,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
     event.preventDefault();
     if (!canSave) return;
     const [nextProvider, nextModelId] = modelValue.split("\u0000");
-    void onSave({ name: name.trim(), cron: cron.trim(), prompt, provider: nextProvider, modelId: nextModelId, enabled }, task?.id ?? null);
+    void onSave({ name: name.trim(), cron: cron.trim(), prompt, provider: nextProvider, modelId: nextModelId, cwd, enabled }, task?.id ?? null);
   };
 
   return (
@@ -978,6 +1011,25 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
                 placeholder={t("scheduled.promptPlaceholder")}
                 style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }}
               />
+            </div>
+
+            <div>
+              <label style={labelStyle} htmlFor="scheduled-cwd">{t("scheduled.cwd")}</label>
+              {/* Die Wahl "Standardordner" ist der Leerwert des Auswahlfelds und
+                  nicht ein Feld ohne Wert: ein leeres Feld in der Aufgabe ist
+                  genau das, was "kein eigener Ordner" bedeutet. */}
+              <CwdPicker
+                id="scheduled-cwd"
+                value={cwd}
+                home={home}
+                folders={folders}
+                inheritLabel={t("scheduled.cwdInherit")}
+                onChange={setCwd}
+                disabled={busy}
+              />
+              <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--text-dim)" }}>
+                {t("scheduled.cwdHint")}
+              </p>
             </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>

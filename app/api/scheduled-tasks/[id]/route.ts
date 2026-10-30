@@ -5,6 +5,7 @@ import { getOmpRuntime } from "@/lib/omp-runtime";
 import { requireIdentity, getRequestIdentity, type WebIdentity } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { scheduledTaskErrorResponse } from "@/lib/scheduled-tasks-http";
+import { assertUsableCwd } from "@/lib/scheduled-settings";
 import {
   deleteTask,
   getScheduledTasksPath,
@@ -85,23 +86,29 @@ export async function PATCH(
   }
   const raw = body as Record<string, unknown>;
 
-  // Nur die Felder, die der Patch ueberhaupt kennt. Ein unbekanntes Feld
-  // stillschweigend zu uebernehmen waere ein Feld, von dem der Nutzer glaubt,
-  // es sei gespeichert.
-  const patch: ScheduledTaskPatch = {
-    ...(raw.name === undefined ? {} : { name: raw.name as string }),
-    ...(raw.cron === undefined ? {} : { cron: raw.cron as string }),
-    ...(raw.prompt === undefined ? {} : { prompt: raw.prompt as string }),
-    ...(raw.provider === undefined ? {} : { provider: raw.provider as string }),
-    ...(raw.modelId === undefined ? {} : { modelId: raw.modelId as string }),
-    ...(raw.thinkingLevel === undefined
-      ? {}
-      : { thinkingLevel: raw.thinkingLevel as ScheduledTaskPatch["thinkingLevel"] }),
-    ...(raw.cwd === undefined ? {} : { cwd: raw.cwd as ScheduledTaskPatch["cwd"] }),
-    ...(raw.enabled === undefined ? {} : { enabled: raw.enabled as boolean }),
-  };
-
   try {
+    // Nur die Felder, die der Patch ueberhaupt kennt. Ein unbekanntes Feld
+    // stillschweigend zu uebernehmen waere ein Feld, von dem der Nutzer glaubt,
+    // es sei gespeichert.
+    //
+    // `cwd` geht durch dieselbe Pruefung wie beim Anlegen. `null` bedeutet
+    // "wieder Voreinstellung" und muss als Loeschung ankommen — deshalb wird es
+    // hier *nicht* zu `undefined` gemacht, anders als der Unterschied zwischen
+    // "Feld fehlt" und "Feld ist null" verlangt.
+    const cwd = raw.cwd === undefined ? undefined : assertUsableCwd(raw.cwd, identity);
+    const patch: ScheduledTaskPatch = {
+      ...(raw.name === undefined ? {} : { name: raw.name as string }),
+      ...(raw.cron === undefined ? {} : { cron: raw.cron as string }),
+      ...(raw.prompt === undefined ? {} : { prompt: raw.prompt as string }),
+      ...(raw.provider === undefined ? {} : { provider: raw.provider as string }),
+      ...(raw.modelId === undefined ? {} : { modelId: raw.modelId as string }),
+      ...(raw.thinkingLevel === undefined
+        ? {}
+        : { thinkingLevel: raw.thinkingLevel as ScheduledTaskPatch["thinkingLevel"] }),
+      ...(raw.cwd === undefined ? {} : { cwd }),
+      ...(raw.enabled === undefined ? {} : { enabled: raw.enabled as boolean }),
+    };
+
     const { modelRegistry } = await getOmpRuntime();
     const updated = updateTask(
       identity,

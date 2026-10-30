@@ -235,6 +235,38 @@ test("die Kette endet an der Wurzel, statt endlos weiterzulaufen", async () => {
   assert.equal(body.parentPath, ADMIN_TREE);
 });
 
+test("die Wurzel ist ein Segment, kein leerer Pfad", async () => {
+  // Genau die URL, die der Explorer fuer die Home eines Admins (`/`) baut:
+  // ein Segment `%2F`. Ohne sie fragte der Client `/api/files/?type=list` —
+  // eine URL ohne Pfad, die Next mit 308 auf `/api/files` umleitet und dort
+  // mit 404 beantwortet. Der Handler bekommt hier das dekodierte Segment zu
+  // sehen, wie Next es liefert.
+  const url = `${ORIGIN}/api/files/%2F?type=list`;
+  const res = await filesRoute.GET(
+    new NextRequest(url, {
+      headers: { host: "localhost:30141", "x-omp-user": "root", "x-omp-admin": "1" },
+    }),
+    { params: Promise.resolve({ path: ["/"] }) },
+  );
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.path, "/");
+  assert.ok(Array.isArray(body.entries) && body.entries.length > 0);
+});
+
+test("ein Pfad ausserhalb der Allowlist bleibt abgelehnt", async () => {
+  // `<home-root>` ist der Elternordner der Home von `alice` und damit
+  // ausserhalb ihrer Allowlist; `/etc` liegt fuer sie in keiner Root. Beide
+  // muessen abgelehnt werden, nicht nur nicht gefunden — der Fix an der Wurzel
+  // darf die Grenze nicht verschoben haben.
+  const parent = await list(HOME_ROOT);
+  assert.equal(parent.status, 403);
+
+  const etc = await list("/etc");
+  assert.equal(etc.status, 403);
+});
+
 /**
  * Die Vorfahren einer Allowlist-Wurzel auf dem Weg zur `/`, so wie die Schleife
  * sie berechnet. Bewusst aus `getFileDirectory` nachgebaut und nicht aus der

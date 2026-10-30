@@ -12,6 +12,7 @@ import {
   type ScheduledTaskInput,
 } from "@/lib/scheduled-tasks-store";
 import { scheduledTaskErrorResponse } from "@/lib/scheduled-tasks-http";
+import { assertUsableCwd } from "@/lib/scheduled-settings";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
@@ -124,18 +125,23 @@ export async function POST(req: Request) {
   }
   const raw = body as Record<string, unknown>;
 
-  const input: ScheduledTaskInput = {
-    name: typeof raw.name === "string" ? raw.name : "",
-    cron: typeof raw.cron === "string" ? raw.cron : "",
-    prompt: typeof raw.prompt === "string" ? raw.prompt : "",
-    provider: typeof raw.provider === "string" ? raw.provider : "",
-    modelId: typeof raw.modelId === "string" ? raw.modelId : "",
-    ...(raw.thinkingLevel === undefined ? {} : { thinkingLevel: raw.thinkingLevel as ScheduledTaskInput["thinkingLevel"] }),
-    ...(raw.cwd === undefined ? {} : { cwd: raw.cwd as ScheduledTaskInput["cwd"] }),
-    ...(raw.enabled === undefined ? {} : { enabled: raw.enabled as boolean }),
-  };
-
   try {
+    // Der Ordner wird *vor* dem Speichern geprueft: `createTask` kennt nur die
+    // Konto-Home, nicht den Bestand des Kontos. Ein `null` heisst "keine
+    // Angabe" und wird deshalb gar nicht erst in die Eingabe geschrieben —
+    // sonst stuende ein Feld in der Datei, das der Nutzer nie gesetzt hat.
+    const cwd = raw.cwd === undefined ? undefined : assertUsableCwd(raw.cwd, identity);
+    const input: ScheduledTaskInput = {
+      name: typeof raw.name === "string" ? raw.name : "",
+      cron: typeof raw.cron === "string" ? raw.cron : "",
+      prompt: typeof raw.prompt === "string" ? raw.prompt : "",
+      provider: typeof raw.provider === "string" ? raw.provider : "",
+      modelId: typeof raw.modelId === "string" ? raw.modelId : "",
+      ...(raw.thinkingLevel === undefined ? {} : { thinkingLevel: raw.thinkingLevel as ScheduledTaskInput["thinkingLevel"] }),
+      ...(cwd ? { cwd } : {}),
+      ...(raw.enabled === undefined ? {} : { enabled: raw.enabled as boolean }),
+    };
+
     const isKnownModel = await knownModelLookup();
     const task = createTask(identity, input, isKnownModel);
     // Ohne diesen Aufruf wartet der eine Timer bis zum naechsten Weckruf —

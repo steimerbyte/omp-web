@@ -5,8 +5,20 @@ export function normalizeFilePathSlashes(filePath: string): string {
   return filePath;
 }
 
+/**
+ * Encode a filesystem path into the catch-all segment of a `/api/files` URL.
+ *
+ * The root is its own case: splitting `/` yields two empty segments, and
+ * `.filter(Boolean)` dropped both, so the path left the URL entirely.
+ * `/api/files/?type=list` then addresses no segment at all — Next answers it
+ * with a 308 to `/api/files`, which no catch-all matches, and the explorer
+ * showed "Failed to load files (HTTP 404)". A percent-encoded `/` is exactly
+ * one segment, and `filePathFromSegments` turns it back into `/`.
+ */
 export function encodeFilePathForApi(filePath: string): string {
-  return normalizeFilePathSlashes(filePath)
+  const normalized = normalizeFilePathSlashes(filePath);
+  if (/^\/+$/.test(normalized)) return "%2F";
+  return normalized
     .split("/")
     .filter(Boolean)
     .map(encodeURIComponent)

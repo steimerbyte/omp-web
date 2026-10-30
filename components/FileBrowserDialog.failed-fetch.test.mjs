@@ -102,7 +102,10 @@ let failNext = false;
 const requestedPaths = [];
 globalThis.fetch = async (url) => {
   const href = String(url);
-  const path = decodeURIComponent(href.split("?")[0].replace(/^\/api\/files/, ""));
+  // Wie `filePathFromSegments`: fuehrende Schraegstriche fallen auf einen
+  // zusammen. Ohne das wird aus dem kodierten Wurzel-Segment `%2F` ein `//`,
+  // und ein Test, der `/` erwartet, scheitert an seiner eigenen Attrappe.
+  const path = decodeURIComponent(href.split("?")[0].replace(/^\/api\/files/, "")).replace(/^\/{2,}/, "/");
   requestedPaths.push(path);
   if (failNext) {
     return { ok: false, status: 500, json: async () => ({ error: "Backend unreachable" }) };

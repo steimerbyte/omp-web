@@ -277,6 +277,9 @@ test("a task cwd outside the account home is a 400", async () => {
 test("a task cwd inside the account home is stored", async () => {
   const headers = createAccount("cwd2");
   const workspace = join(HOME_ROOT, headers["x-omp-user"], "workspace");
+  // Der Ordner muss existieren: `assertUsableCwd` prueft, dass der Lauf
+  // tatsaechlich irgendwo starten kann, und nicht nur, wie der Pfad aussieht.
+  mkdirSync(workspace, { recursive: true });
   const created = await createTask(headers, { cwd: workspace });
   assert.equal(created.cwd, workspace);
 });
