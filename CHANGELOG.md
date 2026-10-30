@@ -528,6 +528,73 @@ What was run, in this checkout, on the tree that was committed:
 `BUILD_ID` is random per build (`next.config.ts` sets no `generateBuildId`); it
 identifies the build that was checked, not a reproducible artifact.
 
+## v0.14.1
+
+Released 2026-10-30.
+
+### Geplante Aufgaben
+
+**„Neue geplante Aufgabe" riss die ganze App mit.** Ein Klick auf den Knopf
+ersetzte in `v0.14.0` die Oberflaeche durch Next' globale Fehlerseite
+(„This page couldn't load"); die Sitzung, die man gerade offen hatte, war
+weg. Nur der Dialog war kaputt, aber React verwirft beim Rendern den ganzen
+Baum — ein Fehler in einer Komponente sieht aus wie ein Fehler der App.
+
+**Ursache: eine Zuordnung wurde als Liste gelesen.** Der Dialog holte
+`/api/models` und rief `.map` auf `body.models` auf. In dieser Antwort ist
+`models` aber eine **Zuordnung** `"provider:id" -> Anzeigename`
+(`lib/models-cache.ts:ModelsData`); die Liste mit Provider-Angabe heisst
+`modelList`. `(models ?? []).map` ist damit `TypeError: ... is not a
+function` — mitten im Commit, sobald der Dialog mit einem angemeldeten Konto
+aufging. Der Quelltext sah dabei richtig aus; falsch war die Annahme ueber
+die Form der Antwort.
+
+**Fix: `modelList` lesen und in die Form der Auswahl bringen.** Der Dialog
+liest jetzt `body.modelList` und bildet jeden Eintrag auf seine
+`ModelOption` ab (`{ provider, modelId: id, name }`), so wie
+`components/ChatInput.tsx` und `components/ModelRolesPanel.tsx` es mit
+derselben Antwort schon taten. Der Fehlerpfad liefert bei einer nicht-ok
+Antwort `{}` statt `{ models: [] }` — ein leeres Feld, das wie eine Liste
+aussieht, war genau die Falle.
+
+**Ein Test, der die echte Komponente gegen die echte Antwortform mountet**
+(`components/ScheduledTasksView.models.test.mjs`, 2 Tests). Eine Pruefung des
+Quelltextes haette den Fehler nicht gefangen: `body.models ?? []` liest sich
+richtig, und der TypeError entsteht erst, wenn ein Objekt durch `.map`
+laeuft. Der Test oeffnet deshalb den echten Dialog und liest danach die
+Modellauswahl — nicht den Zustand. Gegen den `v0.14.0`-Quelltext laeuft er
+in den erwarteten Fehler (`TypeError: (models ?? []).map is not a function`,
+`ScheduledTasksView.tsx:735`); mit dem Fix ist er gruen. Der zweite Fall
+haelt fest, dass der Dialog bei einer fehlschlagenden Antwort aufgeht und
+nur den Platzhalter anbietet — ein Fehler beim Laden der Modelle darf nicht
+wieder die App kosten.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Die ausgelieferte Instanz.** Der Fix ist in einem echten Browser geprueft
+  (Chromium, Produktionsbuild, angemeldetes Konto, echte Antwort von
+  `/api/models`) samt vollem Durchlauf Anlegen/Bearbeiten/Loeschen; die
+  Auslieferung auf `agent-pc` passiert im selben Arbeitsschritt direkt nach
+  diesem Release. Ein Release, in das niemand hineingeklickt hat, ist kein
+  geprueftes Release (`docs/release.md`) — der Browser-Lauf steht deshalb
+  hier und nicht im Nachhinein.
+- **Die Desktop-Bundles wurden nicht gebaut**, und `src-tauri/Cargo.toml` /
+  `src-tauri/tauri.conf.json` stehen weiter auf `0.2.10`.
+  `bun run desktop:sync-version` gleicht sie an und laeuft in
+  `publish-desktop.yml`, nicht in diesem Checkout.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1542 pass, 0 fail, 1 skip — 1543 tests, 177 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `cPvUt6zxPOfG3q9cDC8hn`, 492 files under `.next/static/**/*.js` |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

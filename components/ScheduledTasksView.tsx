@@ -33,7 +33,20 @@ import {
 /** Der Zustand des Dialogs: `null` heisst geschlossen. */
 type DialogState = { mode: "create" } | { mode: "edit"; task: ScheduledTaskView } | null;
 
-/** Ein Modell, wie `/api/models` es liefert. */
+/**
+ * Ein Eintrag aus `modelList` — der Liste mit Provider-Angabe.
+ *
+ * `models` in derselben Antwort ist ein `Record<string, string>`
+ * (`"provider:id" → Anzeigename`) und **keine** Liste; wer es als Liste
+ * behandelt, bekommt `.map is not a function` beim Rendern. Dieselbe
+ * Aufteilung wie in `components/ChatInput.tsx` und
+ * `components/ModelRolesPanel.tsx`.
+ */
+interface ModelsResponse {
+  modelList?: { id: string; name: string; provider: string }[];
+}
+
+/** Ein Modell, wie die Auswahl im Dialog es braucht. */
 interface ModelOption {
   provider: string;
   modelId: string;
@@ -485,13 +498,20 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete }: {
    *
    * Sie wird erst beim Oeffnen des Dialogs geladen: wer nie eine Aufgabe
    * anlegt, soll die Registrierung nicht anfassen.
+   *
+   * Gelesen wird `modelList`, nicht `models`: letzteres ist in der Antwort
+   * von `/api/models` eine Zuordnung `"provider:id" → Name`, und `.map`
+   * darauf ist ein TypeError mitten im Rendern — der Dialog ersetzt dann die
+   * ganze App durch Next' Fehlerseite. Die Form steht in
+   * `lib/models-cache.ts:ModelsData`.
    */
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/models")
-      .then((response) => (response.ok ? response.json() : { models: [] }))
-      .then((body: { models?: ModelOption[] }) => {
-        if (!cancelled) setModels(body.models ?? []);
+      .then((response) => (response.ok ? response.json() : {}))
+      .then((body: ModelsResponse) => {
+        if (cancelled) return;
+        setModels((body.modelList ?? []).map((model) => ({ provider: model.provider, modelId: model.id, name: model.name })));
       })
       .catch(() => {
         if (!cancelled) setModels([]);
