@@ -369,9 +369,10 @@ worse than one that admits the gap:
   panel and the sign-in and sign-out routes that this release rewrites. That
   happens during deployment, not here. A release that has not been signed into
   is not a verified release (`docs/release.md`).
-- **`docs/release.md` asks for `bunx eslint components/ app/ lib/` before
-  tagging; it was not run for this release.** The gate below is typecheck,
-  tests and build.
+- **`docs/release.md` also asks for `bunx eslint components/ app/ lib/`
+  before tagging.** It was run after the gate below and reported no findings
+  (exit 0), but after the tag was pushed — so it did not gate this release, it
+  only confirms it. The gate below is typecheck, tests and build.
 - **The desktop bundles were not built**, and `src-tauri/Cargo.toml` /
   `src-tauri/tauri.conf.json` still read `0.2.10`. `bun run
   desktop:sync-version` is the step that aligns them, and it runs inside
