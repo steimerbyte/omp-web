@@ -108,11 +108,27 @@ erfahrungsgemaess erst im Betrieb auffaellt. Der 409-Guard in
 `app/api/web-access/route.ts:56-61` verhindert nur, dass die UI es im UI
 versteckt — er macht den Vorrang nicht rueckgaengig.
 
-## Sessions ueberleben keinen Neustart
+## Sessions ueberlebten keinen Neustart — seit v0.18.x schon
 
-**Kein Befund.** `KEY_SALT` in `lib/web-auth-session.ts:47` ist `randomBytes(32)`
-und wird bei jedem Kaltstart neu erzeugt. Auf agent-pc laeuft der Dienst mit
-`Restart=always`, jeder Deploy meldet also ab. Der `SESSION_TTL_MS` von 24 Stunden
-ist die Obergrenze der Cookie-Lebensdauer und **keine** Zusage, dass eine Anmeldung
-den Tag uebersteht. Steht hier, weil die Commit-Nachricht sonst etwas anderes
-verspricht als der Code tut.
+**Behoben, und die Historie ist der Grund, warum es hier steht.** Bis v0.18.0 war
+der Salz in `lib/web-auth-session.ts` ein `randomBytes(32)` auf Modulebene: jeder
+Kaltstart zog einen neuen, jede Signatur war damit falsch. Auf agent-pc laeuft der
+Dienst mit `Restart=always` und einem Healthcheck alle fuenf Minuten; am 30.10.2026
+standen im `journalctl` **zehn** Stopping+Started-Paare an einem Tag, mehrere davon
+im Stundenraster. Ein Deploy meldete also ab, ein Healthcheck-Restart auch — und
+weil das aus der Ferne wie ein TTL-Ablauf aussieht, wurde daraus das Symptom
+„nach zehn Minuten abgemeldet", obwohl im Code keine Zehn-Minuten-Frist existiert
+(die 10 Minuten an zwei Stellen sind ein Recovery-Code und ein Idle-Timeout der
+Agent-Session, keiner beruehrt das Cookie).
+
+Der Salz liegt jetzt in `<Verzeichnis der Credential-Datei>/omp-web-session-key`
+(`0600`, eine Zeile, Override `OMP_WEB_SESSION_KEY_FILE`) und wird beim ersten
+Start mit `flag: "wx"` angelegt. Ein Neustart verifiziert die Cookies des vorigen
+Prozesses. Wer den alten Zustand will, setzt `OMP_WEB_SESSION_KEY_EPHEMERAL=1`;
+das ist dokumentiert und getestet (`lib/web-auth-session.key.test.mjs`), aber
+nicht der Default. Die Begruendung und der Preis stehen in
+`docs/inventory-auth.md` und `docs/authentication.md`.
+
+Steht hier weiterhin, weil ein Commit sonst etwas anderes versprechen kann, als
+der Code tut — und weil die Umkehr einer dokumentierten Sicherheitsentscheidung
+einen Ort braucht, an dem sie nachlesbar ist.

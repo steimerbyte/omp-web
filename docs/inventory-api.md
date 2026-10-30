@@ -141,10 +141,13 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 
 - **Kann**: `POST {username?, password}` prüft die Credential und setzt
   `omp_session` als httpOnly-Cookie (`sameSite: strict`, `path: /`,
-  `secure: false`, `maxAge` aus `SESSION_TTL_MS` = 24 h). `username` ist optional
-  und fällt auf den konfigurierten Einzelbenutzernamen zurück — das ist der Weg,
-  den jede bestehende Installation geht, und deshalb kommt die Login-Seite
-  vorbelegt. `DELETE` löscht das Cookie.
+  `secure` nur wenn die Anfrage ueber HTTPS kam, `maxAge` aus `SESSION_TTL_MS` =
+  1 h). Die Attribute kommen aus `sessionCookieOptions()`, demselben Helper, den
+  `proxy.ts` fuer die Erneuerung benutzt. `username` ist optional und fällt auf
+  den konfigurierten Einzelbenutzernamen zurück — das ist der Weg, den jede
+  bestehende Installation geht, und deshalb kommt die Login-Seite vorbelegt.
+  `DELETE` löscht das Cookie **und** erhoeht die Widerrufs-Epoche des Benutzers:
+  danach verifiziert keine Kopie mehr, die vor dem Aufruf entstanden ist.
 - **Identität**: **anonym erreichbar** — `proxy.ts:120-127` lässt
   `/api/web-access/login` mit `null`-Identität durch. Das ist der einzige Zweck
   der Route.
@@ -1044,8 +1047,11 @@ Fehlerpfad.
   (`bin/web-auth-store.js:504`) gibt der Environment-Variable Vorrang vor der
   Datei; am 12.10.2026 wurde damit kurzzeitig ein Testzugang gesetzt, wodurch das
   gespeicherte Passwort eines Betreibers außer Kraft gesetzt wurde.
-- **Sessions überleben keinen Neustart**: `KEY_SALT` in
-  `lib/web-auth-session.ts:47` ist `randomBytes(32)` und wird bei jedem Kaltstart
-  neu erzeugt; auf agent-pc läuft der Dienst mit `Restart=always`, jeder Deploy
-  meldet also ab. Der `SESSION_TTL_MS` von 24 Stunden ist die Obergrenze der
-  Cookie-Lebensdauer und **keine** Zusage, dass eine Anmeldung den Tag übersteht.
+- **Sessions überleben einen Neustart** (seit v0.18.x): der Salz liegt in
+  `<Credential-Verzeichnis>/omp-web-session-key` (`0600`, `OMP_WEB_SESSION_KEY_FILE`
+  verschiebt ihn), also verifiziert ein neu gestarteter Prozess die Cookies des
+  vorigen. Vorher war er `randomBytes(32)` pro Kaltstart; auf agent-pc mit
+  `Restart=always` und einem Healthcheck-Restart alle fünf Minuten war das
+  gemessen zehn Neustarts am Tag und damit ein Logout im Stundenraster — das
+  eigentliche „nach zehn Minuten abgemeldet". Die TTL ist eine Stunde und
+  gleitet (Renewal nach der halben Lebenszeit), kein 24-h-Fenster mehr.

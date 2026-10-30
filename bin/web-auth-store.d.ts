@@ -57,6 +57,13 @@ export interface WebAuthStoreOptions {
    * read two incompatible documents from the same path.
    */
   accountsFile?: string;
+  /**
+   * Pfad von `omp-web-sessions.json` — die Widerrufs-Epochen, eine je
+   * Benutzername. Eigenes Feld aus demselben Grund wie `accountsFile`: ein
+   * Test, der seine Epochen in eine Temp-Datei schreibt, darf nicht die
+   * Kontendatei umhaengen.
+   */
+  sessionsFile?: string;
   /** scrypt cost overrides. Only tests pass this, to keep hashing cheap. */
   params?: Partial<Omit<WebAuthDigest, "algorithm" | "salt" | "hash">>;
   policy?: WebAuthPolicy;
@@ -155,6 +162,15 @@ export declare const RECOVERY_MAX_ATTEMPTS: number;
 export declare const WEB_ACCOUNTS_FILENAME: string;
 export declare const WEB_AUTH_FILENAME: string;
 export declare const WEB_AUTH_USERNAME: string;
+
+/** Die Widerrufs-Epoche eines Benutzers; `0`, solange niemand abgemeldet hat. */
+export declare function readSessionEpoch(username: unknown, options?: WebAuthStoreOptions): number;
+
+/**
+ * Die Epoche erhoehen. `lib/web-auth-session.ts` legt sie in den Schluessel, den
+ * ein Cookie signiert — danach verifiziert kein Cookie dieses Benutzers mehr.
+ */
+export declare function bumpSessionEpoch(username: unknown, options?: WebAuthStoreOptions): number;
 
 /**
  * Die effektive Rolle eines Roh-Eintrags: `OMP_WEB_ADMINS` entscheidet allein,

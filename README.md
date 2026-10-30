@@ -376,10 +376,17 @@ refused with `401`, and the challenge header still goes to callers without Fetch
 Metadata, so `curl --anyauth` and the Go/Java/Rust stacks keep working unchanged.
 
 The password is stored as a `scrypt` hash in `~/.omp/agent/omp-web-auth.json`
-(mode `0600`) — never in plaintext, and never recoverable from the file. Session
-cookies are additionally bound to the server process: the signing key is salted
-with a random value generated at each cold start, so a cookie stops verifying
-after a restart even though the credential itself did not change.
+(mode `0600`) — never in plaintext, and never recoverable from the file. The
+session cookie is signed with that credential *and* a salt kept next to it in
+`~/.omp/agent/omp-web-session-key` (mode `0600`, `OMP_WEB_SESSION_KEY_FILE`
+moves it), so a restart no longer signs everyone out — this service restarts on
+every deploy and on a five-minute healthcheck. A stolen key file is a second
+secret for the same service account, so it is `0600` in the same `0700`
+directory as the credential; deleting it and restarting is the rotation and
+revokes every live session. `OMP_WEB_SESSION_KEY_EPHEMERAL=1` restores the old
+per-process salt, where a restart *is* a logout. The cookie lasts an hour and is
+re-issued while a page is in use, and signing out revokes every session of that
+account rather than only the copy in the current browser.
 
 `--reset-password` recovers from the machine itself; the browser path is `/recover`.
 Both prove access to that machine, and neither can hand the old password back.

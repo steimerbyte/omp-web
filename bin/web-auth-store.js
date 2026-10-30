@@ -160,6 +160,68 @@ function resolveWebAccountsFile(env = process.env) {
 }
 
 /**
+ * Widerrufs-Epochen, eine je Benutzername.
+ *
+ * Ein Sitzungs-Cookie ist selbsttragend: es gibt keinen Datensatz, den ein
+ * Logout loeschen koennte. Also dreht der Logout den **Schluessel**: die Epoche
+ * ist Teil von `resolveSessionSecret` (`lib/web-auth-session.ts`), und eine
+ * Erhoehung aendert jeden fuer diesen Benutzer abgeleiteten Schluessel. Jeder
+ * Cookie, der unter der alten Epoche signiert wurde, faellt damit durch die
+ * Signaturpruefung — auch die Kopie, die ein Angreifer schon hat.
+ *
+ * Eine Datei fuer alle Modi, damit der Einzelbenutzer und ein Konto sich gleich
+ * abmelden. Geht die Datei verloren, leben nur Cookies wieder auf, die in der
+ * letzten TTL widerrufen wurden; anmelden kann sich damit niemand, der nicht
+ * schon einen Cookie hatte.
+ */
+const WEB_SESSIONS_FILENAME = "omp-web-sessions.json";
+const WEB_SESSIONS_VERSION = 1;
+
+function resolveWebSessionsFile(env = process.env) {
+  return env.OMP_WEB_SESSIONS_FILE
+    ? resolve(env.OMP_WEB_SESSIONS_FILE)
+    : join(resolveAgentDir(env), WEB_SESSIONS_FILENAME);
+}
+
+function readWebSessions(options = {}) {
+  const file = options.sessionsFile ?? resolveWebSessionsFile(options.env ?? process.env);
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const users = parsed.users;
+      return { file, users: users && typeof users === "object" && !Array.isArray(users) ? users : {} };
+    }
+  } catch {
+    // Fehlend oder unlesbar ist derselbe Fall: keine Epoche, also 0.
+  }
+  return { file, users: {} };
+}
+
+/** Die Epoche eines Benutzers; `0` fuer jeden, der noch nie abgemeldet hat. */
+function readSessionEpoch(username, options = {}) {
+  if (typeof username !== "string" || username.length === 0) return 0;
+  const epoch = readWebSessions(options).users[username];
+  return Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : 0;
+}
+
+/**
+ * Die Epoche eines Benutzers erhoehen — der Widerruf, den ein Logout braucht.
+ *
+ * Die alte Epoche kommt aus derselben Datei, die gleich neu geschrieben wird,
+ * und der Schreibvorgang ist der atomare aus `writeWebAuthConfig` (0600,
+ * `_tmp` + rename). Zwei parallele Logouts erhoehen damit hoechstens doppelt,
+ * und doppelt ist harmlos: der Cookie, den der zweite noch hatte, stirbt.
+ */
+function bumpSessionEpoch(username, options = {}) {
+  if (typeof username !== "string" || username.length === 0) return 0;
+  const { file, users } = readWebSessions(options);
+  const current = readSessionEpoch(username, options);
+  const next = current + 1;
+  writeWebAuthConfig({ version: WEB_SESSIONS_VERSION, users: { ...users, [username]: next }, updatedAt: timestamp() }, file);
+  return next;
+}
+
+/**
  * Wurzelverzeichnis, unter dem jedes Konto sein Home bekommt.
  *
  * Fest auf `/home` eingestellt waere eine Annahme ueber die Maschine; deshalb
@@ -1319,6 +1381,7 @@ module.exports = {
   WEB_AUTH_FILENAME,
   WEB_AUTH_USERNAME,
   accountIsAdmin,
+  bumpSessionEpoch,
   checkHomeRootWritable,
   clearAdminRoleCache,
   clearVerificationCache,
@@ -1333,6 +1396,7 @@ module.exports = {
   listWebAccounts,
   normalizeRecoveryCode,
   readWebAccounts,
+  readSessionEpoch,
   readWebAuthState,
   resolveAccountHome,
   resolveAdminUsernames,

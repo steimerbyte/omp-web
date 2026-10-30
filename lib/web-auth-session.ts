@@ -1,5 +1,14 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { findWebAccount, resolveWebAuthPolicy, validateAccountName, type WebAuthStoreOptions } from "../bin/web-auth-store.js";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import {
+  findWebAccount,
+  readSessionEpoch,
+  resolveWebAuthFile,
+  resolveWebAuthPolicy,
+  validateAccountName,
+  type WebAuthStoreOptions,
+} from "../bin/web-auth-store.js";
 import { getExpectedUsername } from "./web-auth";
 
 /**
@@ -11,8 +20,10 @@ import { getExpectedUsername } from "./web-auth";
  * `proxy.ts` then accepts. There is no JWT and no dependency: the cookie is a
  * signed nonce with an expiry, and it carries nothing about the user.
  *
- * The signature is keyed on the active credential, which is what makes sessions
- * die with the password — see `resolveSessionSecret`.
+ * The signature is keyed on the active credential and the user's revocation
+ * epoch, which is what makes sessions die with the password and with a logout —
+ * see `resolveSessionSecret`. The lifetime is one hour and slides: `proxy.ts`
+ * re-issues the cookie while a browser is in use.
  *
  * The cookie carries the signed username. That is the whole point of the
  * change: a session is not "the server is unlocked" but "this person is logged
@@ -24,41 +35,135 @@ import { getExpectedUsername } from "./web-auth";
 export const SESSION_COOKIE_NAME = "omp_session";
 
 /**
- * One working day. The point of the cookie is to stop retyping the password
- * every few hours on a personal, single-operator lock, so eight hours was short
- * enough to outlive its usefulness — a browser left open from morning to
- * evening still hit the login page at lunchtime. 24 hours is the longest TTL
- * that still expires on its own: a week or a month would mean a forgotten
- * laptop stayed authenticated long after the person stopped thinking about it,
- * and an unbounded session does not expire at all.
+ * One hour, sliding.
  *
- * This is a ceiling on the *cookie's* lifetime, not a promise that a login
- * survives the day. `KEY_SALT` below is regenerated on every cold start, so a
- * deploy or a restart still invalidates live sessions. A durable secret would
- * have to come from somewhere — see that constant's own comment.
+ * The point of the cookie is that the operator does not retype the password
+ * all day, and an hour does that together with the renewal in `proxy.ts`: as
+ * long as the page is in use, the cookie is re-issued, so an hour is the idle
+ * timeout, not the length of a working day. Two reasons not to raise it
+ * instead: a laptop left in a bag stops being signed in an hour after its last
+ * request, and the cookie is the only thing a browser holds — the key is
+ * derived from the stored digest, so a copied cookie is a copied session until
+ * its own expiry.
+ *
+ * This is the *only* TTL. `expiry` in the token, `Max-Age` and `Expires` in the
+ * header and the renewal threshold below are all derived from it.
  */
-export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Renewal threshold: `proxy.ts` re-issues the cookie once more than half its
+ * lifetime has passed since `issuedAt`. That is the rule that keeps a busy tab
+ * from setting a cookie per request: a renewal resets `issuedAt`, so one client
+ * gets at most one `Set-Cookie` per half hour no matter how often it polls.
+ */
+export const SESSION_RENEW_AFTER_MS = SESSION_TTL_MS / 2;
 
 /** Payload schema version, so an old cookie is rejected rather than misread. */
 const SESSION_VERSION = "1";
 
-/**
- * Per-process boot salt. The cookie carries no salt, so the only way an old
- * cookie survives a restart is if this salt stays put — which it cannot,
- * because randomBytes regenerates it on every cold start. Sessions minted by a
- * previous instance therefore stop verifying until the browser logs in again,
- * even though the credential itself did not change.
- *
- * The key is secret because the credential is secret, not because the salt is.
- * Rotating the password already invalidates sessions through the secret
- * itself; this salt is what kills cookies on a plain restart, so together they
- * bind a cookie to (username, password, process) and it cannot outlive the run
- * that minted it.
- */
-const KEY_SALT = randomBytes(32).toString("base64url");
+/** Filename of the persisted key, next to the credential file. */
+const SESSION_KEY_FILENAME = "omp-web-session-key";
 
-/** Exported so the expiry test can forge a correctly signed cookie. */
-export const __testKeySalt = KEY_SALT;
+/**
+ * Opt-out to the old behaviour: `1` keeps the key in memory only, so a restart
+ * ends every session again. Documented in `docs/authentication.md`; the file is
+ * the default because a `Restart=always` unit was logging people out ten times
+ * a day (measured, see the CHANGELOG).
+ */
+const EPHEMERAL_KEY_ENV = "OMP_WEB_SESSION_KEY_EPHEMERAL";
+
+/**
+ * Where the key lives: `OMP_WEB_SESSION_KEY_FILE`, otherwise next to the
+ * credential file.
+ *
+ * Not under `OMP_WEB_HOME_ROOT`: that is the root the *accounts'* home
+ * directories are created in, and the store's own `checkHomeRootWritable` exists
+ * because it is frequently root-owned and unwritable for the service user. The
+ * credential's directory is the one place this process already writes a secret
+ * to (`writeWebAuthConfig` creates it with mode 0700).
+ */
+function resolveSessionKeyFile(env: NodeJS.ProcessEnv): string {
+  const explicit = env.OMP_WEB_SESSION_KEY_FILE;
+  if (typeof explicit === "string" && explicit.trim().length > 0) return resolve(explicit.trim());
+  return join(dirname(resolveWebAuthFile(env)), SESSION_KEY_FILENAME);
+}
+
+declare global {
+  var __ompSessionKeySalts: Map<string, string> | undefined;
+}
+
+/** One salt per key file, for the lifetime of the process. */
+function getSaltCache(): Map<string, string> {
+  if (!globalThis.__ompSessionKeySalts) globalThis.__ompSessionKeySalts = new Map();
+  return globalThis.__ompSessionKeySalts;
+}
+
+/**
+ * Read the key file, or create it with `wx` so a second process cannot clobber
+ * the first one's key.
+ *
+ * An unwritable location falls back to a per-process salt instead of throwing:
+ * login keeps working, sessions just die with the process, which is exactly the
+ * behaviour this change replaces. Failing the request instead would take a
+ * working installation down over a directory permission.
+ */
+function loadOrCreateSessionKey(file: string): string {
+  const existing = readKeyFile(file);
+  if (existing !== null) return existing;
+
+  const created = randomBytes(32).toString("base64url");
+  try {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(file, `${created}\n`, { encoding: "utf8", flag: "wx", mode: 0o600, flush: true });
+    return created;
+  } catch (error) {
+    if (error && (error as NodeJS.ErrnoException).code === "EEXIST") {
+      // A sibling process won the race; its key is the one to use.
+      const winner = readKeyFile(file);
+      if (winner !== null) return winner;
+    }
+    return randomBytes(32).toString("base64url");
+  }
+}
+
+function readKeyFile(file: string): string | null {
+  try {
+    const value = readFileSync(file, "utf8").trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The signing salt.
+ *
+ * It used to be `randomBytes(32)` at module scope, which made a restart a
+ * logout. Persisting it is a deliberate reversal of that decision: the live
+ * unit restarts about ten times a day (deploys and a five-minute healthcheck,
+ * measured 2026-10-30), so the "session ends with the process" rule was, in
+ * practice, a session that ended at a random point in the hour. What a stolen
+ * key file means is written down in `docs/inventory-auth.md`.
+ *
+ * Memoized per file on `globalThis` like the derived-key cache below, because
+ * dev-server reloads re-evaluate this module and must not mint a new salt.
+ */
+function sessionKeySalt(env: NodeJS.ProcessEnv): string {
+  const file = env[EPHEMERAL_KEY_ENV] === "1" ? "" : resolveSessionKeyFile(env);
+  const cache = getSaltCache();
+  const cached = cache.get(file);
+  if (cached !== undefined) return cached;
+
+  const salt = file === "" ? randomBytes(32).toString("base64url") : loadOrCreateSessionKey(file);
+  cache.set(file, salt);
+  return salt;
+}
+
+/** Exported so a test can forge a correctly signed cookie, as the expiry test does. */
+export function __testSessionKeySalt(env: NodeJS.ProcessEnv = process.env): string {
+  return sessionKeySalt(env);
+}
 
 /** scrypt cost for the session key, matching the credential store's own. */
 const KEY_PARAMS = { N: 16_384, r: 8, p: 1, keyLength: 64 };
@@ -85,17 +190,21 @@ function getSessionKeyCache(): Map<string, Buffer> {
   return globalThis.__ompSessionKeyCache;
 }
 
-function deriveSessionKey(secret: string): Buffer {
+function deriveSessionKey(salt: string, secret: string): Buffer {
   const cache = getSessionKeyCache();
-  const cached = cache.get(secret);
+  // The salt is in the cache key because a process can be pointed at more than
+  // one key file (tests do); a key derived under another salt must not be
+  // served from here. base64url contains no `|`.
+  const cacheKey = `${salt}|${secret}`;
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
 
-  const key = scryptSync(secret, KEY_SALT, KEY_PARAMS.keyLength, {
+  const key = scryptSync(secret, salt, KEY_PARAMS.keyLength, {
     N: KEY_PARAMS.N,
     r: KEY_PARAMS.r,
     p: KEY_PARAMS.p,
   });
-  cache.set(secret, key);
+  cache.set(cacheKey, key);
   return key;
 }
 
@@ -115,21 +224,31 @@ function deriveSessionKey(secret: string): Buffer {
  * panel would find that none of them can sign in, because the server never
  * demanded a credential. The account's own digest is the right key — unique to
  * that account, and it rotates with the password.
+ *
+ * The revocation epoch is appended to every variant. It is the only thing that
+ * can end a session without touching the credential, which is what a logout has
+ * to do: the cookie is self-contained, so "sign out" can only mean "the key
+ * that verifies it is gone". `bumpSessionEpoch` in the store turns it, and every
+ * cookie of that user stops verifying on the next request.
  */
 function resolveSessionSecret(options: WebAuthStoreOptions): string | null {
   const policy = resolveWebAuthPolicy(options);
 
   if (typeof options.username === "string" && options.username.length > 0) {
     const account = findWebAccount(options.username, options);
-    if (account) return `account:${account.username}|${account.password.salt}:${account.password.hash}`;
+    if (account) return withEpoch(`account:${account.username}|${account.password.salt}:${account.password.hash}`, account.username, options);
   }
 
   const username = getExpectedUsername(options.env);
-  if (policy.mode === "environment") return `${username}:${policy.password}`;
-  if (policy.mode === "stored") return `${username}|stored:${policy.digest.salt}:${policy.digest.hash}`;
+  if (policy.mode === "environment") return withEpoch(`${username}:${policy.password}`, username, options);
+  if (policy.mode === "stored") return withEpoch(`${username}|stored:${policy.digest.salt}:${policy.digest.hash}`, username, options);
   // `open` with no account behind it has no credential to bind to, and
   // `unavailable` has no readable one. Either way there is nothing to sign.
   return null;
+}
+
+function withEpoch(secret: string, username: string, options: WebAuthStoreOptions): string {
+  return `${secret}|session:${readSessionEpoch(username, options)}`;
 }
 
 /**
@@ -161,8 +280,8 @@ function readCookieUsername(value: unknown, env: NodeJS.ProcessEnv): string | nu
   return username;
 }
 
-function sign(payload: string, secret: string): string {
-  return createHmac("sha256", deriveSessionKey(secret)).update(payload, "utf8").digest("base64url");
+function sign(payload: string, secret: string, salt: string): string {
+  return createHmac("sha256", deriveSessionKey(salt, secret)).update(payload, "utf8").digest("base64url");
 }
 
 /** A timestamp rides in the cookie as base64url so the payload stays one token. */
@@ -179,7 +298,7 @@ function decodeTimestamp(field: string): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
-function buildSessionValue(secret: string, username: string): string {
+function buildSessionValue(secret: string, username: string, salt: string): string {
   const issuedAt = Date.now();
   const payload = [
     SESSION_VERSION,
@@ -188,7 +307,7 @@ function buildSessionValue(secret: string, username: string): string {
     randomBytes(NONCE_BYTES).toString("base64url"),
     Buffer.from(username, "utf8").toString("base64url"),
   ].join(".");
-  return `${payload}.${sign(payload, secret)}`;
+  return `${payload}.${sign(payload, secret, salt)}`;
 }
 
 /**
@@ -213,7 +332,7 @@ export function issueSessionCookie(options: WebAuthStoreOptions = {}): string | 
   const username = options.username ?? getExpectedUsername(options.env);
   const secret = resolveSessionSecret({ ...options, username });
   if (secret === null) return null;
-  return buildSessionValue(secret, username);
+  return buildSessionValue(secret, username, sessionKeySalt(options.env ?? process.env));
 }
 
 /**
@@ -227,9 +346,16 @@ export function verifySessionCookie(
   return readSessionCookie(value, options) !== null;
 }
 
+/** What a verified cookie says. `issuedAt` is what the renewal rule reads. */
+export interface SessionClaims {
+  username: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
 /**
- * Which account a session cookie belongs to, or `null` for anything malformed,
- * expired, or signed with a different credential.
+ * A verified cookie, or `null` for anything malformed, expired, revoked, or
+ * signed with a different credential.
  *
  * The returned name is *verified*, not decoded-and-hoped: the signature covers
  * the username field, so swapping alice's name into bob's cookie breaks the
@@ -237,21 +363,22 @@ export function verifySessionCookie(
  * between this and a plain field in the cookie, which is a header the client
  * owns.
  */
-export function readSessionCookie(
+export function readSession(
   value: unknown,
   options: WebAuthStoreOptions = {},
-): string | null {
+): SessionClaims | null {
   const username = readCookieUsername(value, options.env ?? process.env);
   if (username === null) return null;
 
-  const [version, issuedAt, expiry, nonce, encodedUser, signature] = (value as string).split(".");
+  const [version, issuedAtField, expiry, nonce, encodedUser, signature] = (value as string).split(".");
   if (version !== SESSION_VERSION) return null;
-  if (!BASE64URL.test(issuedAt) || !BASE64URL.test(nonce) || !BASE64URL.test(signature)) {
+  if (!BASE64URL.test(issuedAtField) || !BASE64URL.test(nonce) || !BASE64URL.test(signature)) {
     return null;
   }
 
+  const issuedAt = decodeTimestamp(issuedAtField);
   const expiresAt = decodeTimestamp(expiry);
-  if (expiresAt === null || Date.now() >= expiresAt) return null;
+  if (issuedAt === null || expiresAt === null || Date.now() >= expiresAt) return null;
 
   // The name from the cookie picks the key. It is untrusted input at this point
   // and is treated as such: it selects a *stored* credential or nothing, and the
@@ -259,13 +386,45 @@ export function readSessionCookie(
   const secret = resolveSessionSecret({ ...options, username });
   if (secret === null) return null;
 
-  const payload = `${version}.${issuedAt}.${expiry}.${nonce}.${encodedUser}`;
-  const expected = Buffer.from(sign(payload, secret), "utf8");
+  const payload = `${version}.${issuedAtField}.${expiry}.${nonce}.${encodedUser}`;
+  const salt = sessionKeySalt(options.env ?? process.env);
+  const expected = Buffer.from(sign(payload, secret, salt), "utf8");
   const actual = Buffer.from(signature, "utf8");
   // `timingSafeEqual` throws on a length mismatch, and the signature comes off
   // the wire, so the lengths are compared before it is reached.
   if (expected.length !== actual.length) return null;
   if (!timingSafeEqual(expected, actual)) return null;
 
-  return username;
+  return { username, issuedAt, expiresAt };
+}
+
+/** Which account a session cookie belongs to, or `null`. See `readSession`. */
+export function readSessionCookie(
+  value: unknown,
+  options: WebAuthStoreOptions = {},
+): string | null {
+  return readSession(value, options)?.username ?? null;
+}
+
+/**
+ * The attributes of the `omp_session` cookie, in one place.
+ *
+ * Login, the proxy's renewal and the logout must write the same cookie: two
+ * `Set-Cookie` headers that differ in an attribute are two cookies, and which
+ * one the browser keeps is a matter of header order. `secure` follows the
+ * request instead of a constant — the deployment serves plain HTTP on `:8788`
+ * and HTTPS in front of it, and a `secure` cookie would be dropped on the
+ * first. Never `domain`-scoped: a host-only cookie cannot be widened by a
+ * hostile parent domain.
+ */
+export function sessionCookieOptions(url: URL | string, headers?: Headers) {
+  const protocol = typeof url === "string" ? new URL(url).protocol : url.protocol;
+  const forwarded = headers?.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  return {
+    httpOnly: true,
+    sameSite: "strict" as const,
+    path: "/",
+    maxAge: Math.floor(SESSION_TTL_MS / 1000),
+    secure: protocol === "https:" || forwarded === "https",
+  };
 }

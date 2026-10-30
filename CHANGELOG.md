@@ -1218,6 +1218,104 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `U4S1OEsbMbebZ-m3xHrQy`, 494 files under `.next/static/**/*.js` |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.19.0
+
+Released 2026-10-30.
+
+### Sitzung
+
+**Eine Stunde, gleitend.** `SESSION_TTL_MS` ist von 24 h auf 1 h gefallen, und
+`proxy.ts` stellt den Cookie neu aus, sobald mehr als die Haelfte davon
+(`SESSION_RENEW_AFTER_MS`, 30 min) seit `issuedAt` vergangen ist. Damit ist die
+Stunde die **Leerlaufzeit** und nicht die Sitzungslaenge: wer die Seite offen
+haelt, bleibt angemeldet, wer sie eine Stunde nicht anfasst, faellt heraus.
+
+**Was als Aktivitaet zaehlt, ist jede authentifizierte Anfrage** — jeder
+Seitenaufruf, jede API-Antwort, jedes `EventSource`-Wiederaufnehmen. Es gibt
+keinen eigenen Keepalive und keinen Timer: das Cookie traegt seinen
+Ausstellungszeitpunkt selbst, also braucht die Drosselung keinen Serverzustand.
+Ein Vordergrund-Tab mit 36 authentifizierten Requests pro Minute bekommt
+deshalb nicht 36 `Set-Cookie`, sondern hoechstens eines pro halbe Stunde. Nur
+die Cookie-Tuer erneuert: Basic Auth hat keine Sitzung zu verlaengern, und ein
+abgelehnter Request erreicht die Zeile nicht — ein gestohlener Cookie laesst
+sich also nicht durch Klopfen an ein 401 am Leben halten.
+
+**Die Attribute kommen aus einem Helper**, den Login, Erneuerung und Logout
+gemeinsam nutzen: `SameSite=strict`, `HttpOnly`, `Path=/` und host-only bleiben,
+`Secure` folgt jetzt der Anfrage. Hinter TLS-Terminierung an — auf dem internen
+Klartext-Port `:8788` aus, weil ein `secure`-Cookie dort bei jedem Request
+verworfen worden waere. Vorher hat kein Test die Attribute geprueft; jetzt schon.
+
+### Sicherheit
+
+**Der Schluessel der Sitzung ueberlebt einen Neustart.** Bis hierher war er ein
+`randomBytes(32)` auf Modulebene, also zog jeder Kaltstart einen neuen und jede
+lebende Anmeldung war tot. Das war kein theoretischer Fall: `omp-web.service`
+laeuft mit `Restart=always` und einem Healthcheck alle fuenf Minuten, und im
+`journalctl` vom 30.10.2026 stehen **zehn** Stopping+Started-Paare an einem Tag
+(00:39, 01:18, 01:19, 06:33, 08:03, 09:00, 10:01, 11:01, 13:37, 21:30 UTC) —
+mehrere davon im Stundenraster, jeder davon hat jeden offenen Tab abgemeldet.
+Das war die Ursache des Symptoms „nach zehn Minuten abgemeldet"; im Code gibt es
+keine Zehn-Minuten-Frist fuer das Cookie (die beiden 10-Minuten-Werte im Repo
+sind ein Recovery-Code und der Idle-Timeout der Agent-Session).
+
+**Was das kostet, klar benannt:** wer die Schluesseldatei lesen kann, kann
+Cookies fuer jedes Konto muenzen, ohne das Passwort zu kennen — der Schluessel
+ist ein zweites Geheimnis neben `omp-web-auth.json`. Das ist die Umkehr einer
+bewusst getroffenen Entscheidung, und der Preis steht hier, weil er der Grund
+dafuer ist, wie die Datei liegt: `0600`, im Verzeichnis der Credential-Datei
+(`OMP_WEB_SESSION_KEY_FILE` verschiebt sie), dessen `0700` schon das Passwort
+schuetzt. Wer sie lesen kann, ist derselbe Dienstbenutzer, der auch die
+Kontendatei und jedes Mandanten-Home lesen kann — es kommt keine neue
+Rechteklasse hinzu, nur ein zweites Secret an einem Ort, an dem schon eines
+liegt.
+
+**Rotation ist ein `rm` und ein Neustart.** Jeder lebende Cookie stirbt damit,
+was der alte Dauerzustand war. `OMP_WEB_SESSION_KEY_EPHEMERAL=1` stellt das alte
+Verhalten wieder her: kein File, Salz pro Prozess, Neustart = Logout. Es ist
+dokumentiert und getestet, aber nicht der Default.
+
+**Ein Logout widerruft endlich etwas.** Gemessen war der alte Cookie nach
+`DELETE /api/web-access/login` weiterhin `200`: es gab keinen Server-Record,
+also nichts zu widerrufen. Jetzt haengt der Schluessel an einer
+Widerrufs-Epoche je Benutzer (`omp-web-sessions.json`), die der Logout erhoeht;
+jede Kopie, die vorher entstanden ist, faellt damit durch die Signatur — auf
+jedem Geraet dieses Benutzers. Was weiterhin nicht geht, und was hier nicht
+behauptet wird: Basic Auth laesst sich nicht abmelden (es ist ein Header, keine
+Sitzung), und die Epoche ist kein Sitzungsprotokoll — es gibt weiterhin keinen
+Datensatz pro Login und keine Replay-Sperre.
+
+**Dieses Deploy meldet jeden offenen Browser genau einmal ab.** Die heute
+gueltigen Cookies sind mit dem alten, prozessgebundenen Schluessel signiert;
+der erste Start mit persistiertem Schluessel kann sie nicht pruefen. Danach
+ueberlebt eine Anmeldung die Neustarts, die sie vorher gekostet hat — das ist
+der Zweck des Release.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Kein echtes Telefon.** Die Sitzungs- und Erneuerungsmessungen laufen im
+  Browser, nicht auf einem Geraet; wie ein mobiler Browser den Cookie ueber
+  einen echten Netzwechsel haelt, ist damit nicht belegt.
+- **Der IME ist weiterhin nur im Unit-Test geprueft**, nicht an einer echten
+  Eingabemethode (unveraendert seit v0.16.0).
+- **Die Tauri-Desktop-Shell wurde nicht gebaut.** `src-tauri/` steht weiter auf
+  `0.2.10`.
+- **Kein Test fuer einen Schluessel, der von einem anderen Benutzer geschrieben
+  wurde.** Die Datei wird mit `0600` angelegt und ein `EACCES` beim Lesen ist
+  nicht als eigener Fall gemessen — nur der Normalfall und der fehlende Fall.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1681 pass, 0 fail, 1 skip — 1682 tests, 193 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `v-JIHe6I8Y7asOh-4tJfz`, 494 files under `.next/static/**/*.js` |
+| `bunx eslint components/ app/ lib/ bin/ proxy.ts test/` | 0 problems |
+
 ## v0.11.0
 
 ### Layout

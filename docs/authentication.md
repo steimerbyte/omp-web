@@ -229,21 +229,44 @@ exception that the kernel backs up.
 
 A successful sign-in sets an `omp_session` cookie instead of asking for the
 credential on every request. The cookie is signed over the username, the
-password, and a random salt generated at server start. That binds it to both
-halves of the credential *and* to the running process, so a session ends when:
+credential, the account's revocation epoch and a server-side salt. That binds it
+to both halves of the credential *and* to a key the server owns, so a session
+ends when:
 
 - the password changes, or the username changes;
-- the server restarts, because the boot salt is new;
-- the TTL of 24 hours expires, or the cookie is dropped.
+- someone signs out: the account's epoch is incremented, and every cookie signed
+  under the old one stops verifying on the next request — on every browser that
+  had one, not just the one that clicked;
+- nobody sends a request for an hour. The lifetime is one hour and it slides:
+  `proxy.ts` re-issues the cookie once more than half of it has passed, so a page
+  in use stays signed in and an abandoned tab does not. The renewal is capped at
+  one `Set-Cookie` per half hour by the `issuedAt` that rides in the cookie
+  itself, which matters on this UI: an open tab polls a few dozen authenticated
+  requests a minute, and an uncapped renewal would set a cookie on every one.
 
-A restart is therefore a logout, and it is the limit the 24 hours do not reach.
-During a redeploy every open tab has to sign in again — that is the intended
-trade for a cookie that cannot outlive the process that minted it. There is no
-session list and no manual revocation: the shortest lifetime is a restart. In
-practice that means a login survives a workday only for as long as the process
-does.
+A restart is no longer a logout. The salt lives in a file — `0600`, one line,
+`<agent dir>/omp-web-session-key` by default, `OMP_WEB_SESSION_KEY_FILE` to move
+it — so the process that starts after a deploy verifies the cookies the previous
+one minted. That is a deliberate reversal of an earlier decision, and the reason
+is measured: on agent-pc the unit runs with `Restart=always` and a five-minute
+healthcheck, and took about ten restarts on 2026-10-30 alone. Under the old rule
+("the session dies with the process") the honest description of a login was
+"until the next deploy", and the page appeared to log the operator out after ten
+minutes.
+
+What the key file costs: anyone who can read it *and* the credential file can
+mint cookies without knowing the password — but reading those two files already
+means owning the service account, which can read `omp-web-accounts.json` and
+every tenant's home anyway. So the file is `0600` and sits next to the
+credential, and rotating it is the same operation as revoking every session:
+delete it and restart, and the next start mints a fresh salt. `OMP_WEB_SESSION_KEY_EPHEMERAL=1`
+restores the old behaviour for a deployment that wants a restart to be a logout;
+nothing is written then, and the salt is `randomBytes` per process.
 
 Two details worth knowing when reading a bug report: the secret is derived per
 mode, so switching between the environment variable and the stored file
 invalidates cookies even if the password is identical, and a server with no
-password configured has no session to issue at all.
+password configured has no session to issue at all. The cookie is host-only, so
+`localhost`, `127.0.0.1` and every other name in `OMP_WEB_ALLOWED_HOSTS` keep
+their own jar — a login on one name is not a login on the other, and that is a
+property of the web platform, not of this code.

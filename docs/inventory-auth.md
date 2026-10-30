@@ -258,10 +258,11 @@ beim nächsten Refactor wegoptimiert wird.
 
 ### Session-Cookie `omp_session`
 - **Kann**: Traegt `version.issuedAt.expiry.nonce.username.signature`, sechs base64url-Felder.
-  Signiert ist HMAC-SHA256 ueber den Payload, Schluessel ist scrypt(Geheimnis, KEY_SALT) mit
-  N=16384, r=8, p=1, 64 Byte. Der abgeleitete Schluessel ist prozessweit gecacht
-  (`lib/web-auth-session.ts:88-100`), weil scrypt ~50–100 ms kostet und `proxy.ts` das auf
-  **jedem** authentifizierten Request zahlt — inklusive SSE-Reconnects.
+  Signiert ist HMAC-SHA256 ueber den Payload, Schluessel ist scrypt(Geheimnis, Salz) mit
+  N=16384, r=8, p=1, 64 Byte; der Salz kommt aus der Schluesseldatei (siehe unten). Der
+  abgeleitete Schluessel ist prozessweit gecacht (`lib/web-auth-session.ts:188-209`, Cache-Key
+  `salz|geheimnis`), weil scrypt ~50–100 ms kostet und `proxy.ts` das auf **jedem**
+  authentifizierten Request zahlt — inklusive SSE-Reconnects.
 - **Kann**: Der Konto-Name steht **im signierten Payload**, nicht im Schluessel. Das ist der ganze
   Punkt: eine Session ist nicht „der Server ist offen", sondern „diese Person ist angemeldet", und
   `proxy.ts` braucht den Namen, um die Identitaet zu bauen. Den Namen in den Schluessel zu legen
@@ -275,25 +276,60 @@ beim nächsten Refactor wegoptimiert wird.
   keinem Credential aufloest, produziert keinen Schluessel, und die Pruefung schlaegt fehl. Ein
   Cookie, das `steimerbyte` behauptet, kommt auf einem Server ohne dieses Konto nicht durch.
 - **Darf nicht**: `timingSafeEqual` **nicht** direkt mit der Wire-Signatur aufrufen
-  (`lib/web-auth-session.ts:252-253`). Es wirft bei Laengenunterschied; die Laengen werden deshalb
+  (`lib/web-auth-session.ts:393-396`). Es wirft bei Laengenunterschied; die Laengen werden deshalb
   vorher verglichen.
-- **Darf nicht**: `KEY_SALT` (`:58`, `randomBytes(32)`) nicht persistent machen und nicht aus einer
-  Datei laden. Der Salz ist prozesslokal, damit eine Session **keinen Neustart** ueberlebt: ein
-  Deploy auf agent-pc laeuft mit `Restart=always`, jeder Deploy meldet also ab. Der Schluessel ist
-  geheim, weil **die Anmeldedatin** geheim ist, nicht weil der Salz es ist. Ein dauerhaftes Salz
-  muesste von irgendwoher kommen — das ist der Grund fuer diese Entscheidung.
-- **Darf nicht**: `SESSION_TTL_MS` (24 h, `:40`) **nicht** verlaengern. Das ist eine Obergrenze
-  auf die *Cookie*-Lebensdauer, keine Zusage, dass eine Anmeldung den Tag uebersteht. Eine Woche
-  oder ein Monat wuerde bedeuten, dass ein vergessenes Laptop laenger authentifiziert bleibt, als
-  die Person noch daran denkt; eine unbegrenzte Session laeuft ueberhaupt nicht ab.
+- **Kann** (bewusste Umkehr der frueheren Regel): `sessionKeySalt()` (`:152-161`) liest den
+  Salz aus einer Datei, `0600`, eine Zeile, `resolveSessionKeyFile()` (`:86-90`):
+  `OMP_WEB_SESSION_KEY_FILE`, sonst `<Verzeichnis der Credential-Datei>/omp-web-session-key`. Der
+  Grund ist eine Messung, keine Neigung: auf agent-pc laeuft die Unit mit `Restart=always` und
+  einem Healthcheck alle fuenf Minuten, am 30.10.2026 waren das **~10 Neustarts an einem Tag**
+  (`journalctl`, jede Zeile ein Stopping+Started). Mit einem Salz pro Prozess hiess „Session" also
+  „bis zum naechsten Deploy", und das Symptom meldet sich als „nach zehn Minuten abgemeldet".
+  Erzeugt wird die Datei mit `flag: "wx"` (kein Ueberschreiben durch einen zweiten Prozess) und
+  `mode: 0o600`; existiert sie schon, gewinnt ihr Inhalt. Was ein gestohlener Schluessel **bedeutet**:
+  wer diese Datei lesen kann, kann Cookies fuer jedes Konto muenzen, ohne das Passwort zu kennen —
+  und wer sie lesen kann, ist derselbe Benutzer, der `omp-web-auth.json` und jedes Konto-Home lesen
+  kann. Es kommt also keine neue Rechteklasse hinzu, nur ein zweites Secret in dem Verzeichnis, in
+  das `writeWebAuthConfig` schon schreibt. **Rotation** = Datei loeschen und neu starten: der
+  naechste Start zieht einen neuen Salz, und jeder lebende Cookie stirbt (genau das war der alte
+  Dauerzustand).
+- **Darf nicht**: Die Salzdatei **nicht** unter `OMP_WEB_HOME_ROOT` legen. Das ist die Wurzel fuer
+  die Home-Verzeichnisse der Konten und laut `checkHomeRootWritable` (`bin/web-auth-store.js`)
+  haeufig `root:root` und fuer den Dienst unbeschreibbar; das Verzeichnis der Credential-Datei ist
+  dagegen nachweislich beschreibbar (`writeWebAuthConfig` legt es mit `0700` an).
+- **Kann**: `OMP_WEB_SESSION_KEY_EPHEMERAL=1` (`:74`) als Ausstieg: dann bleibt der Salz
+  prozesslokal (`randomBytes(32)`), es entsteht keine Datei, und ein Neustart meldet wieder alle ab.
+  Der Zweig existiert fuer Installationen, die genau das wollen — nicht als Default.
+- **Darf nicht**: Bei unschreibbarem Ziel **nicht** werfen. `loadOrCreateSessionKey()` (`:111-128`)
+  faellt auf einen Prozess-Salz zurueck: Anmelden funktioniert weiter, Sessions sterben mit dem
+  Prozess. Ein `Set-Cookie`-Fehler wuerde eine laufende Installation wegen einer
+  Verzeichnisberechtigung komplett abschalten.
+- **Darf nicht**: `SESSION_TTL_MS` (1 h, `:52`) **nicht** wieder auf 24 h drehen. Die Stunde ist
+  jetzt eine **Gleitfrist**: `proxy.ts:178-191` stellt den Cookie neu aus, sobald mehr als
+  `SESSION_RENEW_AFTER_MS` (`:60`, die Haelfte) seit `issuedAt` vergangen sind. Damit ist die Stunde
+  die Leerlaufzeit, nicht die Sitzungslaenge — und die Drosselung ist der Punkt: ein offener Tab
+  stellt gemessen ~36 authentifizierte Requests pro Minute; ohne die Halbwertsregel entstuende auf
+  jedem davon ein `Set-Cookie`. Eine Verlaengerung der TTL ohne die Gleitfrist (oder umgekehrt)
+  macht aus einem vergessenen Laptop eine Woche lang eine offene Sitzung.
+- **Darf nicht**: Im Gleit-Zweig **kein** `Set-Cookie` auf einem abgelehnten Request und keines auf
+  dem Basic-Auth-Pfad. Beide kehren vor `proxy.ts:178` zurueck (`identity === null` bzw.
+  `session === null`), und das muss so bleiben: sonst verlaengert ein Angreifer mit einem
+  gestohlenen Cookie die Lebensdauer durch Klopfen auf einen 401.
+- **Darf nicht**: Die Attribute der Erneuerung **nicht** getrennt von der Login-Route pflegen. Beide
+  benutzen `sessionCookieOptions()` (`:420-430`): `HttpOnly`, `SameSite=strict`, `Path=/`,
+  `Max-Age` aus `SESSION_TTL_MS`, `Secure` **nur** wenn die Anfrage ueber HTTPS kam
+  (`x-forwarded-proto` oder `https:`-URL), nie `Domain`. Zwei `Set-Cookie` mit demselben Namen und
+  unterschiedlichen Attributen sind zwei Cookies, und welches der Browser behaelt, haengt an der
+  Header-Reihenfolge. `proxy.session-cookie.test.mjs` und
+  `app/api/web-access/login/route.test.mjs` pruefen genau einen Header und die Attribute; vor
+  dieser Aenderung hat **kein** Test die Attribute geprueft.
 - **Darf nicht**: `SESSION_VERSION` nicht entfernen, wenn sich das Payload-Format aendert — ein
   alter Cookie muss **verworfen**, nicht falsch gelesen werden.
-- **Ort**: `lib/web-auth-session.ts:24` (Cookie-Name), `lib/web-auth-session.ts:40` (TTL),
-  `lib/web-auth-session.ts:43` (Version), `lib/web-auth-session.ts:58` (Salt),
-  `lib/web-auth-session.ts:64-100` (Schluesselableitung),
-  `lib/web-auth-session.ts:119-140` (`resolveSessionSecret`),
-  `lib/web-auth-session.ts:147-156` (`readCookieUsername`),
-  `lib/web-auth-session.ts:176-186` (Bau), `lib/web-auth-session.ts:225-256` (`readSessionCookie`)
+- **Ort**: `lib/web-auth-session.ts:35` (Cookie-Name), `:52` (TTL), `:60` (Erneuerungs-Schwelle),
+  `:63` (Version), `:66-166` (Salz, Schluesseldatei, Ephemeral-Schalter), `:188-209`
+  (Schluesselableitung), `:234-252` (`resolveSessionSecret` und `withEpoch`), `:266-281`
+  (`readCookieUsername`), `:301-311` (Bau), `:366-399` (`readSession`), `:402-407`
+  (`readSessionCookie`), `:420-430` (`sessionCookieOptions`)
 
 ### Session-Schluesselbindung (`resolveSessionSecret`)
 - **Kann**: Schluesselt auf das, was eine Anmeldedatin eindeutig identifiziert **und sich mit ihr
@@ -308,7 +344,23 @@ beim nächsten Refactor wegoptimiert wird.
 - **Darf nicht**: `null` als „offener Server" interpretieren und einen Fallback-Schluessel erfinden.
   `open` ohne Konto dahinter hat nichts zu signieren, `unavailable` hat nichts Lesbares. In beiden
   Faellen gibt es nichts zu binden.
-- **Ort**: `lib/web-auth-session.ts:119-140`
+- **Kann**: Die **Widerrufs-Epoche** des Benutzers an jeden Zweig anhaengen (`withEpoch()`,
+  `:250-252`): `…|session:<n>` aus `readSessionEpoch()` (`bin/web-auth-store.js`,
+  `omp-web-sessions.json`). Das ist der einzige Weg, eine Sitzung zu beenden, **ohne** die
+  Anmeldedatin anzufassen — und genau das verlangt ein Logout von einem selbsttragenden Cookie.
+  Die Epoche steht im **Schluessel**, nicht im Payload: damit bleibt das Cookie-Format bei sechs
+  Feldern und `SESSION_VERSION` bei 1, und ein alter Cookie faellt durch die Signatur statt durch
+  eine zweite Pruefung, die man vergessen kann. Alle Sitzungen eines Benutzers sterben gemeinsam,
+  auch auf einem zweiten Geraet — das ist „ueberall abmelden", nicht „hier abmelden".
+- **Darf nicht**: Die Epoche **nicht** in den Payload legen. Dann muesste `readSession` zwei Dinge
+  pruefen (Signatur und Feld), `SESSION_VERSION` muesste steigen, und jede Stelle, die die
+  Feldzahl kennt (`readCookieUsername`, `lib/web-accounts.test.mjs:396`), muesste mitziehen. Ein
+  Wert, der nur den Schluessel waehlt, gehoert in den Schluessel.
+- **Darf nicht**: `omp-web-sessions.json` **nicht** als „Sitzungsliste" lesen. Sie enthaelt keine
+  Sitzungen, nur einen Zaehler je Benutzer; es gibt weiterhin keinen Datensatz pro Login, keine
+  Nonce-Familie und keine Replay-Sperre. Geht die Datei verloren, leben nur Cookies wieder auf, die
+  innerhalb ihrer eigenen TTL widerrufen wurden.
+- **Ort**: `lib/web-auth-session.ts:234-252`
 
 ### Login-API (`POST /api/web-access/login`)
 - **Kann**: Tauscht Name + Passwort gegen ein `httpOnly`-Cookie und gibt `{ ok, user }` zurueck.
@@ -331,24 +383,35 @@ beim nächsten Refactor wegoptimiert wird.
   die Datei ist dadurch lesbar ohne den Proxy gelesen zu haben. Analog: `hasJsonContentType()`
   **vor** `req.json()` — sonst kann ein `text/plain`-Body als JSON geparst werden und den
   Content-Type-Vertrag umgehen.
-- **Darf nicht**: `secure: false` nicht stillschweigend auf `true` drehen, solange omp-web ueber
-  Klartext auf `:8788` laeuft (`:99`). Ein `secure`-Cookie wuerde der Browser bei jedem Request
-  verwerfen, und der Login waere unmoeglich. Sobald TLS-Terminierung davor steht, **muss** der Wert
-  auf `true` gehen. Nie `domain`-scopen: ein host-only-Cookie kann nicht von einer bosen
-  Parent-Domain verbreitert werden.
-- **Ort**: `app/api/web-access/login/route.ts:26` (`REJECTED`), `:34` (Delay), `:47-103` (POST),
-  `:48-55` (Guards), `:73` (Verifikation), `:81-100` (Cookie-Set)
+- **Kann**: `Secure` folgt der Anfrage, ueber die sie kam: `sessionCookieOptions()` setzt es, wenn
+  die URL `https:` ist oder `x-forwarded-proto` `https` meldet. Auf dem internen Klartext-Port
+  `:8788` bleibt es aus — ein `secure`-Cookie wuerde der Browser dort bei jedem Request verwerfen,
+  der Login waere unmoeglich — und hinter der TLS-Terminierung ist es an. Kein Schalter, den
+  jemand vergessen kann: derselbe Helper schreibt Login, Erneuerung und Logout.
+- **Darf nicht**: `maxAge` **nicht** hier berechnen. Es kommt aus `sessionCookieOptions()` und damit
+  aus `SESSION_TTL_MS` (3600 s); eine zweite Zahl an dieser Stelle waere die erste, die nach der
+  naechsten TTL-Aenderung falsch ist.
+- **Ort**: `app/api/web-access/login/route.ts:33` (`REJECTED`), `:40` (Delay), `:54-104` (POST),
+  `:55-62` (Guards), `:80` (Verifikation), `:97-98` (Cookie-Set ueber `sessionCookieOptions`)
 
 ### Abmelden (`DELETE /api/web-access/login`)
-- **Kann**: Setzt `omp_session` auf einen leeren Wert mit `maxAge: 0` und denselben Attributen
-  wie beim Setzen.
+- **Kann**: Zwei Dinge in einem Request: `omp_session` auf einen leeren Wert mit `maxAge: 0` und
+  denselben Attributen wie beim Setzen, **und** `bumpSessionEpoch()` fuer den Benutzer aus dem
+  vorgelegten Cookie. Das zweite ist der eigentliche Widerruf — vorher loeschte der Logout nur die
+  Kopie im Browser, und die Kopie, die ein Angreifer schon hatte, galt weiter (gemessen: nach dem
+  Logout war derselbe Cookie `200`). Jetzt faellt sie durch die Signatur, auf diesem Server und auf
+  jedem, der dieselbe Datei liest.
 - **Darf nicht**: **Nicht** behaupten, damit sei man ueberall abgemeldet. Der Basic-Auth-Pfad
-  laesst sich nicht abmelden — ein Client, der `Authorization` schickt, ist nach dem Logout weiterhin
-  angemeldet. Das steht so im Kommentar `:104` und gehoert dort hin.
+  laesst sich nicht abmelden — ein Client, der `Authorization` schickt, ist nach dem Logout
+  weiterhin angemeldet. Das steht so im Kommentar und gehoert dort hin. (Der Cookie-Pfad ist es
+  jetzt wirklich: jede Sitzung dieses Benutzers stirbt.)
+- **Darf nicht**: Das Erhoehen **nicht** scheitern lassen, wenn der Store nicht schreibbar ist
+  (`try/catch`, `console.error`). Der Browser-Cookie ist dann trotzdem weg, die fremde Kopie
+  laeuft mit ihrer TTL aus — ein 500 waere schlechter, weil der Nutzer dann auch hier angemeldet
+  bliebe.
 - **Darf nicht**: Die Cookie-Attribute hier veraendern. Sie muessen mit denen aus `POST`
-  uebereinstimmen, sonst loescht der Browser das Cookie nicht (Attribute sind Teil des
-  Cookie-Namens/Schlüssels).
-- **Ort**: `app/api/web-access/login/route.ts:105-115`
+  uebereinstimmen (gleicher Helper), sonst loescht der Browser das Cookie nicht.
+- **Ort**: `app/api/web-access/login/route.ts:106-135`
 
 ### Login-Seite (`app/login/page.tsx`)
 - **Kann**: Reines Formular: schickt `{ username, password }` als JSON an
@@ -694,13 +757,21 @@ Refactor sonst wegoptimiert. Ausformuliert als „darf nicht".
 - **Ort**: `bin/web-auth-store.js:502-507`, `app/api/web-access/route.ts:89-95`,
   `app/api/web-access/recovery/route.ts:53-60`, `docs/known-findings.md:51-64`
 
-### Sessions ueberleben keinen Neustart
-- **Darf nicht**: `KEY_SALT` (prozesslokal, `lib/web-auth-session.ts:58`) nicht persistent machen,
-  um Restart-Logout zu vermeiden. Der Dienst laeuft auf agent-pc mit `Restart=always`, jeder Deploy
-  meldet also ab. `SESSION_TTL_MS` von 24 Stunden ist die **Obergrenze** der Cookie-Lebensdauer und
-  **keine** Zusage, dass eine Anmeldung den Tag uebersteht.
-- **Darf nicht**: In Commit-Nachrichten oder Release-Notes „24-Stunden-Session" ohne den
-  Neustart-Vorbehalt schreiben. Genau dieser Zusatz fehlt in `SESSION_TTL_MS` nicht, aber er stand
-  schon einmal nicht da.
-- **Ort**: `lib/web-auth-session.ts:40`, `lib/web-auth-session.ts:58`,
-  `docs/known-findings.md:66-79`
+### Sitzungen ueberleben einen Neustart
+- **Kann**: Der Salz liegt in der Schluesseldatei (`lib/web-auth-session.ts:66-166`), also
+  verifiziert der Prozess nach einem Deploy die Cookies des vorigen. Das ist die Umkehr der alten
+  Regel („`KEY_SALT` nicht persistent machen") und beruht auf einer Messung, nicht auf einer
+  Neigung: auf agent-pc laufen mit `Restart=always` und einem Healthcheck alle fuenf Minuten an
+  einem Tag **~10 Neustarts** zusammen (`journalctl` 30.10.2026).
+- **Darf nicht**: Die Datei wie eine Bequemlichkeit behandeln. Wer sie lesen kann, kann Cookies
+  fuer jedes Konto muenzen, ohne das Passwort zu kennen — sie ist ein zweites Secret neben
+  `omp-web-auth.json`, gehoert in dasselbe `0700`-Verzeichnis, mit `0600`, und in kein Backup, das
+  weniger geschuetzt ist als das der Credential-Datei. Ein Konto-Home darf sie nie enthalten.
+- **Darf nicht**: `OMP_WEB_SESSION_KEY_EPHEMERAL=1` zum Default machen, solange es keinen anderen
+  Weg gegen das Symptom gibt: mit dem Schalter ist jeder Restart wieder ein Logout, und das sind
+  auf agent-pc zehn pro Tag.
+- **Darf nicht**: In Commit-Nachrichten oder Release-Notes eine feste Sitzungslaenge versprechen
+  („24-Stunden-Session", „ueberlebt den Arbeitstag"). Die TTL ist eine Stunde und gleitet, und die
+  alte Formulierung stand schon einmal falsch da.
+- **Ort**: `lib/web-auth-session.ts:66-166`, `docs/known-findings.md:111-134`,
+  `docs/authentication.md` (Abschnitt „Sessions and what ends them")

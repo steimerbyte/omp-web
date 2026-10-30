@@ -1,6 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { bumpSessionEpoch } from "@/bin/web-auth-store.js";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { SESSION_COOKIE_NAME, SESSION_TTL_MS, issueSessionCookie } from "@/lib/web-auth-session";
+import {
+  SESSION_COOKIE_NAME,
+  issueSessionCookie,
+  readSession,
+  sessionCookieOptions,
+} from "@/lib/web-auth-session";
 import { getExpectedUsername, verifyCredential } from "@/lib/web-auth";
 
 /**
@@ -86,33 +92,44 @@ export async function POST(req: Request) {
   }
 
   const response = NextResponse.json({ ok: true, user: identity }, { headers: NO_STORE });
-  response.cookies.set({
-    name: SESSION_COOKIE_NAME,
-    value: session,
-    httpOnly: true,
-    sameSite: "strict",
-    path: "/",
-    maxAge: Math.floor(SESSION_TTL_MS / 1000),
-    // omp-web is served over plain HTTP on :8788, and a `secure` cookie would be
-    // dropped by the browser on every request. Set this to `true` once the
-    // server sits behind TLS termination. Never `domain`-scoped: a host-only
-    // cookie cannot be widened by a hostile parent domain.
-    secure: false,
-  });
+  // Same attributes as the proxy's renewal — one helper, so the two can never
+  // drift apart. `secure` follows the request: plain HTTP on :8788, HTTPS when
+  // TLS termination is in front.
+  response.cookies.set({ name: SESSION_COOKIE_NAME, value: session, ...sessionCookieOptions(req.url, req.headers) });
   return response;
 }
 
-/** Sign out: clear the cookie. The Basic Auth path cannot be signed out of. */
-export async function DELETE() {
+/**
+ * Sign out.
+ *
+ * Clearing the cookie is only half of it: the cookie is self-contained, so a
+ * copy taken before this call kept working. The second half is the epoch bump —
+ * `readSession` derives its key from the account's epoch, so the very next
+ * request with the old copy fails the signature check, on this server and on
+ * any other one sharing the store. Every session of that user dies, which is
+ * what "log out everywhere" means.
+ *
+ * The Basic Auth path still cannot be signed out of: it is a header, not a
+ * session, and nothing here can un-send it.
+ */
+export async function DELETE(req: NextRequest) {
+  const session = readSession(req.cookies.get(SESSION_COOKIE_NAME)?.value);
+  if (session !== null) {
+    try {
+      bumpSessionEpoch(session.username);
+    } catch (error) {
+      // The store is not writable: the browser cookie is still cleared, and the
+      // copy left elsewhere expires with its own TTL. Failing the logout would
+      // leave the user signed in *here* as well, which is worse.
+      console.error(`[omp-web] could not revoke sessions for ${session.username}:`, error);
+    }
+  }
   const response = NextResponse.json({ ok: true }, { headers: NO_STORE });
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
     value: "",
-    httpOnly: true,
-    sameSite: "strict",
-    path: "/",
+    ...sessionCookieOptions(req.nextUrl, req.headers),
     maxAge: 0,
-    secure: false,
   });
   return response;
 }

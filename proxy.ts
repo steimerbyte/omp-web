@@ -5,7 +5,13 @@ import {
 } from "@/lib/request-security";
 import { isAdminUsername, authorizeWebRequest, type WebIdentity } from "@/lib/web-auth";
 import { REQUEST_ADMIN_HEADER, REQUEST_USER_HEADER } from "@/lib/request-identity";
-import { SESSION_COOKIE_NAME, readSessionCookie } from "@/lib/web-auth-session";
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_RENEW_AFTER_MS,
+  issueSessionCookie,
+  readSession,
+  sessionCookieOptions,
+} from "@/lib/web-auth-session";
 
 /**
  * The surfaces that answer without credentials.
@@ -145,21 +151,41 @@ export function proxy(request: NextRequest) {
   // this line ran, and it is only `x-omp-admin` for *later* requests that goes
   // missing.
   let identity = basicIdentity;
+  let session: ReturnType<typeof readSession> = null;
   if (identity === null) {
-    const sessionUser = readSessionCookie(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+    session = readSession(request.cookies.get(SESSION_COOKIE_NAME)?.value);
     // `isAdminUsername` reads `omp-web-accounts.json` (mtime-cached), with
     // `OMP_WEB_ADMINS` taking precedence and the legacy name list as the
     // fallback for accounts that predate the role field. `withIdentity` below
     // turns the answer into `x-omp-admin: 1`, which `lib/request-identity.ts`
     // reads back as `WebIdentity.isAdmin` and `requireAdmin` enforces.
-    if (sessionUser !== null) identity = { username: sessionUser, isAdmin: isAdminUsername(sessionUser) };
+    if (session !== null) identity = { username: session.username, isAdmin: isAdminUsername(session.username) };
   }
 
   // Every path that lets a request through goes out through `withIdentity`,
   // including the anonymous one. The early return below is only for the
   // identified case, where the headers get rewritten to the proven values.
   if (identity !== null) {
-    return withIdentity(request, identity);
+    const response = withIdentity(request, identity);
+
+    // Sliding renewal: once more than half the one-hour lifetime has passed,
+    // re-issue the cookie. `issuedAt` comes from the cookie itself, so the
+    // throttle needs no server state — a renewal resets it, which caps a
+    // polling tab at one `Set-Cookie` per half hour instead of one per request.
+    // Only the cookie door renews: Basic Auth has no session to extend, and the
+    // rejected paths above never reach this line, so a stolen cookie cannot be
+    // kept alive by knocking on a 401.
+    if (session !== null && Date.now() - session.issuedAt >= SESSION_RENEW_AFTER_MS) {
+      const renewed = issueSessionCookie({ username: session.username });
+      if (renewed !== null) {
+        response.cookies.set({
+          name: SESSION_COOKIE_NAME,
+          value: renewed,
+          ...sessionCookieOptions(request.nextUrl, request.headers),
+        });
+      }
+    }
+    return response;
   }
 
   if (decision === "unavailable") {

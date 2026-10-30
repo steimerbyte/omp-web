@@ -44,10 +44,17 @@ function withServer(t, run) {
   const dir = mkdtempSync(join(tmpdir(), "omp-web-proxy-role-"));
   const homeRoot = join(dir, "home");
   mkdirSync(homeRoot, { recursive: true, mode: 0o700 });
-  const keys = ["OMP_WEB_ACCOUNTS_FILE", "OMP_WEB_HOME_ROOT", "OMP_WEB_ADMINS", "OMP_WEB_PASSWORD"];
+  // Die Schluessel- und Epochendatei liegen im Temp-Verzeichnis: sonst legt
+  // dieser Test sie im echten Agent-Verzeichnis des Testlaeufers an.
+  const keys = [
+    "OMP_WEB_ACCOUNTS_FILE", "OMP_WEB_HOME_ROOT", "OMP_WEB_ADMINS", "OMP_WEB_PASSWORD",
+    "OMP_WEB_SESSION_KEY_FILE", "OMP_WEB_SESSIONS_FILE",
+  ];
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 
   process.env.OMP_WEB_ACCOUNTS_FILE = join(dir, "omp-web-accounts.json");
+  process.env.OMP_WEB_SESSION_KEY_FILE = join(dir, "omp-web-session-key");
+  process.env.OMP_WEB_SESSIONS_FILE = join(dir, "omp-web-sessions.json");
   process.env.OMP_WEB_HOME_ROOT = homeRoot;
   // Kein `OMP_WEB_ADMINS`: der Test prueft die Datei, nicht die Environment.
   delete process.env.OMP_WEB_ADMINS;
