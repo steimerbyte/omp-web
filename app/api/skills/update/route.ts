@@ -36,10 +36,11 @@ export async function POST(req: Request) {
     if (!cwd || !pkg || !scope) {
       return NextResponse.json({ error: "cwd, package, and scope are required" }, { status: 400 });
     }
-    // Ein globales Update schreibt in den gemeinsamen Skill-Bestand. Dieselbe
-    // Entscheidung wie in `install`: der Bestand ist global, also veraendert ihn
-    // nur, wer dafuer verantwortlich ist. Fuer `scope: "project"` greift
-    // stattdessen die Pfadgrenze, und die ist je Konto verschieden.
+    // Ein globales Update schreibt in die prozessweite Skill-Wurzel
+    // (`~/.agents/skills`), nicht in einen Konto-Bestand. Dieselbe Grenze wie in
+    // `install`: diese Wurzel gehoert dem Prozesskonto, also veraendert sie nur,
+    // wer dafuer verantwortlich ist. Fuer `scope: "project"` greift stattdessen
+    // die Pfadgrenze, und die ist je Konto verschieden.
     if (scope === "global" && !isAdminIdentity(identity)) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }

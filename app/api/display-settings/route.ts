@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { cfgHideThinkingBlock } from "@oh-my-pi/pi-coding-agent/session/settings";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { getRequestIdentity } from "@/lib/request-identity";
-import { getSettingsForCwd } from "@/lib/omp-runtime";
+import { getSettingsForIdentity } from "@/lib/omp-runtime";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import type { DisplaySettings } from "@/lib/settings-api";
 
@@ -25,7 +25,10 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
     }
-    const settings = await getSettingsForCwd(cwd);
+    // The Settings panel writes this value into the caller's `config.yml`.
+    // Reading it back from the process singleton made the toggle a no-op for
+    // every tenant whose session now uses their own Settings instance.
+    const settings = await getSettingsForIdentity(getRequestIdentity(req.headers), cwd);
     const payload: DisplaySettings = {
       hideThinkingBlock: cfgHideThinkingBlock.get(settings) === true,
     };

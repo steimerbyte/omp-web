@@ -20,7 +20,10 @@ function shortenPath(p: string): string {
 function sourceLabel(skill: Skill): string {
   const src = skill.sourceInfo?.source;
   const scope = skill.sourceInfo?.scope;
-  if (scope === "user" || src === "user") return "global";
+  // `custom:user` is this account's own `<agent dir>/skills`; the native user
+  // root is the operator's and stays readable for tenants.
+  if (src === "custom:user") return "custom";
+  if (scope === "user" || src === "user" || src === "native:user") return "global";
   if (scope === "project" || src === "project") return "project";
   return "path";
 }
@@ -118,6 +121,14 @@ function SkillDetail({
 }) {
   const { t } = useI18n();
   const label = sourceLabel(skill);
+  const sourceText =
+    label === "custom"
+      ? t("skills.sourceOwn")
+      : label === "global"
+        ? t("skills.sourceGlobal")
+        : label === "project"
+          ? t("skills.sourceProject")
+          : t("skills.sourcePath");
   const enabled = !skill.disableModelInvocation;
 
   function displayPath(p: string): string {
@@ -147,7 +158,7 @@ function SkillDetail({
                 label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
             }}
           >
-            {label}
+            {sourceText}
           </span>
           <span
             style={{
@@ -1045,31 +1056,35 @@ export function SkillsConfig({
                   const groups: { label: string; skills: typeof skills }[] = [];
                   const groupDefinitions = [
                     {
-                      label: "project / skills.sh",
+                      label: t("skills.sourceOwn"),
+                      matches: (skill: Skill) => sourceLabel(skill) === "custom",
+                    },
+                    {
+                      label: `${t("skills.sourceProject")} / skills.sh`,
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "project" &&
                         Boolean(skill.install?.skillsShUrl),
                     },
                     {
-                      label: "project",
+                      label: t("skills.sourceProject"),
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "project" &&
                         !skill.install?.skillsShUrl,
                     },
                     {
-                      label: "global / skills.sh",
+                      label: `${t("skills.sourceGlobal")} / skills.sh`,
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "global" &&
                         Boolean(skill.install?.skillsShUrl),
                     },
                     {
-                      label: "global",
+                      label: t("skills.sourceGlobal"),
                       matches: (skill: Skill) =>
                         sourceLabel(skill) === "global" &&
                         !skill.install?.skillsShUrl,
                     },
                     {
-                      label: "path",
+                      label: t("skills.sourcePath"),
                       matches: (skill: Skill) => sourceLabel(skill) === "path",
                     },
                   ];

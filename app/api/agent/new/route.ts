@@ -94,6 +94,11 @@ export async function POST(req: Request) {
       // Bindung wuerde der Agent den Kalender des *globalen* Verzeichnisses
       // benutzen — also den des Betreibers, nicht den des angemeldeten Kontos.
       identity,
+      // Ohne `owner` ist eine frisch gestartete Session fuer den Filter
+      // unsichtbar (`setSessionOwner(realSessionId, options.owner ?? "")`), und
+      // der Event-Stream antwortet 404, bevor die Datei existiert. Die
+      // Sitzung gehoert dem Konto, das sie geoeffnet hat.
+      owner: identity.username,
     });
 
     // Keep the files-route allowed-roots cache (see app/api/files/[...path]/route.ts)

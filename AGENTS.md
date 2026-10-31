@@ -245,8 +245,14 @@ omp has no trust store — it runs a repository's extensions because you ran it
 there. A browser tab is not that decision, so `lib/project-trust.ts` keeps a
 store in `~/.omp/agent/omp-web-trusted-projects.json` and, for an untrusted
 project, filters project-local entries out of omp's discovered extension and
-custom-tool paths and disables MCP. Skills and rules are data and always load.
-See `docs/project-trust.md`.
+custom-tool paths, disables MCP, and drops project-scoped skills from
+`createAgentSession`. Rules stay data and always load; skills follow trust
+because they are prompt text a merely-opened repository must not write.
+`trustedProjectSkills` keeps anything `level: "user"` **and** outside the
+project root — the level alone misses a project pointing
+`skills.customDirectories` at itself. `loadSessionSkills()` is the one loader
+`GET /api/skills` and the session both call, so the panel never lists a skill
+the agent lacks. See `docs/project-trust.md`.
 
 ### `SYSTEM.md` / `APPEND_SYSTEM.md` are resolved per session cwd
 `omp` resolves both files before it creates a session and passes them as
@@ -258,7 +264,8 @@ set the fields — so the text goes through the same templates the CLI renders i
 with. Every lookup is bound to the session's cwd, because the CLI's default
 (`getProjectDir()`) is the server's own directory here, not the project's.
 Project-local prompt files load for untrusted projects too: they are data, like
-skills and rules (`docs/project-trust.md`).
+rules (`docs/project-trust.md`). Skills do **not** — a `SKILL.md` is prompt text
+a merely-opened repository must not write on its own.
 
 ### SSE reconnect on page refresh mid-stream
 On `ChatWindow` mount, `GET /api/agent/[id]` is called. If `state.isStreaming === true`, SSE is reconnected automatically. `thinkingLevel` and `isCompacting` are also synced from this response.
@@ -286,7 +293,7 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - Writes are guarded by `isWritePathAllowed` / `authorizeTransfer`, which take an identity with no default. A route that writes and does not call one is a hole; `grep -c isWritePathAllowed 'app/api/files/[...path]/route.ts'` returning 0 used to mean exactly that.
 - The identity arrives in the `x-omp-user` / `x-omp-admin` request headers, and `proxy.ts` is the only thing that may set them. It deletes both before it sets them, on **every** path that lets a request through, including the anonymous one. A delete that a branch never reaches is not a protection: on an unlocked server `identity` is null, and a client-supplied `x-omp-admin: 1` used to survive into the route and grant full admin access.
 - Accounts live in a separate `omp-web-accounts.json` beside the credential file, with its own schema version, lifetime and ownership. `validateAccountName` rejects anything that is not `/^[a-z_][a-z0-9_-]{0,31}$/`, checked before any `mkdir`, so `../etc` never becomes a directory. With `OMP_WEB_PASSWORD` set there is exactly one account; several accounts need the account file.
-- `models.yml` and `config.yml` are per account under that account's agent directory. Skills stay globally readable as shared tooling, and writing them — global installs and updates included — is admin-only. Nothing is migrated: a new account starts empty on purpose, because copying the operator's `models.yml` would hand his API key to the first tenant.
+- `models.yml` and `config.yml` are per account under that account's agent directory. The **admin's own skills** are the process agent dir (`~/.omp/agent/skills`), as they always were. A **tenant's own skills** live in their account's agent dir. `startRpcSession` keeps the **process** agent directory on purpose — omp's skill loader reads `getAgentDir()` from process state and ignores the `agentDir` passed to `createAgentSession` (`discoverSkills(cwd, _agentDir)`); moving it would split credentials, memory and `agent.db` from the skills without moving the skills. What it does resolve per identity is the **Settings instance** (`getSettingsForIdentity`), and `skills.customDirectories` in the account's `config.yml` is where omp's `loadSkills()` finds the tenant folder. `GET /api/skills/user` registers that absolute entry idempotently, preserving every other key, and `ensureTenantAgentDir` runs before the flush. Without the Settings change a tenant's session read the operator's store while the manager showed him his own. Nothing is migrated: a new account starts empty on purpose, because copying the operator's `models.yml` would hand his API key to the first tenant.
 - `/api/cwd/validate`, `/api/default-cwd`, and `/api/worktrees` call `allowFileRoot()` when they make a new location browsable — but only for an admin. For any other account the candidate is checked against the account's own home with `isPathInUserHome()` and nothing is granted, because the allowlist lives in one process serving every operator: a grant made by one user would widen the filesystem for all of them, permanently.
 - `allowFileRoot()` buckets grants per identity. A call without an identity lands in the unattributed bucket, which only admins can see.
 - `/api/sessions` and `/api/terminal` filter by owner, and so do the `agent/running` snapshot and its event stream — the ids those two publish are what the rest of the API addresses things by, so leaving them unfiltered leaks through an open SSE channel. A foreign session or shell answers **404, not 403**: a 403 would confirm that the id exists, and the point of the filter is that another account's work is not merely unreadable but undiscoverable. Session ownership comes from the `cwd` in the session file, which means the sessions live in one shared tree owned by the account the service runs as — see the containment note below.
@@ -296,8 +303,11 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 
 ### Plugins and skills
 - `/api/plugins` drives omp's `PluginManager` (`~/.omp/plugins`): install, uninstall, enable/disable, plus `doctor()` output as diagnostics. omp has no in-place update, so "update" reinstalls the spec with `force`.
-- `/api/skills` uses omp's own `loadSkills()`, so `.omp/skills`, `~/.omp/agent/skills`, `.claude/skills`, plugin skills and `.agents/skills` are listed exactly as a session sees them.
-- Skill toggling edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives.
+- `/api/skills` uses omp's own `loadSkills()`, so `.omp/skills`, `~/.omp/agent/skills`, `.claude/skills`, plugin skills and `.agents/skills` are listed exactly as a session sees them. The list is resolved with the caller's identity (its Settings instance), but it is still the *union*: an admin sees the managed/global entries, a tenant additionally sees their own `custom:user` folder. Under an untrusted project it drops the project-scoped entries through the same filter the session uses (`trustedProjectSkills`); the panel must never advertise what the session did not load.
+- The **skills manager** (`?view=skills`, `components/SkillsManagerView.tsx`) reads and writes only the caller's own store: `<agent dir>/skills/<name>/SKILL.md`. Its routes are `/api/skills/user` and `/api/skills/user/[name]`. They address a **name**, never a path, validate it with the managed-skill rule `^[a-z0-9][a-z0-9-]{0,63}$`, derive the folder themselves, refuse symlinks, and write atomically. A foreign tenant's name answers **404**, because the folder is derived from the caller's home and does not exist there.
+- These routes deliberately bypass `protectedRootReason` (the `omp-runtime` 403 that refuses every `.omp` write through `/api/file-actions`). Do **not** loosen that shared guard: its refusal is what stopped the 2026-10-20 recursive delete, and it has no identity argument to reason with. The manager bypasses it by never accepting a path and by owning one narrow subtree; that is the difference.
+- A skill without a frontmatter `description` is skipped by omp **silently** (`requireDescription: true`). The editor refuses such a save and shows a diagnostics badge on any existing skill that has one, because a stored skill that never loads is the most common failure.
+- Toggling is still `PATCH /api/skills`, still **admin-only**, and edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives. It edits whatever `filePath` the union discovery produced (including the operator's) and is not the manager's write path; making it identity-aware would be a second, weaker write boundary next to the manager. The manager never calls it.
 - `/api/skills/install` shells through `npx skills add ... --agent claude-code`. The `skills` CLI has no `omp` agent, and its `pi` agent writes `~/.pi/agent/skills`, which omp does **not** read; the Claude layout is discovered by default.
 
 ### The calendar is per account, and the agent is bound to one

@@ -7,7 +7,7 @@ const routeSource = readFileSync(new URL("../app/api/display-settings/route.ts",
 const settingsSource = readFileSync(new URL("../components/SettingsConfig.tsx", import.meta.url), "utf8");
 
 test("serves the render-affecting settings for the requested cwd", () => {
-  assert.match(routeSource, /getSettingsForCwd\(cwd\)/);
+  assert.match(routeSource, /getSettingsForIdentity\(getRequestIdentity\(req\.headers\), cwd\)/);
   assert.match(routeSource, /hideThinkingBlock: cfgHideThinkingBlock\.get\(settings\) === true/);
   // Same guards as the other settings-derived endpoints.
   assert.match(routeSource, /isApiRequestAllowed\(req\)/);

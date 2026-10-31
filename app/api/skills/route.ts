@@ -37,28 +37,21 @@ export async function GET(req: Request) {
 
 // PATCH /api/skills — toggle disable-model-invocation on a SKILL.md file
 //
-// ### Warum das Schreibgeschuetzt ist und nicht pro Mandant getrennt
+// ### Warum das admin-only bleibt
 //
-// Der Skill-Bestand bleibt **ein** Bestand, und das ist eine Entscheidung, kein
-// Versehen: eine `SKILL.md` ist Code, den alle Mandanten brauchen, und ein
-// Bestand, den jeder sieht, aber nur der Betreiber aendert, ist ein
-// gemeinsamer Bestand mit einem Verantwortlichen. Waere er pro Nutzer, wuerde
-// jeder Mandant einen anderen Satz Instruktionen bekommen — und der
-// Aufwand, denselben Bestand N-mal zu pflegen, waere auch dann nicht zu
-// rechtfertigen, wenn man die Mandantengrenze fuer sicher haelt.
+// `PATCH` adressiert keinen eigenen Bestand, sondern einen beliebigen
+// `filePath` aus der **Vereinigungs**-Discovery dieser Identitaet — inklusive
+// der Betreiber-Skills, die ein Mandant ueber `native:user` liest. Es gibt hier
+// keine kontogebundene Wurzel, gegen die sich der Pfad halten liesse; die
+// Admin-Pruefung ist die Grenze. Das ist eine Aussage ueber diese Route, nicht
+// ueber den Bestand.
 //
-// Der Preis dieser Entscheidung ist aber eine Grenze, die gezogen werden muss:
-// wer den gemeinsamen Code liest, darf ihn nicht auch umschreiben. Ein
-// Mandant, der `disable-model-invocation` in einer `SKILL.md` toggelt, schaltet
-// fuer **alle** ab, ob er will oder nicht. Deshalb ist der Schreibpfad an
-// `isAdminIdentity` gebunden, und zwar *vor* jeder Pfadpruefung: die
-// Pfadpruefung waere hier Tautologie, denn die Admin-Pruefung entscheidet
-// bereits.
-//
-// Fuer einen Nicht-Admin bleibt genau das uebrig, was ihm gehoert: eigene
-// Skills im eigenen Projektverzeichnis (`<cwd>/.omp/skills`) ueber die
-// `getAllowedFileRoots`-Pruefung, und Lesen des gemeinsamen Bestands ueber
-// GET. Beides ist bereits vorhanden und muss hier nichts erfunden werden.
+// Der per-Konto-Bestand liegt unter `<agent dir>/skills` und wird ueber die
+// namensadressierten Routen `/api/skills/user[...]` geschrieben (Name →
+// abgeleiteter Ordner, nie ein Pfad aus dem Body). Die Verwaltung schreibt nur
+// den eigenen Ordner; wer fremden Code liest, darf ihn hier nicht umschreiben:
+// `disable-model-invocation` in einem fremden `SKILL.md` abzuschalten schaltet
+// fuer alle ab, ob der Mandant will oder nicht.
 export async function PATCH(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });

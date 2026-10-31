@@ -23,13 +23,15 @@ export async function POST(
     }
 
     const existing = getRpcSession(id);
+    const identity = getRequestIdentity(req.headers);
     const { session } = existing?.isAlive()
       ? { session: existing }
       : await startRpcSession(id, filePath, undefined, {
         // Die Identitaet wandert in die Sitzung, damit die Kalender-Werkzeuge
         // das Konto benutzen, das die Sitzung oeffnet — siehe die gleiche
         // Begruendung in `app/api/agent/[id]/route.ts`.
-        identity: getRequestIdentity(req.headers) ?? undefined,
+        identity: identity ?? undefined,
+        owner: identity?.username,
       });
 
     // globalThis keeps wrappers alive across dev hot reloads; older instances

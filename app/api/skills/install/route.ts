@@ -42,12 +42,11 @@ export async function POST(req: Request) {
     const isGlobal = scope === "global";
     if (isGlobal) {
       // `npx skills add -g` schreibt in das `~/.agents` des **Prozesskontos** —
-      // es gibt kein Mandanten-`-g`, weil `npx` keine Identitaet kennt. Ein
-      // globaler Install eines Nicht-Admin wuerde also den gemeinsamen
-      // Skill-Bestand veraendern, und genau das ist die Entscheidung von
-      // oben: der Bestand ist global, also schreibt ihn nur, wer Verantwortung
-      // dafuer traegt. Ein Nicht-Admin installiert mit `scope: "project"` in
-      // sein eigenes Verzeichnis.
+      // es gibt kein Mandanten-`-g`, weil `npx` keine Identitaet kennt. Das ist
+      // keine kontogebundene Datei, sondern die prozessweite Wurzel, die alle
+      // lesen; ein globaler Install eines Nicht-Admin wuerde sie fuer alle
+      // veraendern. Ein Nicht-Admin installiert mit `scope: "project"` in sein
+      // eigenes Verzeichnis.
       if (!isAdminIdentity(identity)) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }

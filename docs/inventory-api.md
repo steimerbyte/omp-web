@@ -858,10 +858,12 @@ Fehlerpfad.
 ### Projekt-Vertrauensstatus — `GET` / `POST` `/api/project-trust`
 
 - **Kann**: `GET` liefert `getProjectTrustStatus(cwd, getAgentDir())`. `POST`
-  vertraut ein Projekt und zerstärt laufende RPC-Sessions dieses `cwd` — bzw.
+  vertraut ein Projekt und zerstört laufende RPC-Sessions dieses `cwd` — bzw.
   weist darauf hin, dass eine Session noch arbeitet.
 - **Identität**: `validateCwd` prüft den `cwd` (aus Query oder Body) nach `resolve`
-  und `stat` gegen die Identity-Roots.
+  und `stat` gegen die Identity-Roots. Der Agent-Ort bleibt der Prozess: die
+  Sitzung startet weiter mit `getAgentDir()` (Skills und Trust hängen daran),
+  nur die *Settings* sind pro Konto.
 - **Darf nicht**: (a) `cwd` nie zum Prüfmaßstab machen — der Aufrufer wählt ihn.
   (b) Das Zerstören der laufenden Sessions ist Absicht und darf nicht durch eine
   „tolerantere" Variante ersetzt werden: eine als vertrauend markierte Session
@@ -874,10 +876,27 @@ Fehlerpfad.
   AgentSession-Start ausführt — damit `.omp/skills`, `~/.omp/agent/skills`,
   `.claude/skills`, Plugin-Skills und `.agents/skills` mit identischer Präzedenz
   enthalten sind. Dazu die Install-Info.
+- **Projekt-Vertrauen**: Derselbe Aufruf, den der Sitzungsstart macht
+  (`loadSessionSkills`, `lib/skills-service.ts`), also derselbe Filter:
+  `trustedProjectSkills` entfernt für ein nicht vertrautes Projekt jeden Skill
+  mit `level: "project"` **und** jeden, dessen Datei unter dem Projekt-Root
+  liegt. Beides ist nötig: das Level fängt jeden Projekt-Scan des Loaders,
+  `customDirectories` trägt aber `custom:user` und kann per
+  `.omp/config.yml` des Projekts auf das Projekt zeigen. Was wegfällt, nennt
+  eine `info`-Diagnose; die Leiste `trust.skillsNotLoaded` steht ohnehin.
+  Globale Skills bleiben in beiden Fällen geladen.
 - **Identität**: Roots aus `getAllowedFileRoots(getRequestIdentity(...))` gegen den
   `cwd`.
-- **Darf nicht**: Eine zweite, eigene Skill-Discovery hier aufbauen. Zwei
-  Entdeckungsordnungen sind zwei Wahrheiten über dieselbe Frage.
+- **Darf nicht**: (a) Eine zweite, eigene Skill-Discovery hier aufbauen. Zwei
+  Entdeckungsordnungen sind zwei Wahrheiten über dieselbe Frage. Seit Skills pro
+  Konto liegen, ist die Antwort zusätzlich identitätsabhängig: `loadSkills`
+  bekommt die Settings des Aufrufers, sonst wäre die Liste für jeden Mandanten
+  die des Betreibers. Die **Verwaltung** (`/api/skills/user`, siehe unten) ist
+  keine zweite Discovery — sie liest genau einen Ordner, den des Kontos, weil
+  sie ihn auch schreiben muss. (b) Eine zweite Vertrauensprüfung hier aufbauen:
+  der Filter gehört in `lib/project-trust.ts`, sonst weicht die Liste des Panels
+  von der der Sitzung ab — und das Panel zeigt dann einen Skill an, den der
+  Agent nicht hat. Beides läuft im gemeinsamen Loader `loadSessionSkills`.
 - **Ort**: `app/api/skills/route.ts:14-36`
 
 ### Skill umschalten — `PATCH` `/api/skills`
@@ -891,20 +910,96 @@ Fehlerpfad.
 - **Darf nicht**: (a) Die Pfadprüfung hier nicht als Absicht lesen: sie wäre
   Tautologie, denn die Admin-Prüfung entscheidet bereits. (b) `filePath` muss nach
   `basename` **und** nach `realpath` noch `skill.md` heißen und eine reguläre
-  Datei sein — sonst umgeht ein Symlink oder `..` die Beschränkung. (c) Nicht den
-  Skill-Bestand pro Mandant aufspalten. Er bleibt **ein** Bestand: eine
-  `SKILL.md` ist Code, den alle Mandanten brauchen, und ein Bestand, den alle sehen
-  aber nur der Betreiber ändert, ist ein gemeinsamer Bestand mit einem
-  Verantwortlichen. Pro Nutzer würde jeder Mandant einen anderen Satz
-  Instruktionen bekommen — und der Aufwand, denselben Bestand N-mal zu pflegen,
-  wäre auch dann nicht zu rechtfertigen, wenn man die Mandantengrenze für sicher
-  hält. Was einem Nicht-Admin bleibt, ist ohnehin schon da: eigene Skills im
-  eigenen Projektverzeichnis (`<cwd>/.omp/skills`) über die `getAllowedFileRoots`-
-  Prüfung, und Lesen des gemeinsamen Bestands über `GET`. (d) Für den
+  Datei sein — sonst umgeht ein Symlink oder `..` die Beschränkung. (c) Für den
   Schreibpfad gehören die globale Skills-Root (`~/.agents/skills`) und
   `getAgentDir()` zur Menge: global installierte Skills werden dorthin symlinkt,
   das echte Ziel liegt sonst außerhalb.
+- **Warum weiterhin admin-only, obwohl der Bestand pro Konto liegt**: `PATCH`
+  editiert einen beliebigen `filePath` aus der **Vereinigungs**-Discovery dieser
+  Identität — inklusive der Betreiber-Skills, die ein Mandant über `native:user`
+  sieht. Die Verwaltung schreibt ihren eigenen Ordner über einen anderen Pfad
+  (Name → abgeleiteter Ordner, keine Datei-Pfade aus dem Body). `PATCH`
+  identitätsfähig zu machen hieße, eine zweite, schwächere Schreibgrenze neben
+  die des Managers zu stellen. Die alte Begründung, der Bestand dürfe nicht pro
+  Mandant aufgespalten werden, ist damit **überholt** und ersetzt: der Bestand
+  *ist* jetzt pro Konto (siehe `/api/skills/user`), weil ein Mandant nur seinen
+  eigenen Satz Instruktionen sehen soll und der Betreiber seinen unverändert
+  behält.
 - **Ort**: `app/api/skills/route.ts:38-120`
+
+### Eigene Skills lesen — `GET` `/api/skills/user`
+
+- **Kann**: Liefert den **eigenen** Skill-Bestand des Kontos:
+  `{ directory, skills: [{ name, description, filePath, mtimeMs, hasSkillFile,
+  source, diagnostics }], diagnostics }`. `directory` ist
+  `<agent dir>/skills`; `source` ist `native:user` für den Betreiber (dessen
+  Prozess-Agent-Verzeichnis die native Wurzel ist) und `custom:user` für einen
+  Mandanten (dessen Ordner als `customDirectories`-Eintrag läuft).
+  `diagnostics` pro Skill: fehlende `description` (der stille Ausschluss des
+  Loaders), abweichender/ungültiger `name`, zu lange Beschreibung, fehlende
+  `SKILL.md`, zu große Datei. `diagnostics` auf oberster Ebene: Ordner mit
+  ungültigem Namen und Symlinks, die nicht verwaltet werden.
+- **Identität**: `getRequestIdentity`; kein Admin-Gate. Der Pfad entsteht aus
+  `getUserHome(identity)` → `ensureTenantAgentDir(identity)`, nie aus der
+  Anfrage.
+- **Schreibt**: registriert `<agent dir>/skills` idempotent in
+  `skills.customDirectories` der **eigenen** `config.yml` (andere Keys bleiben
+  erhalten). Das ist der Grund, warum die Session des Kontos den Ordner sieht:
+  `loadSkills()` folgt `agentDir` nicht, nur den effektiven Settings.
+- **Darf nicht**: Den Ordner aus einem Query-Parameter ableiten. Ein fremder
+  Bestand ist über diese Route nicht adressierbar — es gibt keinen Parameter
+  dafür.
+- **Ort**: `app/api/skills/user/route.ts`
+
+### Eigenen Skill anlegen — `POST` `/api/skills/user`
+
+- **Kann**: `{ name, description }` → `201 { skill }`. Legt
+  `<agent dir>/skills/<name>/SKILL.md` mit Frontmatter und vier Abschnitten an.
+  Existiert der Ordner, `409`; die vorhandene Datei wird **nicht** gelesen,
+  geschrieben oder verändert. Validierung: Name `^[a-z0-9][a-z0-9-]{0,63}$`,
+  Beschreibung nicht leer, ≤ 1024 Zeichen. Der Body ist JSON-only (`415`).
+- **Identität**: wie `GET`; kein Admin-Gate (der eigene Bestand, nicht der
+  gemeinsame).
+- **Darf nicht**: Überschreiben. Kein `mkdir -p` in einen vom Aufrufer
+  gewählten Pfad, kein Symlink-Ziel.
+- **Ort**: `app/api/skills/user/route.ts`
+
+### Einen eigenen Skill lesen — `GET` `/api/skills/user/[name]`
+
+- **Kann**: `{ skill, content }`; `content` ist die Datei als UTF-8, nicht
+  normalisiert. Ein Ordner ohne `SKILL.md` liefert `content: ""` und
+  `hasSkillFile: false` — die Oberfläche bietet dann „anlegen" an. Unbekannter
+  Name: `404`.
+- **Identität**: wie oben. Ein Name aus einem anderen Konto ist hier **404**,
+  nicht 403: der Pfad wird aus dem eigenen Home abgeleitet und existiert dort
+  nicht; die Route bestätigt nie, dass ein fremder Skill existiert.
+- **Darf nicht**: Den Namen ungeprüft an `join` geben. `..`, `/`, `\`,
+  `%2F`-Reste und absolute Pfade enden vorher in `400`.
+- **Ort**: `app/api/skills/user/[name]/route.ts`
+
+### Einen eigenen Skill speichern — `PUT` `/api/skills/user/[name]`
+
+- **Kann**: `{ content, expectedMtimeMs? }` → `{ ok, skill }`. Prüft vor dem
+  Schreiben: `name` im Frontmatter vorhanden, gültig und **gleich dem Ordner**;
+  `description` vorhanden und ≤ 1024 Zeichen; Datei ≤ 256 KiB. Schreibt atomar
+  (Temp-Datei + Rename, Modus `0600`). `expectedMtimeMs` ist optimistisch: weicht
+  die mtime ab, `409`, nichts wird geschrieben. Fehlt die Datei in einem
+  vorhandenen Ordner, wird sie angelegt.
+- **Identität**: wie oben.
+- **Darf nicht**: Eine `SKILL.md` schreiben, die der Loader still verwirft (keine
+  `description`); einem Symlink folgen; den Ordner aus dem Body nehmen.
+- **Ort**: `app/api/skills/user/[name]/route.ts`
+
+### Einen eigenen Skill löschen — `DELETE` `/api/skills/user/[name]`
+
+- **Kann**: Entfernt **genau** `<agent dir>/skills/<name>` rekursiv und liefert
+  `{ ok, directory }`. Unbekannt: `404`.
+- **Identität**: wie oben.
+- **Darf nicht**: Ein Symlink-Verzeichnis löschen (das Ziel läge außerhalb) —
+  `400`, das Ziel bleibt. `realpath` des Ordners muss ein direktes Kind des
+  `realpath` der Skills-Wurzel sein; sonst `400`. Kein Elternteil, kein `..`,
+  keine Rekursion außerhalb des Ordners.
+- **Ort**: `app/api/skills/user/[name]/route.ts`
 
 ### Skills suchen, installieren, aktualisieren, prüfen — `/api/skills/search`, `/install`, `/update`, `/check`
 
@@ -917,10 +1012,11 @@ Fehlerpfad.
   und danach die Roots. `search` prüft nur `isApiRequestAllowed`.
 - **Darf nicht**: (a) **`scope: "global"` nur für Admin.** `npx skills add -g`
   schreibt in das `~/.agents` des **Prozesskontos** — es gibt kein Mandanten-`-g`,
-  weil `npx` keine Identität kennt. Ein globaler Install durch einen Nicht-Admin
-  würde den gemeinsamen Skill-Bestand verändern, und genau das ist die Folge der
-  Entscheidung unter `PATCH /api/skills`. Ein Nicht-Admin installiert mit
-  `scope: "project"` in sein eigenes Verzeichnis. (b) `scope: "project"` braucht
+  weil `npx` keine Identität kennt. Das ist die prozessweite Wurzel, die alle
+  lesen, kein Konto-Bestand; ein globaler Install durch einen Nicht-Admin würde
+  sie für alle verändern. Der eigene Bestand `<agent dir>/skills` wird über
+  `/api/skills/user[...]` geschrieben, nicht über `npx`. Ein Nicht-Admin
+  installiert mit `scope: "project"` in sein eigenes Verzeichnis. (b) `scope: "project"` braucht
   zusätzlich `getProjectTrustStatus(...).trusted`. (c) `npx`-Ausgabe in
   Fehlerantworten muss durch `redactNpxOutput`, sonst landen Tokens im
   Response-Body.

@@ -116,13 +116,15 @@ export async function POST(
       return NextResponse.json({ success: true, data: switched });
     }
 
+    const identity = getRequestIdentity(req.headers);
     const { session } = await startRpcSession(id, filePath, undefined, {
       // Die Identitaet des anfragenden Kontos wandert in die Sitzung: die
       // Kalender-Werkzeuge laufen im Serverprozess und koennen dort keinen
       // Request mehr vorfinden, aus dem sie das Konto laessten. Der Guard
       // `requireSessionAccess` hat oben bereits geprueft, dass dieses Konto
       // auf die Session zugreifen darf.
-      identity: getRequestIdentity(req.headers) ?? undefined,
+      identity: identity ?? undefined,
+      owner: identity?.username,
     });
     const result = await session.send(body);
     promptAccepted = body.type === "prompt";

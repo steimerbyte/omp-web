@@ -19,6 +19,7 @@ import { SubagentPanel } from "./SubagentPanel";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 import { CalendarView } from "./CalendarView";
 import { ScheduledTasksView } from "./ScheduledTasksView";
+import { SkillsManagerView } from "./SkillsManagerView";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
@@ -46,6 +47,7 @@ import {
   showBrowserNotification,
 } from "@/lib/browser-notifications";
 import { getInitialNavigation } from "@/lib/initial-navigation";
+import { prefillNewChat } from "@/lib/skill-prompts";
 import { clearLastOpen, getLastOpenSession, setLastOpenSession } from "@/lib/workspace-memory";
 import {
   CHAT_PANEL_ID,
@@ -178,7 +180,7 @@ export function AppShell() {
   // Which of the three views is showing. Seeded from `?view=` so a reload or a
   // shared link lands where the sender was, and kept in the URL below so it
   // survives the next reload too.
-  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled">(
+  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled" | "skills">(
     () => initialNavigation.requestedView,
   );
   // The sidebar's *automatic* first cwd adoption is what would break a
@@ -197,7 +199,10 @@ export function AppShell() {
   // switch the view away from the dashboard, so with it suppressed the
   // dashboard opens no cwd and no session at all.
   const skipInitialProjectSelection =
-    initialNavigation.requestedCwd !== null || activeView === "projects" || activeView === "calendar";
+    initialNavigation.requestedCwd !== null
+    || activeView === "projects"
+    || activeView === "calendar"
+    || activeView === "skills";
   // Whether this account may create projects. Creating one widens the file
   // allow-list, which `AGENTS.md` keeps admin-gated, so the button is hidden
   // for a tenant rather than shown and then refused. Asked the same way
@@ -787,6 +792,19 @@ export function AppShell() {
     router.replace("/", { scroll: false });
   }, [invalidateWorkspaceRestore, router, isMobile]);
 
+  /**
+   * A skill action opens a *new* chat with the text in its composer, for the
+   * project the sidebar has selected. The draft store is the established seam
+   * between a panel and `ChatInput` (quick phrases use the same one), and it
+   * must be written before `handleNewSession` mounts the composer — the
+   * composer reads `new:<cwd>` on mount, not after.
+   */
+  const handleSkillChat = useCallback((prompt: string) => {
+    if (!activeCwd) return;
+    prefillNewChat(activeCwd, prompt);
+    handleNewSession(`skills-${Date.now()}`, activeCwd);
+  }, [activeCwd, handleNewSession]);
+
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
     onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
@@ -1108,6 +1126,7 @@ export function AppShell() {
   const showProjects = activeView === "projects";
   const showCalendar = activeView === "calendar";
   const showScheduledTasks = activeView === "scheduled";
+  const showSkills = activeView === "skills";
 
   // Keep the view in the URL. `replaceState` rather than a router navigation
   // so switching views never re-runs the server component tree — the
@@ -1118,6 +1137,7 @@ export function AppShell() {
     if (activeView === "projects") url.searchParams.set("view", "projects");
     else if (activeView === "calendar") url.searchParams.set("view", "calendar");
     else if (activeView === "scheduled") url.searchParams.set("view", "scheduled");
+    else if (activeView === "skills") url.searchParams.set("view", "skills");
     else url.searchParams.delete("view");
     window.history.replaceState(window.history.state, "", url.toString());
   }, [activeView]);
@@ -1208,6 +1228,8 @@ export function AppShell() {
         showCalendar={activeView === "calendar"}
         onShowScheduledTasks={() => setActiveView("scheduled")}
         showScheduledTasks={activeView === "scheduled"}
+        onShowSkills={() => setActiveView("skills")}
+        showSkills={activeView === "skills"}
         onBackgroundTaskDone={handleBackgroundTaskDone}
       />
       <div style={{ padding: "0 8px", flexShrink: 0 }}>
@@ -2065,6 +2087,12 @@ export function AppShell() {
             <CalendarView />
           ) : showScheduledTasks ? (
             <ScheduledTasksView onOpenSession={handleOpenScheduledSession} />
+          ) : showSkills ? (
+            <SkillsManagerView
+              cwd={activeCwd}
+              onNewSkill={handleSkillChat}
+              onEditWithAi={handleSkillChat}
+            />
           ) : showChat ? (
             <ChatWindow
               key={sessionKey}

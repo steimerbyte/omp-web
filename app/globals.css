@@ -1422,18 +1422,26 @@ html.dark .chat-session-column::before {
   }
 }
 
-/* Die vier Knoepfe der Kopfzeile.
+/* Die Knoepfe der Kopfzeile.
  *
  * Zwei Spalten, nicht eine Zeile: bei der schmalsten Leiste (180px) blieben
  * in einer Zeile rund 39px je Knopf — unter der Trefferflaeche und zu
  * schmal fuer ein Wort. Im Raster sind es rund 77px, und die Beschriftung
  * bleibt lesbar. `minmax(0, 1fr)` ist die Vorgabe, die ein Raster-Element
  * wirklich schrumpfen laesst; ohne sie schiebt der laengste Text die Spalte
- * auf. */
+ * auf.
+ *
+ * Der fuenfte Eintrag (Skills) nimmt die ganze Zeile: bei 180px Leiste waere
+ * er in einer halben Spalte 72px breit und damit abgeschnitten. `1 / -1`
+ * zaehlt Spalten, nicht Reihen, und weil er der letzte Eintrag ist, bleibt
+ * die 2x2-Navigation darueber unveraendert. */
 .sidebar-nav {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+.sidebar-nav-button--wide {
+  grid-column: 1 / -1;
 }
 .sidebar-nav-button {
   display: flex;

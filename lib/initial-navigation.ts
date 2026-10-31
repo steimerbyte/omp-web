@@ -4,13 +4,13 @@ export interface InitialNavigation {
   /**
    * `?view=projects` — which view the URL asks for on first paint.
    *
-   * `projects`, `calendar` and `scheduled` are meaningful; every other value
-   * falls back to `chat`,
+   * `projects`, `calendar`, `scheduled` and `skills` are meaningful; every
+   * other value falls back to `chat`,
    * because an unknown view name in a URL must not be able to select one. The
    * dashboard is a real URL rather than component state so a reload, a
    * bookmark and a shared link all land on the same view.
    */
-  requestedView: "chat" | "projects" | "calendar" | "scheduled";
+  requestedView: "chat" | "projects" | "calendar" | "scheduled" | "skills";
 }
 
 export function getInitialNavigation(searchParams: Pick<URLSearchParams, "get">): InitialNavigation {
@@ -27,6 +27,7 @@ export function getInitialNavigation(searchParams: Pick<URLSearchParams, "get">)
       view === "projects" ? "projects"
         : view === "calendar" ? "calendar"
           : view === "scheduled" ? "scheduled"
-            : "chat",
+            : view === "skills" ? "skills"
+              : "chat",
   };
 }

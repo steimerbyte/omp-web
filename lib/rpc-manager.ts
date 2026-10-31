@@ -30,13 +30,15 @@ import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
 import { untrustedProjectSessionOptions } from "./project-trust";
+import { loadSessionSkills } from "./skills-service";
 import { resolveSessionSystemPrompts } from "./session-system-prompt";
 import { readDefaultModelRole } from "./model-roles";
-import { getOmpRuntime, getSettingsForCwd } from "./omp-runtime";
+import { getOmpRuntime, getSettingsForIdentity } from "./omp-runtime";
 import { PRESET_FULL } from "./tool-presets";
 import { makePresentFilesTool } from "./present-files-tool";
 import { makeCalendarTools } from "./calendar-tool";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
+import { ensureTenantSkillsRegistration } from "./skills-manager";
 import type { SlashCommandInfo } from "./omp-types";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./omp-types";
 import { GoalModeController } from "./goal-mode";
@@ -1911,7 +1913,30 @@ export async function startRpcSession(
   const starting = (async () => {
     // Some extensions access the SDK's global theme even outside the terminal UI.
     await initTheme(false);
+    // The agent directory stays the process directory, deliberately.
+    //
+    // omp's skill loader reads `getAgentDir()` from process state and ignores
+    // the `agentDir` passed to `createAgentSession` (`discoverSkills(cwd,
+    // _agentDir)` — the parameter is unused). Passing a tenant directory would
+    // therefore not move the skills, but it *would* move credentials, memory
+    // and the session-index database, and a tenant with an empty `agent.db`
+    // and no `models.yml` cannot resolve a model. Measured in
+    // `AGENTDIR-SCAN.md` §0/§5.
+    //
+    // What does move is the Settings instance: `skills.customDirectories` is
+    // read from it, and the cache in `getSettingsForIdentity` is keyed by
+    // agent directory. That is the one change that makes a tenant's skills
+    // visible without splitting history from credentials.
+    const identity = options.identity ?? null;
     const agentDir = getAgentDir();
+    if (identity) {
+      // Idempotent registration; also creates the tenant's skills directory.
+      // A broken/unwritable config must not stop the session from starting:
+      // the user loses skill visibility, not the chat.
+      try {
+        await ensureTenantSkillsRegistration(identity);
+      } catch { /* the session still runs; the manager reports the problem */ }
+    }
     const sessionManager = sessionFile
       ? await SessionManager.open(sessionFile, undefined)
       : (() => {
@@ -1923,7 +1948,7 @@ export async function startRpcSession(
 
     try {
       const runtime = await getOmpRuntime();
-      const settings = await getSettingsForCwd(sessionCwd);
+      const settings = await getSettingsForIdentity(identity, sessionCwd);
 
       // Determine which tools to pass based on requested toolNames.
       let toolsOption: string[] | undefined;
@@ -1947,6 +1972,17 @@ export async function startRpcSession(
         discoverCustomToolPaths([], sessionCwd),
       ]);
       const untrusted = untrustedProjectSessionOptions(sessionCwd, agentDir, { extensionPaths, customToolPaths });
+
+      // Skills are prompt text, not modules, so they cannot be dropped by
+      // filtering paths — but an untrusted repository must not inject
+      // instructions either. `trustedProjectSkills` keeps the non-project
+      // sources; it returns the discovered list untouched for a trusted
+      // project, and omp's own discovery path stays in charge there.
+      // The same helper feeds `GET /api/skills`, so the panel and the session
+      // cannot disagree about which skills exist.
+      const sessionSkills = untrusted
+        ? (await loadSessionSkills(sessionCwd, settings)).skills
+        : undefined;
 
       // `SYSTEM.md` / `APPEND_SYSTEM.md`, resolved against this session's cwd the
       // way the CLI resolves them against its own (lib/session-system-prompt.ts).
@@ -1996,6 +2032,11 @@ export async function startRpcSession(
           ? { toolNames: toolsOption, restrictToolNames: true, allowRestrictedCustomTools: true }
           : {}),
         ...(untrusted ?? {}),
+        // Project skills follow project trust (`lib/project-trust.ts`): a
+        // repository the user merely opened must not write into the system
+        // prompt. `undefined` keeps omp's own discovery path, so a trusted
+        // project loads exactly what the CLI loads.
+        ...(sessionSkills ? { skills: sessionSkills } : {}),
       };
       // omp's own applier, so a prompt file goes through the same templates the
       // CLI renders it with instead of overwriting the whole system prompt.
@@ -2003,7 +2044,7 @@ export async function startRpcSession(
       const { session: inner, eventBus, setToolUIContext } = await createAgentSession(sessionOptions);
 
       const persistedPreferences = await persistExplicitStartupPreferences(
-        runtime.settings,
+        settings,
         {
           ...(initialModel ? { model: initialModel } : {}),
           ...(thinkingLevel ? { thinkingLevel } : {}),

@@ -59,6 +59,34 @@ export interface SkillsResponse {
   projectResourcesLoaded: boolean;
 }
 
+/**
+ * A skill in the caller's *own* store (`<agent dir>/skills`), which is the
+ * only directory the skills manager reads and writes. `source` is what omp
+ * would report for this folder: the admin's is the native user root, a
+ * tenant's is registered as a custom directory.
+ */
+export interface UserSkill {
+  name: string;
+  description: string;
+  filePath: string;
+  mtimeMs: number | null;
+  hasSkillFile: boolean;
+  source: "native:user" | "custom:user";
+  diagnostics: ResourceDiagnostic[];
+}
+
+export interface UserSkillsResponse {
+  directory: string;
+  skills: UserSkill[];
+  /** Problems with the store itself (unreadable entries, skipped symlinks). */
+  diagnostics: ResourceDiagnostic[];
+}
+
+export interface UserSkillResponse {
+  skill: UserSkill;
+  content: string;
+}
+
 export interface ProjectTrustStatus {
   requiresTrust: boolean;
   trusted: boolean;

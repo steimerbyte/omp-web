@@ -1218,6 +1218,109 @@ What was run, in this checkout, on the tree that was committed:
 | `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `U4S1OEsbMbebZ-m3xHrQy`, 494 files under `.next/static/**/*.js` |
 | `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
 
+## v0.20.0
+
+Released 2026-10-31.
+
+Die Skill-Abschnitte standen bis hierher unter `Unreleased`; sie stehen jetzt
+hier, weil dieser Release sie schneidet. Der Rest von `Unreleased` bleibt
+unverändert stehen, wie in `v0.13.0` und `v0.14.0`.
+
+### Skills
+
+**Die Skills-Verwaltung.** Ein fünfter Knopf in der Kopfzeile der Seitenleiste
+öffnet `?view=skills`: der eigene Skill-Bestand als Liste, daneben der Editor
+für die `SKILL.md`, mit Speichern, Verwerfen und Löschen (Rückfrage im Dialog).
+Dazu zwei Wege in einen Chat: **Neuen Skill anlegen** öffnet einen neuen Chat
+mit dem vorausgefüllten Recherche-Prompt, und **Mit KI bearbeiten** öffnet einen
+Chat, der die Skill-Datei über einen absoluten `@`-Pfad referenziert. Beides
+schreibt nur den Entwurf, sendet nichts und setzt den Fokus in den Composer.
+
+Der Bestand ist **pro Konto**: Der Betreiber behält `~/.omp/agent/skills`, ein
+Mandant bekommt `<sein Agent-Verzeichnis>/skills`. `startRpcSession` behält das
+Prozess-Agent-Verzeichnis (der Loader ignoriert `agentDir` für Skills, und ein
+Wechsel würde Credentials, Memory und `agent.db` abspalten), löst aber die
+**Settings** nach der Identität auf. Der Ordner wird idempotent als absoluter
+`skills.customDirectories`-Eintrag in der eigenen `config.yml` eingetragen —
+ohne diesen Eintrag sieht `loadSkills()` den Ordner nicht. Folge: der Bestand
+des Betreibers bleibt für Mandanten lesbar; eigene Skills kommen additiv dazu.
+
+Die neuen Routen (`/api/skills/user`, `/api/skills/user/[name]`) adressieren
+einen Namen, nie einen Pfad, validieren `^[a-z0-9][a-z0-9-]{0,63}$`, lehnen
+Symlinks ab und schreiben atomar. Die gemeinsame `.omp`-Sperre
+(`protectedRootReason`, 403 `omp-runtime`) bleibt unangetastet — die Verwaltung
+umgeht sie, indem sie keinen Pfad annimmt und genau einen Unterbaum besitzt.
+Ein fremder Name antwortet 404. `PATCH /api/skills` bleibt admin-only.
+Die Registrierung schreibt **nur die globale Ebene** der Konto-`config.yml`
+fort: `cfgSkills.get()` mischt die Projektebene des Prozess-Arbeitsverzeichnisses
+ein, und dieser Pfad darf nicht als Benutzer-Eintrag im Konto landen — sonst
+überlebt er jeden Projekt-Vertrauensfilter.
+
+**Projekt-Skills folgen dem Projekt-Vertrauen.** Ein nicht vertrautes Projekt
+lädt seine eigenen Skills nicht mehr: `trustedProjectSkills` entfernt jeden
+Eintrag mit `level: "project"` **und** jeden, dessen Datei unter dem
+Projekt-Root liegt (`customDirectories` trägt `custom:user`, also fängt nur die
+Pfadprüfung eine Projekt-`config.yml`, die auf sich selbst zeigt). Globale
+Skills bleiben geladen — ein nicht vertrautes Projekt ist eine verengte, keine
+lahmgelegte Sitzung. Panel und Sitzung rufen denselben Loader
+(`loadSessionSkills`); was wegfällt, nennt eine `info`-Diagnose. Ein Projekt,
+das nur eine `SKILL.md` mitbringt, verlangt jetzt den Vertrauensdialog.
+
+Dazu gehörte ein Fix am Sitzungsstart: `/api/agent/new` und die Folge-Routen
+setzen jetzt den **Eigentümer** der Sitzung. Ohne ihn war eine frisch gestartete
+Sitzung für ihren eigenen Event-Stream unsichtbar (404), und ein Mandant konnte
+den gerade vorausgefüllten Chat gar nicht absenden — der Admin sah das nie, weil
+der Filter Admins durchlässt.
+
+### Behoben
+
+**Ein Schalter, der nur für den Betreiber schaltete.** `GET
+/api/display-settings` las `hideThinkingBlock` über die Prozess-`Settings`.
+Geschrieben wird der Wert über `PUT /api/settings` in die `config.yml` des
+Aufrufers, gelesen aber wurde die des Betreibers — für jeden Mandanten war der
+Schalter damit ein Blindschalter. Die Route löst ihre Settings jetzt mit
+`getSettingsForIdentity` auf, wie die schreibende Seite es längst tat.
+
+**Ein fremdes Projekt in der `config.yml` eines Kontos.** Die Registrierung des
+Skill-Ordners baute ihre Liste aus `cfgSkills.get()`, und das mischt die
+Projektebene des Prozess-Arbeitsverzeichnisses ein. Ein Projekt-Pfad wäre damit
+als Benutzer-Eintrag im Konto gelandet und hätte jeden
+Projekt-Vertrauensfilter überlebt, weil er dann als `custom:user` gilt. Die
+Registrierung liest und schreibt nur noch `getGlobalSettings().skills`.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Nur Chromium.** Jede Messung an der Verwaltung — Laden, Speichern, Löschen,
+  der vorausgefüllte Composer — lief in Chromium. Firefox und Safari sind
+  ungemessen, und mobil ist die Ansicht nur über die schmale Leiste im selben
+  Chromium geprüft, nicht auf einem Gerät.
+- **Die Antwort des Recherche-Prompts ist ungemessen.** Belegt ist, dass der
+  Text vollständig im Entwurf steht, `{{topic}}` stehen bleibt, der absolute
+  Bestandspfad im Prompt steht, der Fokus im Composer landet und nichts gesendet
+  wird. Nicht belegt ist, dass ein Modell den Prompt bis zum Ende durchläuft und
+  dabei eine brauchbare `SKILL.md` schreibt.
+- **`/reload` weitet eine nicht vertraute Sitzung nicht.** Die Skill-Liste wird
+  beim Sitzungsstart gefiltert; `reload` ruft `refreshSkills()` der Sitzung, und
+  ob das den Trust-Filter erneut anwendet, ist nicht gemessen. Wer ein Projekt
+  nachträglich vertraut, soll einen neuen Chat öffnen.
+- **Der Trust-Speicher bleibt prozessweit.** Er liegt in der
+  Prozess-Agent-Wurzel (`omp-web-trusted-projects.json`), nicht pro Konto. Ein
+  Vertrauensklick für ein Verzeichnis gilt damit für jedes andere Konto, das
+  dasselbe `cwd` öffnet. Das ist die bisherige Semantik und keine neue Lücke,
+  aber es ist eine Aussage über alle Konten und nicht über eines.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1717 pass, 0 fail, 1 skip — 1718 tests, 200 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `UCSVUspSRaf33mqdpGg1R`, 496 files under `.next/static/**/*.js` |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/` | 0 problems |
+
 ## v0.19.0
 
 Released 2026-10-30.

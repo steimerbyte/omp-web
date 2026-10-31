@@ -88,6 +88,7 @@ function SidebarNavButton({
   label,
   active,
   disabled,
+  wide,
   children,
 }: {
   onClick?: () => void;
@@ -95,6 +96,8 @@ function SidebarNavButton({
   label: string;
   active?: boolean;
   disabled?: boolean;
+  /** Takes the whole grid row; the fifth entry cannot share a 2-column row. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -105,7 +108,7 @@ function SidebarNavButton({
       aria-label={title}
       aria-pressed={active}
       disabled={disabled}
-      className="sidebar-nav-button"
+      className={wide ? "sidebar-nav-button sidebar-nav-button--wide" : "sidebar-nav-button"}
     >
       <span className="sidebar-nav-button__icon" aria-hidden="true">{children}</span>
       <span className="sidebar-nav-button__label">{label}</span>
@@ -148,6 +151,10 @@ interface Props {
   onShowScheduledTasks?: () => void;
   /** `true` while the scheduled tasks are showing, so the button can read as pressed. */
   showScheduledTasks?: boolean;
+  /** Show the skills manager instead of the chat. */
+  onShowSkills?: () => void;
+  /** `true` while the skills manager is showing, so the button can read as pressed. */
+  showSkills?: boolean;
   /** Fired when a session that is not currently selected finishes running.
    *  Lets the app play a cross-workspace completion tone. */
   onBackgroundTaskDone?: () => void;
@@ -429,7 +436,7 @@ function SidebarVirtuosoFooter() {
   return <div style={{ height: 10 }} />;
 }
 
-export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onShowScheduledTasks, showScheduledTasks, onBackgroundTaskDone }: Props) {
+export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onShowScheduledTasks, showScheduledTasks, onShowSkills, showSkills, onBackgroundTaskDone }: Props) {
   const { t } = useI18n();
   // Der Kalender ist ein deutsches Kalendersystem — auch sein Knopf im
   // Kopfbereich heisst auf Deutsch. Siehe `components/calendar/useCalendarText.ts`.
@@ -1225,6 +1232,23 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
             <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
               <line x1="6" y1="1" x2="6" y2="11" />
               <line x1="1" y1="6" x2="11" y2="6" />
+            </svg>
+          </SidebarNavButton>
+          {/* Fuenfter Eintrag, eigene volle Zeile: bei 180px Leiste bliebe
+              neben vier anderen nur eine 72px-Zelle, und "Skills" waere
+              abgeschnitten. `grid-column: 1 / -1` zaehlt Spalten, nicht
+              Reihen — als letzter Eintrag bleibt die 2x2-Navigation oben
+              unveraendert. */}
+          <SidebarNavButton
+            onClick={onShowSkills}
+            title={t("skills.title")}
+            label={t("skills.title")}
+            active={showSkills}
+            wide
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
             </svg>
           </SidebarNavButton>
         </div>

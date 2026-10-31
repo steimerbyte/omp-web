@@ -33,6 +33,20 @@ const CODE_BEARING_PROJECT_DIRS = [
   ".agents/extensions", ".agents/hooks", ".agents/tools",
 ] as const;
 
+/**
+ * Project-relative directories omp scans for project-scoped skills.
+ *
+ * Kept apart from {@link CODE_BEARING_PROJECT_DIRS} because nothing here is
+ * imported or executed: a skill is text folded into the system prompt. It still
+ * has to raise the trust dialog, or a repository whose only payload is a
+ * `SKILL.md` would inject instructions into the agent with no decision made at
+ * all (measured: `.agents/skills/evil` loaded into an untrusted session).
+ */
+const PROJECT_SKILL_DIRS = [
+  ".omp/skills", ".agent/skills", ".agents/skills",
+  ".claude/skills", ".codex/skills", ".github/skills", ".opencode/skills",
+] as const;
+
 /** Project-relative files that declare MCP servers, i.e. processes omp spawns. */
 const MCP_MANIFEST_FILES = [
   ".mcp.json",
@@ -77,7 +91,7 @@ function writeTrustedProjects(agentDir: string, trusted: Record<string, boolean>
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
   if (!cwd) return false;
-  for (const dir of CODE_BEARING_PROJECT_DIRS) {
+  for (const dir of [...CODE_BEARING_PROJECT_DIRS, ...PROJECT_SKILL_DIRS]) {
     if (existsSync(join(cwd, dir))) return true;
   }
   for (const file of MCP_MANIFEST_FILES) {
@@ -111,6 +125,62 @@ export function isInsideProject(candidate: string, root: string): boolean {
   const rel = relative(resolve(root), resolve(candidate));
   if (rel === "") return true;
   return rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith("../");
+}
+
+/**
+ * Source metadata omp attaches to a discovered skill, narrowed to the two
+ * fields this gate decides on.
+ */
+export interface DiscoveredSkillSource {
+  provider: string;
+  level: "user" | "project" | "native";
+}
+
+/** Shape shared by omp's discovered skills (`Skill._source`). */
+export interface DiscoveredSkillFile {
+  filePath: string;
+  _source?: DiscoveredSkillSource;
+}
+
+/**
+ * Skills to keep for a project the user has not trusted, or `undefined` when
+ * the normal load path applies (nothing to gate, or the project is trusted).
+ *
+ * Skills are the one prompt-only surface that still has to follow trust. They
+ * are not executed, so they cannot be dropped by filtering modules — but the
+ * model reads them, and a repository the user merely opened must not be able to
+ * write into the agent's instructions on its own. Measured before this gate:
+ * an untrusted checkout carrying `.agents/skills/evil/SKILL.md` had that skill
+ * in the session while its `.omp/extensions` stayed dormant.
+ *
+ * Three rules decide what survives, in this order:
+ *
+ * 1. A project-level entry goes, whichever provider found it (`native`,
+ *    `agents`, `claude`, `codex`, `github`, `opencode`, plugin packages, …).
+ *    `_source.level` is the loader's own answer, so this covers the entire
+ *    project scan — including `.omp/skills`, which walks up to the repo root.
+ * 2. Anything living under the project root goes, because a custom-directory
+ *    entry is labelled `level: "user"` however it was configured, and a
+ *    project's `.omp/config.yml` can point `skills.customDirectories` at itself.
+ *    That is a real bypass, measured, not a hypothetical: `customDirectories:
+ *    [<cwd>/evil-custom]` in the project layer yielded `custom:user` from the
+ *    project tree. The path test catches it; the level alone does not.
+ * 3. Everything else stays: `~/.omp/agent/skills`, `~/.agents/skills`,
+ *    `~/.claude/skills`, managed skills, and custom directories the *user*
+ *    configured outside the project are not attacker-controlled, and an
+ *    untrusted project is meant to be a narrowed session, not a crippled one.
+ */
+export function trustedProjectSkills<T extends DiscoveredSkillFile>(
+  cwd: string,
+  agentDir: string,
+  skills: readonly T[],
+): T[] | undefined {
+  const status = getProjectTrustStatus(cwd, agentDir);
+  if (!status.requiresTrust || status.trusted) return undefined;
+
+  return skills.filter(
+    (skill) => skill._source?.level !== "project" && !isInsideProject(skill.filePath, cwd),
+  );
 }
 
 /** Shape shared by omp's discovered custom-tool entries. */

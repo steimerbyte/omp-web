@@ -31,6 +31,7 @@ import { OmpWordmark } from "./OmpWordmark";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useSyncedDisplaySettings } from "@/hooks/useDisplaySettings";
+import { getDraft } from "@/lib/draft-store";
 import { formatTokenCount } from "@/lib/format-tokens";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import type { GoalStatusInfo, SessionStatsInfo } from "@/lib/omp-types";
@@ -250,6 +251,20 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
   const { hideThinkingBlock } = useSyncedDisplaySettings(newSessionCwd ?? session?.cwd ?? null);
   const displayOptions = useMemo<DisplayOptions>(() => ({ hideThinking: hideThinkingBlock }), [hideThinkingBlock]);
 
+  // A prefilled draft is written by a panel before this component mounts (New
+  // skill / Edit with AI in `SkillsManagerView`). `ChatInput` has no mount
+  // autofocus by design, so focus once per new-chat draft — the caret lands at
+  // the end, where the `{{topic}}` / `Change:` line waits.
+  const draftKey = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined);
+  const focusedDraftRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading || !draftKey?.startsWith("new:")) return;
+    if (focusedDraftRef.current === draftKey) return;
+    if (!getDraft(draftKey)?.value) return;
+    focusedDraftRef.current = draftKey;
+    chatInputRef?.current?.focus();
+  }, [draftKey, loading, chatInputRef]);
+
   useEffect(() => {
     if (!extensionDialog || soundedExtensionDialogIdRef.current === extensionDialog.id) return;
     soundedExtensionDialogIdRef.current = extensionDialog.id;
@@ -431,7 +446,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}
-      draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
+      draftKey={draftKey}
       cwd={session?.cwd ?? newSessionCwd}
     />
   );

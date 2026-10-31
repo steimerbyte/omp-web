@@ -46,11 +46,13 @@ export async function GET(
       return new Response("Session not found", { status: 404 });
     }
     try {
+      const identity = getRequestIdentity(req.headers);
       ({ session } = await startRpcSession(id, filePath, undefined, {
         // Die Identitaet wandert in die Sitzung, damit die Kalender-Werkzeuge
         // das Konto benutzen, das die Sitzung gerade oeffnet — siehe die
         // gleiche Begruendung in `app/api/agent/[id]/route.ts`.
-        identity: getRequestIdentity(req.headers) ?? undefined,
+        identity: identity ?? undefined,
+        owner: identity?.username,
       }));
     } catch {
       return new Response("Failed to start agent", { status: 500 });
