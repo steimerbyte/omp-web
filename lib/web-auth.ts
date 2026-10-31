@@ -9,9 +9,11 @@ import {
   resolveWebAuthFile,
   resolveWebAuthPolicy,
   verifyWebPassword,
+  getWebAuthStatus,
   type WebAuthPolicy,
   type WebAuthStoreOptions,
 } from "../bin/web-auth-store.js";
+import { getRuntimeSecret, webAuthEnv } from "./runtime-secrets";
 
 declare global {
   // The cached username plus the file mtime that produced it. A settings-panel
@@ -107,9 +109,25 @@ function secretsEqual(actual: string, expected: string): boolean {
 }
 
 export function isWebPasswordEnabled(
-  password: string | undefined = process.env.OMP_WEB_PASSWORD,
+  password: string | undefined = getRuntimeSecret("OMP_WEB_PASSWORD"),
 ): password is string {
   return typeof password === "string" && password.length > 0;
+}
+
+/**
+ * Der Sperrzustand des Hosts, aus derselben Quelle wie die Pruefung.
+ *
+ * Die Route in `app/api/web-access/route.ts` liest den Status direkt aus dem
+ * Store; der Store nimmt die env, die er bekommt. Diese Funktion ist der eine
+ * Ort, an dem die beiden Quellen — Prozessumgebung und Geheimnisdatei —
+ * zusammenkommen. Sie steht hier und nicht in der Route, weil der mtime-Cache
+ * in diesem Modul davon ausgeht, dass **kein** Aufrufer ausserhalb von `lib/`
+ * eine zweite Credential-Umgebung waehlt (`web-auth-username-cache.wiring.test`
+ * haelt das fest). `webAuthEnv()` aendert nur den Passwortwert; `OMP_WEB_AUTH_FILE`
+ * kommt unveraendert aus `process.env`, es gibt also weiter genau eine Datei.
+ */
+export function getWebAccessStatus(): ReturnType<typeof getWebAuthStatus> {
+  return getWebAuthStatus({ env: webAuthEnv() });
 }
 
 /** Decode a `Basic` header, rejecting anything that is not exactly one canonical encoding. */
@@ -200,32 +218,41 @@ export function verifyCredential(
   password: string,
   options: WebAuthStoreOptions = {},
 ): WebIdentity | null {
-  const env = options.env ?? process.env;
+  // Die Umgebung traegt das Passwort aus der Geheimnisdatei, nicht aus der
+  // Dienstumgebung: `webAuthEnv()` ist die eine Stelle, an der beides
+  // zusammenkommt, ohne den Wert in `process.env` zu schreiben.
+  //
+  // Sie wird **hier** in die Optionen gemischt und nicht als Default-Argument
+  // gesetzt: ein Aufrufer, der `{ username }` uebergibt (die Login-Route tut
+  // das), wuerde ein Default-`options` sonst komplett ersetzen und die
+  // Datei-Passwoerter wieder verlieren.
+  const env = options.env ?? webAuthEnv();
+  const resolved: WebAuthStoreOptions = { ...options, env };
   if (typeof username !== "string" || username.length === 0) return null;
   if (typeof password !== "string" || password.length === 0) return null;
 
-  const account = findWebAccount(username, options);
+  const account = findWebAccount(username, resolved);
   if (account) {
     // Das Konto-Digest wird wie ein normaler Store-Eintrag geprueft. Der
     // synthetische `Policy` traegt nur den Digest, den `verifyWebPassword`
     // braucht; `file` ist hierbei nur ein Platzhalter fuer den Cache-Key und
     // wird nirgends gelesen.
-    const policy: WebAuthPolicy = { mode: "stored", digest: account.password, file: options.file ?? "" };
-    if (!verifyWebPassword(password, { ...options, policy })) return null;
+    const policy: WebAuthPolicy = { mode: "stored", digest: account.password, file: resolved.file ?? "" };
+    if (!verifyWebPassword(password, { ...resolved, policy })) return null;
     // `options` wandert mit: die Admin-Frage liest dieselbe Kontendatei, aus der
     // `findWebAccount` oben gerade das Konto geholt hat. Ohne das wuerde ein
     // Aufrufer mit eigenem `accountsFile` die Rolle aus der Datei *neben* der
     // Datei bekommen, in der das Passwort geprueft wurde.
-    return { username: account.username, isAdmin: isAdminUsername(account.username, env, options) };
+    return { username: account.username, isAdmin: isAdminUsername(account.username, env, resolved) };
   }
 
   const legacy = getExpectedUsername(env);
   if (!secretsEqual(username, legacy)) return null;
 
-  const policy = resolveWebAuthPolicy(options);
+  const policy = resolveWebAuthPolicy(resolved);
   if (policy.mode !== "environment" && policy.mode !== "stored") return null;
-  if (!verifyWebPassword(password, { ...options, policy })) return null;
-  return { username: legacy, isAdmin: isAdminUsername(legacy, env, options) };
+  if (!verifyWebPassword(password, { ...resolved, policy })) return null;
+  return { username: legacy, isAdmin: isAdminUsername(legacy, env, resolved) };
 }
 
 /**
@@ -242,6 +269,10 @@ export function authorizeWebRequest(
   authorization: string | null,
   options: WebAuthStoreOptions = {},
 ): { decision: WebAuthDecision; identity: WebIdentity | null } {
+  // Dieselbe Regel wie in `verifyCredential`: die Geheimnisdatei kommt in die
+  // Optionen, nicht als Default-Argument, damit ein Aufrufer mit eigenem
+  // `{ username }` sie nicht wegkuerzt.
+  options = { ...options, env: options.env ?? webAuthEnv() };
   const policy = resolveWebAuthPolicy(options);
   if (policy.mode === "unavailable") return { decision: "unavailable", identity: null };
 

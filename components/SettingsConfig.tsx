@@ -192,9 +192,9 @@ function SettingControl({ field, busy, onSave }: { field: SettingsField; busy: b
 
 function SettingRow({ field, busy, error, onSave }: { field: SettingsField; busy: boolean; error?: string; onSave: (value: SettingsValue) => void }) {
   return (
-    <div className={styles.settingRow}>
+    <div className={styles.settingRow} data-writable={field.writable}>
       <div><div className={styles.settingLabel}>{field.label}</div><div className={styles.settingDescription}>{field.description}</div>{error && <div className={styles.error}>{error}</div>}</div>
-      <div className={styles.settingControl}><SettingControl field={field} busy={busy} onSave={onSave} /></div>
+      <div className={styles.settingControl}><SettingControl field={field} busy={busy || !field.writable} onSave={onSave} /></div>
     </div>
   );
 }

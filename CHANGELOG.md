@@ -298,6 +298,237 @@ names neither the upstream repository nor the npm registry.
   its text at every width. At weight 600 the stem is a full pixel and the
   label reaches its own colour exactly.
 
+## v0.21.0
+
+Released 2026-10-31.
+
+Die drei Abschnitte standen bis hierher unter `Unreleased`; sie stehen jetzt
+hier, weil dieser Release sie schneidet. Der Rest von `Unreleased` bleibt
+unverändert stehen, wie in `v0.13.0`, `v0.14.0` und `v0.20.0`.
+
+### Shell-Isolation
+
+**Das Terminal ist fail-closed, und die Umgebung ist eine Allow-Liste.** Vorher
+war die Sandbox nur der glückliche Pfad: fehlendes `bwrap`, abgeschaltete
+User-Namespaces, ein cwd außerhalb des Homes und ein fehlendes Home öffneten
+alle eine **unconfined** Shell, und die Env-Kopie lag innerhalb des
+`if (plan.ok)`-Zweigs, sodass `OMP_WEB_PASSWORD` nur auf dem sandboxed Zweig
+verschwand. Gemessen standen `BRAVE_API_KEY`, `OPENROUTER_API_KEY` und
+`OMP_WEB_PASSWORD` in jeder Mandanten-Shell. Jetzt antwortet
+`POST /api/terminal` mit **503**, `reason` und `remediation`, wenn keine Sandbox
+gebaut werden kann; es startet kein Prozess. Ein **Admin** läuft bewusst
+unconfined (`sandboxed: false`, wie bisher) — eine Entscheidung, kein Versehen,
+und seine Umgebung ist dieselbe Allow-Liste.
+
+Die Umgebung kommt aus `TERMINAL_ENV_ALLOWLIST` hinter `--clearenv`
+(`PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `HOME`, `USER`, `LOGNAME`), auf beiden
+Zweigen. Das ist die Umgebung, die der Spawn übergibt, nicht die endgültige: die
+interaktive Shell startet über `script(1)` und liest `/etc/profile`, sodass
+`/etc/profile.d/*` ergänzt — in einer Mandanten-Shell gemessen (`VSSCRIPT_PATH`,
+`VIRTUAL_ENV_DISABLE_PROMPT`, `XDG_DATA_DIRS`). Diese Dateien gehören root und
+sind in der Sandbox nur lesbar; ein Dienstgeheimnis kann auf diesem Weg nicht
+auftauchen, weil es gar nicht in der Prozessumgebung steht.
+Weil `/etc` für eine benutzbare Shell gebunden sein muss, werden die
+eigenen Geheimnisdateien des Dienstes darin mit einer leeren Datei maskiert — ein
+`/dev/null`-Bind scheitert an `MS_NODEV`, gemessen. Windows bekommt keine
+Mandanten-Shell mehr (`unsupported-platform`), statt sie unconfined zu öffnen. Ein `delete env.X` ist weg: gemessen entfernt es den Wert nicht aus
+`/proc/self/environ` und nicht aus einem Kind ohne eigene env-Map. Neu im argv:
+`--ro-bind /run/systemd/resolve`, weil `/etc/resolv.conf` dorthin zeigt und
+Namensauflösung in der Sandbox sonst tot ist (kein `npm install` möglich);
+`home-missing` und `admin-home` als eigene Absagegründe, damit ein fehlendes
+Konto-Home nicht als bwrap-Fehler erscheint und `/` nie gebunden wird.
+
+**Dienstgeheimnisse stehen nicht mehr in der Prozessumgebung.** `OMP_WEB_PASSWORD`
+(und jeder Provider-Key) kommt aus `OMP_WEB_SECRETS_FILE` (Vorgabe
+`/etc/omp-web.env`) und liegt in einem Modulwert. Die Unit darf dafür weder
+`Environment=` noch `EnvironmentFile=` benutzen — beide vererben den Wert an
+jeden Kindprozess, und genau das war der Fund. Der Start loggt die Namen der
+Geheimnisse, die er noch geerbt findet. Der mtime-Cache der Anmeldung bleibt
+unverändert: die Umgebung ändert nur den Passwortwert, nie `OMP_WEB_AUTH_FILE`.
+
+**`git` führt keinen Code eines Mandanten mehr aus — bis auf Includes.** Jeder
+`git`-Aufruf trägt `GIT_ISOLATION_ARGS` (`core.hooksPath=/dev/null`,
+`core.fsmonitor=false`, `diff.external=`, `--no-optional-locks`), die
+abgeschalteten Treiber aus der Repo-Config (`filter.*.clean/smudge/process`,
+`diff.*.textconv/command`) und eine Umgebung ohne Geheimnisse; die beiden Diffs
+laufen mit `--no-textconv`. Gemessen bekam ein `core.fsmonitor`-Hook vorher
+`BRAVE_API_KEY`, `OMP_WEB_PASSWORD` und `OPENROUTER_API_KEY`, und `git status`
+führte den selbst definierten `clean`-Filter des Repos aus. Offen bleibt ein
+Treiber, den das Repo über `include.path` in eine andere Datei auslagert — diese
+Lösung liest nur die `.git/config`.
+
+**Der Agent-`bash` hat jetzt eine Grenze — mehr gibt das SDK nicht her.**
+`lib/session-shell-guard.ts` registriert pro Sitzung einen `tool_call`-Haken
+(`CreateAgentSessionOptions.extensions`, in 18.14.0 pro Sitzung gebunden und an
+Subagenten vererbt): `bash` wird abgelehnt, wenn die Sitzungswurzel außerhalb
+des Kontohomes und der ausdrücklich vergebenen Wurzeln liegt. Das ist die ganze
+Grenze, gemessen: das Parameterschema des `bash`-Werkzeugs ist in 18.14.0
+`{command, timeout}`, es gibt keinen Arbeitsverzeichnis-Parameter im Aufruf, also
+entscheidet der Haken einmal pro Aufruf gegen `ctx.cwd` — ein `cd /` im
+Kommandotext sieht er nicht, und die Shell läuft weiter als Dienstbenutzer. Ein
+SDK-Spawn-Haken (`BashToolOptions` hat einen, die Sitzung bekommt ihn nicht) oder
+ein OS-Benutzer pro Konto wäre nötig; beides gibt es hier nicht.
+
+### Behoben
+
+**Ein Projekt konnte Code von außerhalb laden.** Der Codefilter für nicht
+vertraute Projekte war eine Ausschlussregel: alles, was nicht unter dem
+Projekt-Root lag, blieb geladen. Ein Projekt kann aber auf einen Pfad
+*außerhalb* zeigen, und genau das passierte — eine `.omp/config.yml` mit
+`extensions: [/tmp/outside-evil2/ext.ts]` lud dieses Modul, während der
+Vertrauensdialog nichts zu fragen hatte, weil die Datei selbst nicht als
+vertrauenswürdigende Ressource zählte. Jetzt entscheiden die Wurzeln, die omp
+für dieses Konto ohnehin durchsucht: Agent-Verzeichnis und Prozess-Home. Eine
+Erweiterung, die der Betreiber unter `/opt/foo.ts` eingetragen hat, lädt in
+einem nicht vertrauten Projekt nicht mehr und ist nach einem Vertrauensklick
+wieder da — ein Pfad unter den eigenen Wurzeln ist seine Entscheidung, ein
+Pfad außerhalb des Projekts ist eine Zahl des Projekts.
+
+`.omp/config.yml`, `.omp/settings.json` und `.claude/settings.json` lösen den
+Dialog jetzt selbst aus, weil ihre Schlüssel bestimmen, was omp importiert; ein
+Projekt, das nur eine Modell- oder Denkstufen-Einstellung mitbringt, wird
+einmal gefragt. Ein nicht vertrautes Projekt lädt außerdem nichts mehr aus
+seinem Inneren: keine Regeln, kein `AGENTS.md`, keine Prompt-Templates oder
+Slash-Commands, kein eigenes `SYSTEM.md`/`APPEND_SYSTEM.md`. Vorher galten sie
+als reine Daten und luden immer — sie sind aber Anweisungen an das Modell, und
+wer ein Repository nur öffnet, hat sie nicht geschrieben.
+
+**Ein Mandant erbte den Autorenbestand des Betreibers.** omp liest
+`getAgentDir()` und `os.homedir()` aus dem Prozesszustand; jede
+Mandantensitzung trug damit die `AGENTS.md`, `RULES.md`, `SYSTEM.md`,
+`APPEND_SYSTEM.md`, Prompt-Templates und Slash-Commands des Betreibers. Die
+Last-Policy (`lib/load-policy.ts`, ein `resolveSessionLoads` für Sitzung und
+Panel) nimmt einer Mandantensitzung genau diese Lasten und lässt, was eine
+Sitzung zum Arbeiten braucht: den Provider-Katalog, die Skills, die der
+Betreiber installiert hat (die v0.20.0-Entscheidung), seine installierten
+Erweiterungen und Werkzeuge, die eigenen Regeln und Prompts unter
+`$HOME/.omp/agent` und den Inhalt eines Projekts, das kein Vertrauen verlangt.
+
+MCP ist für einen Mandanten aus, nicht nur für ein nicht vertrautes Projekt:
+`enableMCP` ist der einzige Hebel, und ein MCP-Server des Betreibers ist ein
+Prozess mit den Rechten dieses Hosts; eine MCP-Verwaltung pro Konto gibt es
+nicht. `memory.backend` steht auf `off` und `autolearn.enabled` auf `false`,
+festgenagelt über `Settings.overlay` im Speicher, nie geschrieben:
+`getMemoryRoot(agentDir, cwd)` und `getManagedSkillsDir()` zeigen auf das
+Agent-Verzeichnis des Prozesses, ein Mandant läse sonst den Speicher des
+Betreibers und legte seine Skills in dessen Bestand. Speicher für Mandanten
+braucht eine Naht im SDK — die Lücke steht in `docs/project-trust.md` statt
+einer Umleitung.
+
+Weggelassenes bleibt sichtbar: je Liste eine `info`-Diagnose mit Anzahl, die
+`GET /api/skills` mitliefert und der Sitzungsstart mit dem Präfix
+`[load-policy]` protokolliert. Ein `/reload` weitet die Liste nicht — Regeln,
+Context-Dateien und Prompt-Templates sind beim Anlegen fest, und die
+Slash-Commands, die eine Aktualisierung neu aus den Prozesswurzeln liest,
+laufen über `subscribeCommandMetadataChanged` und `setSlashCommands` erneut
+durch denselben Filter.
+
+**Ein Mandant schaltete hostweite Einstellungen.** `PATCH /api/settings`
+prüfte nur, ob überhaupt ein Konto angemeldet ist. `autolearn.enabled` schaltet
+`manage_skill` frei, das in den Prozess-Store schreibt, `memory.backend` lässt
+eine Sitzung den Speicher des Betreibers lesen, `skills.*` und `commands.*`
+verschieben die Discovery — Wirkung für den ganzen Host, geschrieben aus einem
+Konto. Diese Schlüssel verlangen jetzt `requireAdmin` und antworten sonst 403;
+`GET` markiert dieselben Felder mit `writable: false`, damit die Oberfläche den
+Schalter sperrt, statt einen Schreibvorgang anzubieten, den der Server ablehnt.
+Theme und Anzeige bleiben pro Konto und offen.
+
+### Behoben: der Link auf dem Handy landete wieder am Login
+
+Auf dem Telefon den Link öffnen, anmelden, den Tab schließen, später wieder
+auf die Seite — statt der letzten Sitzung kam die Anmeldeseite. Das waren
+**zwei** unabhängige Ursachen, die dieselbe Seite zeigen. Beide sind gemessen
+und beide sind behoben.
+
+**1. `SameSite=strict` hielt den Cookie auf dem Link zurück.** „Den Link im
+Browser öffnen" heißt: eine Navigation, die in einer anderen App beginnt —
+Mail, Messenger, Chat. Das ist eine Cross-Site-Navigation, und `strict` schickt
+den Cookie bei genau dieser Anfrage nicht mit. `proxy.ts` sieht dann keine
+Identität und antwortet `302 /login`, während im Browser ein voll gültiger
+Cookie liegt. Gemessen mit einem echten Cross-Site-Link (anderer Host, gleicher
+Browser, `Sec-Fetch-Site: cross-site`, `Sec-Fetch-Mode: navigate`): mit `strict`
+landet die Navigation auf `/login`, mit `lax` auf der App — bei identischem
+Cookie. `sameSite` ist jetzt `lax`; `lax` hält den Cookie weiterhin auf
+Cross-Site-Subrequests und Cross-Site-POSTs zurück, und `isApiRequestAllowed()`
+weist `sec-fetch-site: cross-site` ohnehin ab, bevor `proxy.ts` den Cookie
+liest. Ein Test hält beides fest: derselbe Cross-Site-POST mit gültigem
+Cookie bleibt 403, derselbe POST same-origin 200.
+
+**2. Die Sitzung starb nach einer Stunde, auch ohne Zutun.** `SESSION_TTL_MS`
+war eine Stunde, und eine Stunde ist eine *Leerlaufzeit*: der Cookie gleitet nur,
+wenn Anfragen kommen. Ein geschlossener Tab stellt keine, also verwirft der
+Browser ihn, sobald `Max-Age` abgelaufen ist. Gemessen mit einem
+iPhone-14-Viewport gegen einen eigenen Produktionsbuild: ein Cookie, der vor 61
+Minuten ausgestellt wurde, liegt im Browser nicht mehr und `GET /` antwortet mit
+`302` auf `/login`; bei 40 Minuten landet derselbe Aufruf auf `/`.
+
+Was **nicht** die Ursache war, jeweils gemessen: Login, Gleit-Erneuerung und
+Logout schrieben die ganze Zeit dieselben Attribute (inklusive `Max-Age` und
+`Expires`) — kein Session-Cookie, keine Verkürzung auf dem Erneuerungspfad; ein
+Browserneustart mit demselben Profil kam innerhalb der Lebensdauer auf `/`
+zurück, und ein Neustart des Prozesses ebenfalls, weil die Schlüsseldatei da
+ist (`0600`, 44 Byte). Die Weiterleitung auf `/login` existiert nur für den
+Fall „keine Sitzung" (`proxy.ts`, `decision === "unauthorized"`); mit gültigem
+Cookie antwortet `GET /` mit 200.
+
+Die Lebensdauer ist jetzt **30 Tage**, weiterhin gleitend (Erneuerung nach der
+Hälfte). Die Zahl ist eine Setzung, keine Messung: sie ist die Zeitspanne, die
+ein Telefon ohne Anfrage bleiben darf, und sie ist eine Konstante. Was eine
+Sitzung vorzeitig beendet, hängt nicht am Ablaufdatum: Logout dreht die Epoche
+des Kontos, ein Passwortwechsel dreht den Schlüssel, Schlüsseldatei löschen
+plus Neustart meldet jedes Gerät ab. Der Preis: ein kopierter Cookie ist bis zu
+30 Tage eine kopierte Sitzung statt einer Stunde — dokumentiert in
+`docs/inventory-auth.md` und `docs/authentication.md`.
+
+`lib/web-auth-session.test.mjs` hält den Tab-Fall fest (ein 61 Minuten alter
+Cookie verifiziert), `proxy.session-cookie.test.mjs` prüft ihn am Proxy und
+hält den Cross-Site-POST abgewiesen, und `app/api/web-access/login/route.test.mjs`
+vergleicht die Attributnamen von Login und Erneuerung direkt miteinander statt
+gegen abgeschriebene Literale.
+
+### Nicht geprüft
+
+Stated plainly, because a release note that claims more than what was run is
+worse than one that admits the gap:
+
+- **Der Terminal-Knopf in der Oberfläche.** Die Routen sind gefahren, der Klick
+  nicht: eine Sitzung braucht ein Modell, und im Wegwerf-Agent-Verzeichnis der
+  Messung war keines eingerichtet (`REPORT-shell-isolation.md`, §7). Belegt ist
+  damit `POST /api/terminal` und was danach kommt — Spawn-Umgebung, Grenzen,
+  `id`/`cat`/`ls`/`curl` —, nicht der Weg vom Knopf dorthin.
+- **Nur Chromium.** Jede Browsermessung lief in Chromium. Firefox und Safari
+  sind ungemessen, und ein echtes Telefon war nicht im Spiel: der Handy-Fall
+  (ein 61 Minuten alter Cookie landet wieder auf `/login`, mit `lax` nicht) ist
+  mit einem iPhone-14-Viewport gegen einen eigenen Produktionsbuild gemessen,
+  nicht an einem Gerät. Der gemeldete Fehler kam von einem Telefon, also ist
+  genau dort nichts nachgestellt.
+- **Das Erneuerungsintervall.** Die 30 Tage und die Erneuerung nach der Hälfte
+  (15 Tage) sind durch Unit-Tests belegt — `Max-Age=2592000`, `Expires`, die
+  Drosselung auf ein `Set-Cookie` pro Halbwertszeit, der abgelehnte Request ohne
+  `Set-Cookie`. Dass ein Browser 15 Tage wirklich durchhält, ist nicht gemessen;
+  die Zahlen sind Konstanten, keine Beobachtung.
+- **Memory, Themes und MCP pro Konto.** `memory.backend` und `autolearn` sind
+  für einen Mandanten fest auf `off`/`false` genagelt, MCP ist aus — das ist die
+  Absage, nicht die Lösung. Ein Speicher pro Konto braucht eine Naht im SDK
+  (`getMemoryRoot` nimmt das Prozess-Agent-Verzeichnis; `docs/project-trust.md`,
+  „Known gap"), und eine MCP-Verwaltung pro Konto gibt es nicht. Theme und
+  Anzeige bleiben pro Konto und offen, aber nur über den Pfad, den
+  `getSettingsForIdentity` auflöst — gemessen ist das an den Skills (v0.20.0)
+  und an `GET /api/display-settings`, nicht an jedem Theme-Schlüssel.
+- **Die uid-Grenze des Agent-`bash`.** Der Haken prüft die Sitzungswurzel, nicht
+  das Kommando: ein `cd /` im Kommandotext sieht er nicht, und die Shell läuft
+  als Dienstbenutzer weiter. Ein OS-Benutzer pro Konto wäre die Grenze, die das
+  schließt; die gibt es hier nicht, und sie ist nicht gebaut worden.
+
+What was run, in this checkout, on the tree that was committed:
+
+| check | result |
+| --- | --- |
+| `bun run typecheck` (`tsc --noEmit`) | 0 errors |
+| `bun test` (`NODE_ENV=test bun test`) | 1770 pass, 1 skip, 0 fail — 1771 tests, 207 files |
+| `bun run build` (`scripts/run-next.mjs build --webpack`) | exit 0, `BUILD_ID` `8w016bl3pj7db6Ruj-R2Q`, 496 files under `.next/static/**/*.js` |
+| `bunx eslint components/ app/ lib/ instrumentation.ts hooks/ bin/` | 0 problems |
+
 ## v0.13.0
 
 Released 2026-10-30.

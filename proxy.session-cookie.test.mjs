@@ -82,10 +82,13 @@ test("ein frischer Cookie wird nicht erneuert", async (t) => {
   });
 });
 
+/** Ein Cookie, das die Erneuerung ausloest: aelter als die halbe Lebenszeit. */
+const dueCookie = () => agedCookie(SESSION_RENEW_AFTER_MS / 1000 + 60);
+
 test("nach der halben Lebenszeit wird genau ein neuer Cookie gesetzt", async (t) => {
   await withServer(t, () => {
-    // 40 Minuten: mehr als die Haelfte der Stunde, also ist die Erneuerung faellig.
-    const cookie = agedCookie(40 * 60);
+    // Aelter als die Haelfte der Lebenszeit, also ist die Erneuerung faellig.
+    const cookie = dueCookie();
     const previousIssuedAt = Number(Buffer.from(cookie.split(".")[1], "base64url").toString("utf8"));
     assert.ok(Date.now() - previousIssuedAt > SESSION_RENEW_AFTER_MS, "Vorbedingung: die Erneuerung ist faellig");
 
@@ -100,9 +103,14 @@ test("nach der halben Lebenszeit wird genau ein neuer Cookie gesetzt", async (t)
     // eines davon, legt der Browser einen zweiten Cookie desselben Namens an.
     assert.match(header, new RegExp(`^${SESSION_COOKIE_NAME}=`));
     assert.match(header, /Path=\//);
-    assert.match(header, /Max-Age=3600/);
+    // Die Lebensdauer steht an genau einer Stelle: hier wird sie aus der
+    // Konstante gebaut, nicht abgeschrieben.
+    assert.match(header, new RegExp(`Max-Age=${SESSION_TTL_MS / 1000}`));
+    // Und `Expires` gehoert dazu: ohne beide Attribute ist der Cookie ein
+    // Session-Cookie und der Browser wirft ihn beim naechsten Start weg.
+    assert.match(header, /Expires=[^;]+GMT/, "ein Cookie ohne Expires ueberlebt den Browserstart nicht");
     assert.match(header, /HttpOnly/i);
-    assert.match(header, /SameSite=strict/i);
+    assert.match(header, /SameSite=Lax/i, "Lax, nicht Strict: ein Link aus einer anderen App ist eine Cross-Site-Navigation");
     assert.doesNotMatch(header, /Secure/i, "ueber HTTP kein Secure, sonst verwirft der Browser ihn");
     assert.doesNotMatch(header, /Domain=/i, "host-only: kein Domain-Attribut");
 
@@ -119,10 +127,59 @@ test("nach der halben Lebenszeit wird genau ein neuer Cookie gesetzt", async (t)
 
 test("hinter HTTPS traegt die Erneuerung Secure", async (t) => {
   await withServer(t, () => {
-    const response = proxy(request(agedCookie(40 * 60), { "x-forwarded-proto": "https" }));
+    const response = proxy(request(dueCookie(), { "x-forwarded-proto": "https" }));
     const headers = response.headers.getSetCookie();
     assert.equal(headers.length, 1);
     assert.match(headers[0], /Secure/i);
+  });
+});
+
+test("ein Tab, der eine Stunde geschlossen war, ist keine Abmeldung", async (t) => {
+  await withServer(t, () => {
+    // Der gemeldete Fehler: Handy, Tab zu, 61 Minuten spaeter wieder auf, und
+    // `/` schickt nach `/login`. Der Proxy war nie die Ursache — der Browser
+    // hatte den Cookie verworfen, weil seine Lebensdauer abgelaufen war. Mit
+    // einer Stunde TTL faellt dieser Test an der 401, mit Tagen nicht.
+    const response = proxy(request(agedCookie(61 * 60)));
+    assert.equal(response.status, 200, "61 Minuten duerfen keine Abmeldung sein");
+    // Und weil eine Stunde weit unter der halben Lebensdauer liegt, wird auch
+    // nicht neu ausgestellt: kein Schreibzugriff fuer eine blosse Rueckkehr.
+    assert.deepEqual(response.headers.getSetCookie(), [], "keine Erneuerung nach einer Stunde");
+  });
+});
+
+test("ein gueltiger Cookie kauft einem Cross-Site-POST nichts", async (t) => {
+  await withServer(t, () => {
+    // `sameSite: lax` laesst den Cookie auf einer Top-Level-GET-Navigation
+    // mitreisen — das ist der Link in der Mail, und ohne ihn landet ein Handy
+    // mit gueltiger Sitzung auf `/login`. Auf einem Cross-Site-POST schickt der
+    // Browser ihn nicht; und selbst wenn er es taete, weist
+    // `isApiRequestAllowed()` (`sec-fetch-site: cross-site`) den Request ab,
+    // bevor `proxy.ts` den Cookie liest. Beides wird hier gemessen, damit die
+    // eine Zeile `sameSite: "lax"` nicht als CSRF-Loch durchgeht.
+    const post = (cookie, extraHeaders) => new NextRequest(`${ORIGIN}/api/skills/install`, {
+      method: "POST",
+      headers: {
+        host: HOST,
+        "content-type": "application/json",
+        ...extraHeaders,
+        cookie: `${SESSION_COOKIE_NAME}=${cookie}`,
+      },
+      body: "{}",
+    });
+
+    const crossSite = proxy(post(dueCookie(), {
+      origin: "https://attacker.example", "sec-fetch-site": "cross-site",
+    }));
+    assert.equal(crossSite.status, 403, "Cross-Site bleibt abgelehnt, auch mit gueltigem Cookie");
+    assert.deepEqual(crossSite.headers.getSetCookie(), [], "und nichts, was der Angreifer setzen koennte");
+
+    // Die Kontrolle: derselbe POST aus der eigenen Seite kommt durch. Sonst
+    // waere die Assertion oben nur die Aussage "POST geht nie".
+    const sameOrigin = proxy(post(dueCookie(), {
+      origin: ORIGIN, "sec-fetch-site": "same-origin",
+    }));
+    assert.equal(sameOrigin.status, 200, "der eigene POST bleibt erlaubt");
   });
 });
 
@@ -139,7 +196,7 @@ test("die ausgenommenen Pfade gleiten nicht", async (t) => {
     // `/login` laeuft bewusst mit `identity === null` durch (proxy.ts:119-124).
     // Wuerde dort gleiten, traege eine oeffentliche Seite einen Set-Cookie —
     // und sie ist im Betrieb teilbar gecacht (`s-maxage`).
-    const request = new NextRequest(`${ORIGIN}/login`, { headers: { host: HOST, cookie: `${SESSION_COOKIE_NAME}=${agedCookie(40 * 60)}` } });
+    const request = new NextRequest(`${ORIGIN}/login`, { headers: { host: HOST, cookie: `${SESSION_COOKIE_NAME}=${dueCookie()}` } });
     const response = proxy(request);
     assert.equal(response.status, 200);
     assert.deepEqual(response.headers.getSetCookie(), [], "kein Set-Cookie auf /login");

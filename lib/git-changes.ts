@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 import { TEXT_PREVIEW_MAX_BYTES } from "./file-types";
+import { gitIsolationArgs } from "./git-safe";
+import { childEnv } from "./runtime-secrets";
 import type {
   GitFileDiffResponse,
   GitFileStatus,
@@ -19,10 +21,12 @@ const GIT_TIMEOUT_MS = 10_000;
 const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
 
 async function git(cwd: string, args: string[], maxBuffer = GIT_STATUS_MAX_BUFFER): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+  const { stdout } = await execFileAsync("git", ["-C", cwd, ...gitIsolationArgs(cwd), ...args], {
     timeout: GIT_TIMEOUT_MS,
     maxBuffer,
-    env: { ...process.env, LC_ALL: "C" },
+    // `childEnv()` statt `process.env`: ein Aufruf ohne eigene env-Map erbt die
+    // gesamte Dienstumgebung, und genau die ist der Fund in §4b.
+    env: { ...childEnv(), LC_ALL: "C" },
   });
   return stdout;
 }
@@ -65,6 +69,7 @@ async function readTrackedLineStats(
       "diff",
       "--no-color",
       "--no-ext-diff",
+      "--no-textconv",
       "--numstat",
       "HEAD",
       "--",
@@ -175,6 +180,7 @@ async function createTrackedFilePatch(
       "diff",
       "--no-color",
       "--no-ext-diff",
+      "--no-textconv",
       "--unified=3",
       "HEAD",
       "--",

@@ -350,24 +350,37 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
 - **Ort**: `app/api/terminal/owner-guard.ts:1-47`,
   `app/api/terminal/[id]/{input,resize,stream,route.ts}`
 
-### lib/sandbox.ts — die Isolierung, und das Fail-open
+### lib/sandbox.ts — die Isolierung, und warum sie jetzt fail-closed ist
 - **Kann**: Plant ein `bwrap`-argv für einen Mandanten: User-/PID-/IPC-/UTS-Namespace, `--tmpfs /tmp`,
   nur Systemverzeichnisse readonly (`/usr`, `/bin`, `/etc`, bedingt `/lib`, `/lib64`, `/sbin`),
   `--dev /dev`, `--proc /proc`, **genau ein** `--bind` für das eigene Home, und `--chdir` auf den
   umgeschriebenen Namespace-Pfad.
 - **Tastatur**: keine.
-- **Darf nicht**: **(a) FEHLT `bwrap`, LÄUFT DIE SHELL UNCONFINDED. Das ist gewollt.** Der Kommentar
-  im Aufrufer sagt es (`terminal-manager.ts:133-137`): „A missing `bwrap` is not fatal: the shell
-  still opens, unisolated, and the caller is told. Refusing outright would take the terminal away
-  from every install that has no bubblewrap yet, which is a worse failure than a warning." Es gibt
-  dafür **keinen** Fail-closed-Pfad im Code, nur `console.warn` mit der `remediation`
-  (`terminal-manager.ts:158-160`), und das Feld `sandboxed` in `TerminalInfo` trägt die Aussage
-  nach außen. **Jemand, der das zum Fail-close umbaut, schaltet die Shell auf kaputten Hosts
-  komplett ab** — das ist der Fehler, den dieses Fail-open vermeidet. Ebenso darf der
-  `checkSandboxPrerequisites`-Fehlerzweig **nicht** werfend gemacht werden: `ok: true` heißt
-  „die Voraussetzungen sind da" und **nicht** „die Isolation greift" — genau dieser Unterschied hat
-  den alten Strang scheitern lassen, der drei Binaries fand und daraus eine Freigabe machte, ohne den
-  Aufruf zu prüfen, der die Berechtigung wirklich verrät (`sandbox.ts:132-137`).
+- **Darf nicht**: **(a) Ohne Sandbox läuft für einen Mandanten gar keine Shell.** Die frühere
+  Fassung war fail-open: fehlendes `bwrap`, abgeschaltete User-Namespaces, ein cwd außerhalb des
+  Homes und ein fehlendes Home öffneten alle eine **unconfined** Shell, und die Env-Kopie lag
+  innerhalb des `if (plan.ok)`-Zweigs, sodass `OMP_WEB_PASSWORD` nur auf dem sandboxed Zweig
+  verschwand (`SHELL-ISOLATION-SCAN.md` §2, alle drei Fälle gemessen). Jetzt wirft
+  `TerminalManager.spawn` einen `TerminalUnavailableError` mit `reason`, `detail` und
+  `remediation`, und `POST /api/terminal` antwortet **503**; es startet kein Prozess.
+  `checkSandboxPrerequisites` bleibt die Voraussetzungsprüfung (`ok: true` heißt „die
+  Voraussetzungen sind da", **nicht** „die Isolation greift") — der Unterschied bleibt wichtig,
+  aber der Aufrufer macht daraus keinen Fallback mehr. Der **Admin** ist die eine Ausnahme, und
+  sie ist eine Entscheidung: sein Home ist `/`, ein `--bind /` wäre die ganze Platte, deshalb
+  lehnt `planSandboxSpawn` ihn mit `admin-home` ab und die Route lässt ihn mit
+  `sandboxed: false` unconfined laufen.
+  (a2) **Die Umgebung ist eine Allow-Liste hinter `--clearenv`** (`TERMINAL_ENV_ALLOWLIST`):
+  `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `HOME`, `USER`, `LOGNAME`. Ein `delete env.X` ist die
+  falsche Form — es ist eine Sperrliste gegen eine Umgebung, die von außen wächst, und auf Bun
+  entfernt es den Wert nicht einmal aus `/proc/self/environ`. Gemessen: 109 geerbte Schlüssel
+  (darunter `BRAVE_API_KEY`, `OPENROUTER_API_KEY`) vorher, neun danach.
+  (a3) **`/run/systemd/resolve` wird readonly gebunden, wenn es existiert**: `/etc/resolv.conf`
+  zeigt dorthin, `/run` hängt nicht in der Sandbox, und gemessen war Namensauflösung damit tot
+  (`cat /etc/resolv.conf` → `No such file or directory`). Ohne den Bind ist kein `npm install`
+  möglich.
+  (a4) **Ein fehlendes Home ist ein Ablehnungsgrund** (`home-missing`, `existsSync`), kein
+  `bwrap`-Fehler zur Spawn-Zeit: vorher kam je nach cwd ein 500 mit irreführender bwrap-Meldung
+  oder ein unconfined Fallback.
   (b) **Die Reihenfolge im argv ist der Vertrag**: `--tmpfs /tmp` zuerst, damit kein fremder Pfad
   durch das echte `/tmp` sichtbar wird, danach genau **ein** `--bind` (`sandbox.ts:161-166`).
   „A second `--bind` on a foreign home would be exactly the error this function prevents by not
@@ -387,13 +400,24 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
   directory is worse than one that does not open at all."
   (h) **Der Benutzername muss `/^[a-z_][a-z0-9_-]{0,31}$/` erfüllen** (`:207-216`) — der Pfad im
   argv wird aus ihm gebaut.
-  (i) **`OMP_WEB_PASSWORD` wird aus der Umgebung der Mandanten-Shell gelöscht**
-  (`terminal-manager.ts:147-154`): „the admin secret must not lie in a tenant shell". Das ist der
-  einzige echte Schnitt in dieser Kopie; alles andere bleibt durch die Bind-Liste unerreichbar.
+  (i) **Kein Geheimnis erreicht die Shell, weil keines geerbt wird** (a2), nicht weil eines
+  gelöscht würde. Die zweite Hälfte der alten Aussage — „alles andere bleibt durch die Bind-Liste
+  unerreichbar" — war nur über das Dateisystem wahr: `BRAVE_API_KEY` und `OPENROUTER_API_KEY`
+  standen in der *Umgebung* jeder Mandanten-Shell (gemessen). Zusätzlich hält
+  `lib/runtime-secrets.ts` die Dienstgeheimnisse aus der Prozessumgebung heraus (Datei statt
+  `Environment=`), weil das der einzige Hebel ist, der auch den Agent-`bash` und MCP-stdio erreicht.
   (j) Das `bwrap`-binary wird **gecacht** (`sandbox.ts:69-78`): das ist ein `PATH`-Scan auf dem Weg
   in jedes Terminal, und `which` pro Spawn wäre messbarer Ballast.
-- **Ort**: `lib/sandbox.ts:1-45` (gemessene Belege), `:96-113` (Preflight), `:157-255` (`planSandboxSpawn`),
-  `:277-296` (`isInsideHome`, `mapCwdIntoSandbox`); `lib/terminal-manager.ts:112-165` (Fail-open)
+- **Ort**: `lib/sandbox.ts` (gemessene Belege im Kopf, Preflight, `planSandboxSpawn`,
+  `TERMINAL_ENV_ALLOWLIST`, `isInsideHome`, `mapCwdIntoSandbox`); `lib/terminal-manager.ts`
+  (`spawn`, `TerminalUnavailableError`); `lib/runtime-secrets.ts`; `lib/git-safe.ts`;
+  `lib/session-shell-guard.ts`
+- **Der Agent-`bash` hat eine Sitzungswurzel-Grenze, keine Sandbox.** `lib/session-shell-guard.ts`
+  hängt pro Sitzung einen `tool_call`-Haken an (`CreateAgentSessionOptions.extensions`). Das
+  Parameterschema des `bash`-Werkzeugs ist in 18.14.0 `{command, timeout}` — es gibt **keinen**
+  Arbeitsverzeichnis-Parameter, also entscheidet der Haken einmal pro Aufruf gegen `ctx.cwd` und
+  ein `cd /` im Kommandotext ist für ihn unsichtbar. Ein `cwd` im Aufruf kann nur vom Modell
+  erfunden sein; das Werkzeug ignoriert es. Die Shell läuft weiter als Dienstbenutzer.
 
 ### lib/terminal-manager.ts — der Spawn
 - **Kann**: Verwaltet die Terminals, weist jedem einen Besitzer zu, liefert die Liste gefiltert.

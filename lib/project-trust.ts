@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
+import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 import type { ProjectTrustStatus } from "./api-types";
@@ -55,6 +56,24 @@ const MCP_MANIFEST_FILES = [
   ".cursor/mcp.json",
 ] as const;
 
+/**
+ * Project-relative settings files whose *keys* make omp load something.
+ *
+ * `.omp/config.yml` carries `extensions`, and omp honours that list from the
+ * merged project layer: measured, a project whose `.omp/config.yml` named
+ * `extensions: [/tmp/outside-evil2/ext.ts]` ran that module while
+ * `hasTrustRequiringProjectResources` reported `false` and no decision was ever
+ * asked for (`LOAD-LEVEL-SCAN.md` §3(i)). The file is a code-bearing resource
+ * exactly like `.omp/extensions` — it just arrives as a key instead of a
+ * directory. omp's settings loader reads `<cwd>/.omp/config.yml`,
+ * `<cwd>/.omp/settings.json` and `<cwd>/.claude/settings.json` for a project
+ * layer (`config/settings.ts`, `#syncFileWatchers`), so all three raise the
+ * dialog.
+ */
+const PROJECT_SETTINGS_FILES = [
+  ".omp/config.yml", ".omp/settings.json", ".claude/settings.json",
+] as const;
+
 function trustFilePath(agentDir: string): string {
   return join(agentDir, TRUST_FILE);
 }
@@ -87,14 +106,15 @@ function writeTrustedProjects(agentDir: string, trusted: Record<string, boolean>
 }
 
 /**
- * Whether `cwd` ships resources omp would import and execute on session start.
+ * Whether `cwd` ships resources omp would import and execute on session start,
+ * or a settings file whose keys would make it import them.
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
   if (!cwd) return false;
   for (const dir of [...CODE_BEARING_PROJECT_DIRS, ...PROJECT_SKILL_DIRS]) {
     if (existsSync(join(cwd, dir))) return true;
   }
-  for (const file of MCP_MANIFEST_FILES) {
+  for (const file of [...MCP_MANIFEST_FILES, ...PROJECT_SETTINGS_FILES]) {
     if (existsSync(join(cwd, file))) return true;
   }
   return false;
@@ -211,8 +231,19 @@ export interface DiscoveredProjectCode<TTool extends DiscoveredToolPath> {
  * omp-web sessions behave exactly like `omp` in a terminal.
  *
  * The caller supplies the discovered paths (omp's own `discoverSessionExtensionPaths`
- * / `discoverCustomToolPaths` results) so user-level extensions keep working:
- * only entries under the project root are dropped.
+ * / `discoverCustomToolPaths` results) so user-level extensions keep working.
+ *
+ * ### Why this is a positive allowlist, not "everything outside the project"
+ *
+ * A project's `.omp/config.yml` can name a path that lies *outside* the project
+ * root, so "not under the project" lets it through: measured, a config with
+ * `extensions: [/tmp/outside-evil2/ext.ts]` ran that module
+ * (`LOAD-LEVEL-SCAN.md` §3(i)). What survives instead is code from the roots omp
+ * itself scans for this account — the agent directory and the process home
+ * (`<agentDir>/extensions`, `<agentDir>/tools`, `~/.agents/…`, `~/.claude/…`,
+ * `~/.omp/plugins`) — and nothing else. The consequence is deliberate: an
+ * operator who configured an extension at `/opt/foo.ts` does not get it inside a
+ * project they have not trusted, and gets it back the moment they trust it.
  */
 export function untrustedProjectSessionOptions<TTool extends DiscoveredToolPath>(
   cwd: string,
@@ -222,10 +253,17 @@ export function untrustedProjectSessionOptions<TTool extends DiscoveredToolPath>
   const status = getProjectTrustStatus(cwd, agentDir);
   if (!status.requiresTrust || status.trusted) return undefined;
 
+  const roots = [agentDir, homedir()];
+
   return {
-    preloadedExtensionPaths: discovered.extensionPaths.filter((path) => !isInsideProject(path, cwd)),
+    preloadedExtensionPaths: discovered.extensionPaths.filter(
+      (path) => !isInsideProject(path, cwd) && roots.some((root) => isInsideProject(path, root)),
+    ),
     preloadedCustomToolPaths: discovered.customToolPaths.filter(
-      (tool) => tool.source?.level !== "project" && !isInsideProject(tool.path, cwd),
+      (tool) =>
+        tool.source?.level !== "project" &&
+        !isInsideProject(tool.path, cwd) &&
+        roots.some((root) => isInsideProject(tool.path, root)),
     ),
     enableMCP: false,
   };

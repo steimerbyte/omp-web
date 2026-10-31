@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import {
   clearWebPassword,
-  getWebAuthStatus,
   setWebPassword,
   setWebPasswordEnabled,
   setWebUsername,
   validatePassword,
 } from "@/bin/web-auth-store.js";
 import { requireAdmin } from "@/lib/request-identity";
+import { getWebAccessStatus } from "@/lib/web-auth";
+
 import { hasJsonContentType } from "@/lib/request-security";
 import type { WebAccessStatus } from "@/lib/api-types";
 
@@ -50,14 +51,14 @@ function statusResponse(status: WebAccessStatus) {
 }
 
 export async function GET(request: Request) {
-  // Same guard as PUT, one line, same handler family. `getWebAuthStatus()`
+  // Same guard as PUT, one line, same handler family. `getWebAccessStatus()`
   // carries `username` and the absolute path of the credential file — neither is
   // a credential, so this is not an independent finding; it is there because the
   // status belongs to the host's lock, not to a tenant.
   const denied = requireAdmin(request);
   if (denied) return denied;
 
-  return statusResponse(getWebAuthStatus());
+  return statusResponse(getWebAccessStatus());
 }
 
 export async function PUT(req: Request) {
@@ -86,7 +87,7 @@ export async function PUT(req: Request) {
   // while it is set would change nothing a user could observe. The same guard
   // covers `set-username`: an environment-managed lock owns the entire
   // credential pair, not just the password half.
-  if (getWebAuthStatus().managedByEnvironment) {
+  if (getWebAccessStatus().managedByEnvironment) {
     return NextResponse.json(
       { error: "Password access is managed by the OMP_WEB_PASSWORD environment variable. Unset it to manage the password here." },
       { status: 409 },

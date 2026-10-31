@@ -1,6 +1,7 @@
 import os from "os";
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { spawnSync } from "child_process";
+import { childEnv } from "./runtime-secrets";
 
 /**
  * Physical memory the process is actually allowed to use, in bytes.
@@ -350,6 +351,8 @@ const realGpuProbeDeps: GpuProbeDeps = {
       // stderr is discarded: driver chatter must never reach the server log.
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
+      // No inherited secrets: `nvidia-smi` is a child like any other.
+      env: childEnv(),
     });
     return {
       status: result.status,

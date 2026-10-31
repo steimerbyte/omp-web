@@ -10,6 +10,7 @@ import {
   type WebAuthStoreOptions,
 } from "../bin/web-auth-store.js";
 import { getExpectedUsername } from "./web-auth";
+import { webAuthEnv } from "./runtime-secrets";
 
 /**
  * Signed session cookies for the web lock.
@@ -35,27 +36,38 @@ import { getExpectedUsername } from "./web-auth";
 export const SESSION_COOKIE_NAME = "omp_session";
 
 /**
- * One hour, sliding.
+ * Thirty days, sliding.
  *
- * The point of the cookie is that the operator does not retype the password
- * all day, and an hour does that together with the renewal in `proxy.ts`: as
- * long as the page is in use, the cookie is re-issued, so an hour is the idle
- * timeout, not the length of a working day. Two reasons not to raise it
- * instead: a laptop left in a bag stops being signed in an hour after its last
- * request, and the cookie is the only thing a browser holds — the key is
- * derived from the stored digest, so a copied cookie is a copied session until
- * its own expiry.
+ * The point of the cookie is that the operator does not retype the password on
+ * a device he keeps, and the device that matters is a phone. Thirty days is
+ * that number, and it is the idle timeout, not a session length: `proxy.ts`
+ * re-issues the cookie once half of it has passed, so a browser that is used
+ * never expires and one that is not sends no request and is never renewed.
+ *
+ * It was one hour, and an hour is wrong for exactly this device. A closed tab
+ * makes no requests, so the sliding rule cannot reach it: measured on a
+ * phone-shaped browser, a session that had sat for 61 minutes came back to
+ * `/login` — not because the server rejected it, but because the browser had
+ * already dropped a cookie whose `Max-Age` was spent. A phone that is opened
+ * twice a week is the normal case, and one hour is shorter than that.
+ *
+ * What it costs: the cookie is the only thing a browser holds — the key is
+ * derived from the stored digest — so a copied cookie is a copied session
+ * until its own expiry, and that window is now thirty days instead of one
+ * hour. The ways out do not depend on the expiry and are unchanged: a logout
+ * bumps the account's epoch, a password change rotates the key, and deleting
+ * the key file and restarting signs every device out at once.
  *
  * This is the *only* TTL. `expiry` in the token, `Max-Age` and `Expires` in the
  * header and the renewal threshold below are all derived from it.
  */
-export const SESSION_TTL_MS = 60 * 60 * 1000;
+export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Renewal threshold: `proxy.ts` re-issues the cookie once more than half its
  * lifetime has passed since `issuedAt`. That is the rule that keeps a busy tab
  * from setting a cookie per request: a renewal resets `issuedAt`, so one client
- * gets at most one `Set-Cookie` per half hour no matter how often it polls.
+ * gets at most one `Set-Cookie` per half-life no matter how often it polls.
  */
 export const SESSION_RENEW_AFTER_MS = SESSION_TTL_MS / 2;
 
@@ -83,6 +95,11 @@ const EPHEMERAL_KEY_ENV = "OMP_WEB_SESSION_KEY_EPHEMERAL";
  * credential's directory is the one place this process already writes a secret
  * to (`writeWebAuthConfig` creates it with mode 0700).
  */
+/** Wo der Sitzungsschluessel liegt — auch fuer Aufrufer, die ihn nur verstecken wollen. */
+export function sessionKeyFile(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveSessionKeyFile(env);
+}
+
 function resolveSessionKeyFile(env: NodeJS.ProcessEnv): string {
   const explicit = env.OMP_WEB_SESSION_KEY_FILE;
   if (typeof explicit === "string" && explicit.trim().length > 0) return resolve(explicit.trim());
@@ -231,7 +248,23 @@ function deriveSessionKey(salt: string, secret: string): Buffer {
  * that verifies it is gone". `bumpSessionEpoch` in the store turns it, and every
  * cookie of that user stops verifying on the next request.
  */
+/**
+ * Die Optionen, mit denen ein Cookie geprueft wird — mit der Geheimnisdatei.
+ *
+ * `bin/web-auth-store.js` liest das Passwort aus der env, die es bekommt. Es
+ * hier in die Optionen zu mischen und nicht als Default-Argument zu setzen ist
+ * Absicht: ein Aufrufer, der nur `{ username }` uebergibt — die Login-Route tut
+ * genau das —, wuerde ein Default sonst vollstaendig ersetzen. Dann faende die
+ * Sitzung das Datei-Passwort nicht mehr, `resolveSessionSecret` lieferte `null`,
+ * und die Anmeldung waere auf einer umgestellten Installation kaputt, obwohl die
+ * Pruefung selbst den Benutzer gerade akzeptiert hat.
+ */
+function withAuthEnv(options: WebAuthStoreOptions): WebAuthStoreOptions {
+  return options.env ? options : { ...options, env: webAuthEnv() };
+}
+
 function resolveSessionSecret(options: WebAuthStoreOptions): string | null {
+  options = withAuthEnv(options);
   const policy = resolveWebAuthPolicy(options);
 
   if (typeof options.username === "string" && options.username.length > 0) {
@@ -321,6 +354,7 @@ function buildSessionValue(secret: string, username: string, salt: string): stri
  * the person it was minted for.
  */
 export function issueSessionCookie(options: WebAuthStoreOptions = {}): string | null {
+  options = withAuthEnv(options);
   // Der Name wird auch dann aufgeloest, wenn ihn der Aufrufer nicht mitgibt —
   // und zwar fuer den Schluessel, nicht nur fuer die Nutzlast. `resolveSessionSecret`
   // nimmt einen Kontonamen als Konto- statt als Single-User-Credential, und
@@ -343,7 +377,7 @@ export function verifySessionCookie(
   value: unknown,
   options: WebAuthStoreOptions = {},
 ): boolean {
-  return readSessionCookie(value, options) !== null;
+  return readSessionCookie(value, withAuthEnv(options)) !== null;
 }
 
 /** What a verified cookie says. `issuedAt` is what the renewal rule reads. */
@@ -367,6 +401,7 @@ export function readSession(
   value: unknown,
   options: WebAuthStoreOptions = {},
 ): SessionClaims | null {
+  options = withAuthEnv(options);
   const username = readCookieUsername(value, options.env ?? process.env);
   if (username === null) return null;
 
@@ -416,13 +451,28 @@ export function readSessionCookie(
  * and HTTPS in front of it, and a `secure` cookie would be dropped on the
  * first. Never `domain`-scoped: a host-only cookie cannot be widened by a
  * hostile parent domain.
+ *
+ * `sameSite` is `lax`, not `strict`, and the difference is the phone this
+ * cookie exists for. A link tapped in a mail or a messenger is a **cross-site**
+ * top-level navigation, and `strict` withholds the cookie on exactly that
+ * request: the proxy sees no identity and answers `302 /login` while a
+ * perfectly valid cookie sits in the browser. Measured with a real cross-site
+ * link and `Sec-Fetch-Site: cross-site` on the wire: `strict` landed on
+ * `/login` with the session in the jar, `lax` lands on the app.
+ *
+ * What `lax` still withholds is the part that matters: the cookie does not ride
+ * along on cross-site subrequests or on cross-site POSTs. The API is covered
+ * twice over anyway — `isApiRequestAllowed()` (`lib/request-security.ts`)
+ * refuses `sec-fetch-site: cross-site` before `proxy.ts` ever reads the cookie,
+ * and `HttpOnly` keeps it out of reach of script. A cookie attribute cannot be
+ * the only lock on a mutating endpoint, and here it is not.
  */
 export function sessionCookieOptions(url: URL | string, headers?: Headers) {
   const protocol = typeof url === "string" ? new URL(url).protocol : url.protocol;
   const forwarded = headers?.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
   return {
     httpOnly: true,
-    sameSite: "strict" as const,
+    sameSite: "lax" as const,
     path: "/",
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
     secure: protocol === "https:" || forwarded === "https",

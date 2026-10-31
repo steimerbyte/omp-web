@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { promisify } from "util";
 import { allowFileRoot } from "./allowed-roots";
+import { gitIsolationArgs } from "./git-safe";
 import type { WebIdentity } from "./request-identity";
+import { childEnv } from "./runtime-secrets";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,12 +52,13 @@ export function invalidateProjectCache(): void {
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+  const { stdout } = await execFileAsync("git", ["-C", cwd, ...gitIsolationArgs(cwd), ...args], {
     timeout: 10_000,
     maxBuffer: 1024 * 1024,
     // Pin the message locale so error-text matching (e.g. the dirty-worktree
     // detection in the DELETE route) works regardless of system language.
-    env: { ...process.env, LC_ALL: "C" },
+    // `childEnv()` haelt die Dienstgeheimnisse draussen (SHELL-ISOLATION-SCAN §4b).
+    env: { ...childEnv(), LC_ALL: "C" },
   });
   return stdout.trim();
 }

@@ -3,7 +3,6 @@ import {
   applyResolvedSystemPromptInputs,
   createAgentSession,
   type CreateAgentSessionOptions,
-  discoverSessionExtensionPaths,
   getAgentDir,
   initTheme,
   SessionManager,
@@ -12,7 +11,6 @@ import {
 import { buildAvailableSlashCommands } from "@oh-my-pi/pi-coding-agent/slash-commands/available-commands";
 import { BUILTIN_SLASH_COMMAND_DEFS } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { executeAcpBuiltinSlashCommand, type AcpBuiltinSlashCommandResult } from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
-import { discoverCustomToolPaths } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools";
 import { cfgEnabledModels } from "@oh-my-pi/pi-coding-agent/config/model-settings";
 import { initializeExtensions } from "@oh-my-pi/pi-coding-agent/modes/runtime-init";
 import { readPlanFile } from "@oh-my-pi/pi-coding-agent/plan-mode/plan-files";
@@ -29,14 +27,14 @@ import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
-import { untrustedProjectSessionOptions } from "./project-trust";
+import { resolveSessionLoads, sessionSettings } from "./load-policy";
 import { loadSessionSkills } from "./skills-service";
-import { resolveSessionSystemPrompts } from "./session-system-prompt";
 import { readDefaultModelRole } from "./model-roles";
 import { getOmpRuntime, getSettingsForIdentity } from "./omp-runtime";
 import { PRESET_FULL } from "./tool-presets";
 import { makePresentFilesTool } from "./present-files-tool";
 import { makeCalendarTools } from "./calendar-tool";
+import { makeSessionShellGuard } from "./session-shell-guard";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { ensureTenantSkillsRegistration } from "./skills-manager";
 import type { SlashCommandInfo } from "./omp-types";
@@ -1963,15 +1961,13 @@ export async function startRpcSession(
         toolsOption = toolNames.length === 0 ? [] : undefined;
       }
 
-      // Gate untrusted project code so opening a repository in a browser tab does
-      // not run its `.omp/extensions`, `.omp/tools`, or `.mcp.json` servers (see
-      // lib/project-trust.ts). Discovery still runs — only project-local entries
-      // are dropped, so user-level extensions keep working.
-      const [extensionPaths, customToolPaths] = await Promise.all([
-        discoverSessionExtensionPaths({}, sessionCwd, settings),
-        discoverCustomToolPaths([], sessionCwd),
-      ]);
-      const untrusted = untrustedProjectSessionOptions(sessionCwd, agentDir, { extensionPaths, customToolPaths });
+      // One policy decides what this identity loads (`lib/load-policy.ts`): a
+      // tenant does not inherit the operator's authoring store, and an untrusted
+      // project ships nothing from inside it — code only from the roots omp
+      // scans for this account. The returned options are the pre-built lists
+      // `createAgentSession` accepts; anything the policy did not have to filter
+      // stays absent so omp keeps its normal discovery path.
+      const loads = await resolveSessionLoads(identity, sessionCwd, settings);
 
       // Skills are prompt text, not modules, so they cannot be dropped by
       // filtering paths — but an untrusted repository must not inject
@@ -1979,14 +1975,17 @@ export async function startRpcSession(
       // sources; it returns the discovered list untouched for a trusted
       // project, and omp's own discovery path stays in charge there.
       // The same helper feeds `GET /api/skills`, so the panel and the session
-      // cannot disagree about which skills exist.
-      const sessionSkills = untrusted
+      // cannot disagree about which skills exist. (Rule 1 of the load policy
+      // does not apply to skills: the operator's installed skills stay, the
+      // v0.20.0 decision.)
+      const sessionSkills = loads.narrowed
         ? (await loadSessionSkills(sessionCwd, settings)).skills
         : undefined;
 
       // `SYSTEM.md` / `APPEND_SYSTEM.md`, resolved against this session's cwd the
-      // way the CLI resolves them against its own (lib/session-system-prompt.ts).
-      const systemPrompts = await resolveSessionSystemPrompts(sessionCwd);
+      // way the CLI resolves them against its own (lib/session-system-prompt.ts),
+      // and only from the roots this identity owns.
+      const systemPrompts = loads.systemPrompts;
 
       const { modelRegistry } = runtime;
       const scope = await resolveVisibleModels(modelRegistry, cfgEnabledModels.get(settings), settings);
@@ -2002,7 +2001,10 @@ export async function startRpcSession(
       const sessionOptions: CreateAgentSessionOptions = {
         cwd: sessionCwd,
         agentDir,
-        settings,
+        // Same instance unless a tenant needs the pins (`sessionSettings`); the
+        // parent keeps the writes, so preferences still land in this account's
+        // `config.yml` and the panel keeps editing the real store.
+        settings: sessionSettings(identity, settings),
         sessionManager,
         modelRegistry,
         hasUI: true,
@@ -2023,6 +2025,12 @@ export async function startRpcSession(
         // waehrend der Kalender an der Identitaet haengt, die diese Sitzung
         // geoeffnet hat.
         customTools: [makePresentFilesTool(), ...makeCalendarTools({ identity: options.identity })],
+        // Die einzige Grenze, die der Agent-`bash` ueberhaupt bekommen kann: das
+        // SDK sandboxt seinen Shell nicht (§5 des Scans), aber ein
+        // `tool_call`-Haken darf blocken — und `extensions` wird pro Sitzung
+        // gebunden, Subagenten erben die Fabrik. Ohne Identitaet ist die
+        // Sitzung intern (kein Konto), dann bleibt es beim bisherigen Verhalten.
+        ...(options.identity ? { extensions: [makeSessionShellGuard(options.identity)] } : {}),
         // `restrictToolNames` drops `customTools` entirely unless this is set —
         // the SDK filters `options.customTools` to `[]` when a session is
         // restricted and this is not true (see `allowRestrictedCustomTools` in
@@ -2031,7 +2039,10 @@ export async function startRpcSession(
         ...(toolsOption !== undefined
           ? { toolNames: toolsOption, restrictToolNames: true, allowRestrictedCustomTools: true }
           : {}),
-        ...(untrusted ?? {}),
+        // The load policy's pre-built lists, MCP switch and project gate
+        // (`lib/load-policy.ts`). Keys it did not have to filter are absent, so
+        // omp's own discovery stays in charge exactly as before.
+        ...loads.options,
         // Project skills follow project trust (`lib/project-trust.ts`): a
         // repository the user merely opened must not write into the system
         // prompt. `undefined` keeps omp's own discovery path, so a trusted
@@ -2059,7 +2070,28 @@ export async function startRpcSession(
       );
       if (persistedPreferences.modelDefaultChanged) invalidateModelsCache();
 
+      // `loads.diagnostics` carries one `info` line per load the policy removed
+      // entries from; the panel shows the same list through `/api/skills`, and
+      // the server log records it here so a session that silently lost its rules
+      // is visible in the deployment as well.
+      for (const diagnostic of loads.diagnostics) console.warn(`[load-policy] ${diagnostic.message}`);
+
       const session = inner as unknown as AgentSessionLike;
+
+      // A refresh (`refreshSkillsAndCommands`) re-discovers slash commands from
+      // the process roots and knows nothing about a pre-built list
+      // (`agent-session.ts:7122`), so the operator's commands came back the
+      // moment a discovery setting changed (`LOAD-LEVEL-SCAN.md` §8a).
+      // `subscribeCommandMetadataChanged` fires right after that reload and
+      // `setSlashCommands` is public, so the same filter runs again: the list is
+      // the filtered one for the life of the session, whichever setting change
+      // triggered the reload.
+      if (loads.filterCommands) {
+        const filterCommands = loads.filterCommands;
+        session.subscribeCommandMetadataChanged?.(() => {
+          session.setSlashCommands?.(filterCommands(session.slashCommands ?? []));
+        });
+      }
 
       // If specific tool names were requested (non-empty), set the active tools to the
       // requested builtin coding tools PLUS all extension/package tools, so installed

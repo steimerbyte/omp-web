@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { childEnv } from "./runtime-secrets";
 
 /**
  * Mandanten-Isolation fuer das Terminal.
@@ -44,8 +47,11 @@ export type SandboxFailureReason =
   | "bwrap-missing"
   | "userns-disabled"
   | "no-home"
+  | "home-missing"
+  | "admin-home"
   | "bad-username"
-  | "cwd-outside-home";
+  | "cwd-outside-home"
+  | "mask-unavailable";
 
 export interface SandboxFailure {
   ok: false;
@@ -71,10 +77,65 @@ export interface SandboxOptions {
   command: string[];
   /** Wo die Shell startet. Muss unter `home` liegen, sonst bindet es nichts. */
   cwd: string;
-  env?: NodeJS.ProcessEnv;
+  /**
+   * Die Umgebung **innerhalb** der Sandbox. Wird zu `--setenv`-Paaren hinter
+   * `--clearenv`; `HOME`, `USER` und `LOGNAME` setzt diese Funktion selbst.
+   * Ohne Angabe gilt `buildTerminalEnv()`.
+   */
+  env?: Record<string, string>;
+  /**
+   * Dateien, die innerhalb der Sandbox **nicht** lesbar sein duerfen, obwohl
+   * ihr Elternverzeichnis gebunden ist — die Geheimnisdatei des Dienstes und
+   * die Auth-Dateien.
+   *
+   * Der Grund ist gemessen und unangenehm: `/etc` ist als Ganzes read-only
+   * gebunden, weil eine Shell ohne `/etc/ld.so.cache`, `/etc/localtime` und
+   * `/etc/passwd` nicht brauchbar ist. Eine 0600-Datei, die dem Dienstbenutzer
+   * gehoert, ist fuer diese Shell trotzdem lesbar — die Namespace aendert die
+   * uid nicht. Ohne Maske waere `cat /etc/omp-web.env` in der „isolierten"
+   * Shell der Weg zum Admin-Passwort.
+   */
+  maskFiles?: string[];
 }
 
 const SANDBOX_HOME = "/home";
+
+/**
+ * Die einzigen Variablen, die eine Terminal-Shell ueberhaupt erbt.
+ *
+ * Eine **positive** Liste, kein Loeschfilter. Der Unterschied ist gemessen:
+ * `delete env.OMP_WEB_PASSWORD` war der einzige Schnitt der alten Fassung, und
+ * `BRAVE_API_KEY` stand trotzdem in jeder Mandanten-Shell, weil eine
+ * Sperrliste gegen eine Umgebung antritt, die von aussen waechst. Ein neuer
+ * Eintrag hier ist eine bewusste Entscheidung und braucht einen Grund in dieser
+ * Liste, nicht in der Unit.
+ *
+ * `HOME`/`USER`/`LOGNAME` stehen drin, weil sie auf dem ungesandboxten
+ * Admin-Pfad aus der Prozessumgebung kommen muessen; in der Sandbox ueberschreibt
+ * `planSandboxSpawn` sie mit den Werten des Mandanten.
+ */
+export const TERMINAL_ENV_ALLOWLIST = [
+  // Befehle finden. Ohne PATH startet die Shell nicht einmal.
+  "PATH",
+  // Zeichensatz und Tastaturbelegung. Falsch gesetzt zerlegt Umlaute in `ls`.
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  // Identitaet des angemeldeten Kontos.
+  "HOME",
+  "USER",
+  "LOGNAME",
+] as const;
+
+/** Die allow-gelistete Umgebung aus einer Quelle (Vorgabe: `process.env`). */
+export function buildTerminalEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of TERMINAL_ENV_ALLOWLIST) {
+    const value = source[name];
+    if (typeof value === "string" && value.length > 0) env[name] = value;
+  }
+  return env;
+}
 
 /**
  * `bwrap` einmal suchen. Bewusst gecacht: das ist ein `PATH`-Scan auf dem Weg
@@ -85,7 +146,10 @@ let bwrapPath: string | null | undefined;
 function findBwrap(env: NodeJS.ProcessEnv): string | null {
   if (bwrapPath !== undefined) return bwrapPath;
   try {
-    bwrapPath = execFileSync("which", ["bwrap"], { encoding: "utf8", env }).trim() || null;
+    // `childEnv`, weil auch `which` ein Kind ist: die Allow-Liste des Terminals
+    // reicht hier nicht (der PATH muss derselbe sein wie fuer `unshare`), aber
+    // die Geheimnisse der Unit muessen draussen bleiben.
+    bwrapPath = execFileSync("which", ["bwrap"], { encoding: "utf8", env: childEnv(env) }).trim() || null;
   } catch {
     bwrapPath = null;
   }
@@ -107,7 +171,7 @@ export function canUseUserNamespaces(env: NodeJS.ProcessEnv = process.env): bool
     // zwingend: ohne `encoding` gibt `execFileSync` einen Buffer zurueck, und
     // ein Vergleich gegen `undefined` waere immer falsch — die Pruefung meldete
     // dann auf jedem Host `false`, obwohl der Namespace aufgeht.
-    execFileSync("unshare", ["-Ur", "true"], { env, stdio: "ignore" });
+    execFileSync("unshare", ["-Ur", "true"], { env: childEnv(env), stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -170,9 +234,36 @@ export function checkSandboxPrerequisites(env: NodeJS.ProcessEnv = process.env):
  * waere genau der Fehler, den diese Funktion verhindert, indem sie kein
  * Argument dafuer kennt.
  */
+/**
+ * Die Quelle fuer eine Datei-Maske.
+ *
+ * `/dev/null` waere der naheliegende Kandidat und funktioniert **nicht**:
+ * bubblewrap mountet mit `MS_NODEV`, und das Oeffnen eines Geraeteknotens
+ * scheitert dann mit `Permission denied` — gemessen, nicht vermutet. Eine leere
+ * regulaere Datei bindet sich dagegen einwandfrei und liest als 0 Bytes.
+ *
+ * Der Pfad liegt in `os.tmpdir()` und ist absichtlich nicht konfigurierbar: er
+ * enthaelt nichts. Wird er nicht angelegt, verweigert der Plan die Shell, statt
+ * die Geheimnisdatei sichtbar zu lassen.
+ */
+let maskSourcePath: string | null | undefined;
+
+function emptyMaskSource(): string | null {
+  if (maskSourcePath !== undefined) return maskSourcePath;
+  const file = join(tmpdir(), "omp-web-mask-empty");
+  try {
+    if (!existsSync(file) || statSync(file).size !== 0) writeFileSync(file, "", { mode: 0o600 });
+    maskSourcePath = file;
+  } catch {
+    maskSourcePath = null;
+  }
+  return maskSourcePath;
+}
+
 export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
-  const env = options.env ?? process.env;
-  const preflight = checkSandboxPrerequisites(env);
+  // Die Voraussetzungen werden auf dem **Host** geprueft, nicht in der
+  // Inside-Umgebung: `which bwrap` und `unshare` brauchen den PATH des Dienstes.
+  const preflight = checkSandboxPrerequisites(process.env);
   if (!preflight.ok) {
     // `detail` ist die Beobachtung, `remediation` die Handlung. Beide gleich
     // zu setzen hiesse: der Logeintrag wiederholt die Anleitung und der
@@ -201,12 +292,51 @@ export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
     };
   }
   const bwrap = preflight.bwrap;
-  if (typeof options.home !== "string" || options.home.trim().length === 0) {
+  // Das Home wird aufgeloest, bevor irgendetwas gebunden wird: ein Home, das ein
+  // Symlink auf `/` ist, wuerde sonst als `--bind /` die ganze Platte
+  // read-write in die „Sandbox" legen — und der String-Vergleich gegen `/`
+  // saehe es nicht. Auf dem Host ist der Symlink fuer den Dienstbenutzer
+  // erreichbar, weil er selbst die Homes anlegt.
+  const home = typeof options.home === "string" && options.home.trim().length > 0
+    ? (() => {
+      try {
+        return realpathSync(options.home);
+      } catch {
+        return options.home;
+      }
+    })()
+    : "";
+  if (home.length === 0) {
     return {
       ok: false,
       reason: "no-home",
       detail: "No home directory was resolved for this account.",
       remediation: "Give the account a home under OMP_WEB_HOME_ROOT; a sandbox without a home would isolate the wrong files.",
+    };
+  }
+  // `--bind / …` waere die gesamte Host-Wurzel, les- und schreibbar. Ein Admin
+  // hat keine Mandanten-Grenze — die Route laesst ihn bewusst ungesandboxt
+  // laufen und sagt `sandboxed: false`. Ein Plan fuer ihn ist also nie richtig,
+  // egal wer ihn anfragt.
+  if (home === "/") {
+    return {
+      ok: false,
+      reason: "admin-home",
+      detail: "The resolved home is the filesystem root; binding it would expose the whole host read-write.",
+      remediation: "The admin terminal runs unconfined by decision (sandboxed: false). Do not plan a sandbox for an admin identity.",
+    };
+  }
+  // Ein fehlendes Home war vorher kein Planfehler: gemessen brach erst `bwrap`
+  // mit `Can't find source path` ab, und je nach cwd wurde daraus ein 500 mit
+  // einer irrefuehrenden bwrap-Meldung oder — schlimmer — ein ungesandboxter
+  // Fallback. Ein fehlendes Konto-Verzeichnis ist ein Zustand, den die Route
+  // benennen kann.
+  if (!existsSync(home)) {
+    return {
+      ok: false,
+      reason: "home-missing",
+      detail: `The home directory ${home} does not exist, so there is nothing to bind.`,
+      remediation: "Create the account's home (POST /api/accounts or a first login) before opening a terminal.",
     };
   }
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(options.username)) {
@@ -225,11 +355,11 @@ export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
   // erfahren. Eine Shell, die im falschen Verzeichnis aufgeht, ist schlechter
   // als eine, die gar nicht aufgeht: deshalb die Ablehnung mit Grund, nicht ein
   // stilles Zurueckfallen auf `/`.
-  if (!isInsideHome(options.cwd, options.home)) {
+  if (!isInsideHome(options.cwd, home)) {
     return {
       ok: false,
       reason: "cwd-outside-home",
-      detail: `The working directory ${options.cwd} is outside the tenant's home ${options.home} and is not mounted into the sandbox.`,
+      detail: `The working directory ${options.cwd} is outside the tenant's home ${home} and is not mounted into the sandbox.`,
       remediation: "Choose a working directory inside the account's home, or extend the sandbox to bind it deliberately.",
     };
   }
@@ -261,14 +391,63 @@ export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
   for (const dir of ["/lib", "/lib64", "/sbin"]) {
     if (existsSync(dir)) argv.push("--ro-bind", dir, dir);
   }
+  // Namensauflösung. `/etc` ist ganz und readonly gemountet, aber `/etc/resolv.conf`
+  // ist auf systemd-resolved-Hosts ein Symlink nach `/run/systemd/resolve/…`,
+  // und `/run` haengt nicht in der Sandbox. Gemessen: `cat /etc/resolv.conf` →
+  // `No such file or directory`, `getent hosts pypi.org` → nichts, waehrend rohe
+  // IPs weiter funktionierten. Ein legitimes `npm install` oder `git clone`
+  // war damit unmoeglich. Der Mount ist read-only und deckt nur das
+  // Resolver-Verzeichnis ab; er oeffnet keine Datei, die `/etc` nicht schon
+  // zeigt.
+  if (existsSync("/run/systemd/resolve")) {
+    argv.push("--ro-bind", "/run/systemd/resolve", "/run/systemd/resolve");
+  }
+
+  // Die Dienstgeheimnisse, die unter einem gebundenen Verzeichnis liegen,
+  // bekommen `/dev/null` darueber. Ohne das ist die Aussage „die Shell sieht
+  // keine Geheimnisse" nur ueber `env` wahr: `/etc` ist gebunden, die Datei
+  // gehoert dem Dienstbenutzer, und die Namespace aendert die uid nicht —
+  // `cat /etc/omp-web.env` liefert dann das Admin-Passwort. Der Mount muss
+  // **nach** dem Verzeichnis kommen, das ihn sichtbar macht, und nur fuer
+  // Dateien, die es auf dem Host wirklich gibt (`bwrap` bricht sonst mit
+  // `Can't find source path` ab).
+  const maskable = (options.maskFiles ?? []).filter((file) => existsSync(file)
+    && ["/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/run/systemd/resolve"].some(
+      (root) => file === root || file.startsWith(`${root}/`),
+    ));
+  if (maskable.length > 0) {
+    const source = emptyMaskSource();
+    if (source === null) {
+      // Lieber keine Shell als eine, in der die Geheimnisdatei liegt: die Maske
+      // ist der letzte Schnitt zwischen `/etc` und dem Admin-Passwort.
+      return {
+        ok: false,
+        reason: "mask-unavailable",
+        detail: "A file is needed to mask the service's secret files, and it could not be created.",
+        remediation: "Check that the service user can write to its temporary directory, then reload.",
+      };
+    }
+    for (const file of maskable) argv.push("--ro-bind", source, file);
+  }
 
   // Das Arbeitsverzeichnis muss auf den Namespace-Pfad umgeschrieben werden.
   // Der Host-Pfad existiert innerhalb der Sandbox nicht: gemessen
   // `bwrap: Can't chdir to /tmp/omp-sandbox-*/grace: No such file or
   // directory`, weil das Home dort als `/home/<name>` haengt.
-  const sandboxedCwd = mapCwdIntoSandbox(options.cwd, options.home, options.username);
+  const sandboxedCwd = mapCwdIntoSandbox(options.cwd, home, options.username);
+  argv.push("--bind", home, `${SANDBOX_HOME}/${options.username}`);
+
+  // `--clearenv` ist der Schnitt, der wirklich greift: gemessen 109 geerbte
+  // Schluessel (inklusive `BRAVE_API_KEY` und `OMP_WEB_PASSWORD`) vorher,
+  // danach genau die hier gesetzten. `--setenv` allein würde nur addieren.
+  argv.push("--clearenv");
+  const inside = { ...buildTerminalEnv(), ...(options.env ?? {}) };
+  // Diese drei entscheidet die Sandbox, nicht der Aufrufer: sie beschreiben,
+  // welches Konto man in der Shell ist, und ein Aufrufer, der sie ueberschreiben
+  // koennte, wuerde `HOME` auf ein nicht gemountetes Verzeichnis zeigen lassen.
+  for (const name of ["HOME", "USER", "LOGNAME"]) delete inside[name];
+  for (const [name, value] of Object.entries(inside)) argv.push("--setenv", name, value);
   argv.push(
-    "--bind", options.home, `${SANDBOX_HOME}/${options.username}`,
     "--setenv", "HOME", `${SANDBOX_HOME}/${options.username}`,
     "--setenv", "USER", options.username,
     "--setenv", "LOGNAME", options.username,

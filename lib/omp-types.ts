@@ -1,5 +1,6 @@
 import type {
   AgentSessionEvent,
+  FileSlashCommand,
   SessionManager,
   Settings,
   SlashCommandInfo as OmpSlashCommandInfo,
@@ -164,6 +165,16 @@ export interface AgentSessionLike {
   readonly extensionRunner: ExtensionRunnerLike | undefined;
   readonly promptTemplates: readonly PromptTemplateLike[];
   readonly skills: readonly SkillLike[];
+
+  /**
+   * The file slash commands this session will expand, and the two ways to keep
+   * them filtered across a rediscovery (`lib/load-policy.ts`): a refresh
+   * re-discovers them from the process roots, and `setSlashCommands` is the only
+   * public writer.
+   */
+  readonly slashCommands?: readonly FileSlashCommand[];
+  setSlashCommands?(commands: FileSlashCommand[]): void;
+  subscribeCommandMetadataChanged?(listener: () => void): () => void;
 
   readonly bindExtensions?: unknown;
   reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void>;

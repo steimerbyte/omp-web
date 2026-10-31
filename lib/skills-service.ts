@@ -6,6 +6,7 @@ import { cfgDisabledExtensions, cfgSkills } from "@oh-my-pi/pi-coding-agent/exte
 import { parseFrontmatter } from "@oh-my-pi/pi-utils";
 import type { SkillInfo, SkillsResponse } from "@/lib/api-types";
 import { annotateSkillsWithInstallInfo } from "@/lib/skill-lock";
+import { resolveSessionLoads } from "@/lib/load-policy";
 import { getProjectTrustStatus, trustedProjectSkills } from "@/lib/project-trust";
 import { getSettingsForIdentity } from "@/lib/omp-runtime";
 import type { WebIdentity } from "@/lib/request-identity";
@@ -51,6 +52,11 @@ export async function loadSkillsWithInstallInfo(
   // die `createAgentSession` intern benutzt). Derselbe Aufruf, den der
   // Sitzungsstart benutzt — eine Discovery, ein Filter, zwei Ansichten.
   const { skills, warnings, trusted, withheld } = await loadSessionSkills(cwd, settings);
+  // Dieselbe Policy, die der Sitzungsstart anwendet (`lib/load-policy.ts`):
+  // Regeln, Context-Files, Prompt-Templates und Slash-Commands werden dort
+  // gefiltert. Hier werden nur die Diagnosen gebraucht — das Panel soll die
+  // Zurueckhaltungen zeigen, nicht selbst raten, welche Lasten fehlen.
+  const loads = await resolveSessionLoads(identity, cwd, settings);
 
   const infos: SkillInfo[] = skills.map((skill) => ({
     name: skill.name,
@@ -82,6 +88,7 @@ export async function loadSkillsWithInstallInfo(
             path: cwd,
           }]
         : []),
+      ...loads.diagnostics,
     ],
     projectResourcesLoaded: trusted,
   };

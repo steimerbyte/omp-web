@@ -742,6 +742,7 @@ export function SkillsConfig({
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [projectResourcesLoaded, setProjectResourcesLoaded] = useState(true);
+  const [withheldDiagnostics, setWithheldDiagnostics] = useState<string[]>([]);
   const [dormantGroupsOpen, setDormantGroupsOpen] = useState<Record<string, boolean>>({});
 
   const loadSkills = useCallback(async () => {
@@ -754,6 +755,12 @@ export function SkillsConfig({
       const list = d.skills ?? [];
       setSkills(list);
       setProjectResourcesLoaded(d.projectResourcesLoaded ?? true);
+      // Was die Sitzung dieses Kontos nicht laedt, steht als `info`-Diagnose im
+      // selben Antwortkoerper (`lib/load-policy.ts`): die Leiste nennt die Zahl,
+      // statt dass ein leerer Bestand wie ein leerer Bestand aussieht.
+      setWithheldDiagnostics(
+        (d.diagnostics ?? []).filter((diagnostic) => diagnostic.type === "info").map((diagnostic) => diagnostic.message),
+      );
       if (list.length > 0 && !selected) {
         const initialSkill = list.find((skill) => !skill.disableModelInvocation) ?? list[0];
         setSelected(initialSkill.filePath);
@@ -1002,6 +1009,22 @@ export function SkillsConfig({
             }}
           >
             {t("trust.skillsNotLoaded")}
+          </div>
+        )}
+
+        {withheldDiagnostics.length > 0 && (
+          <div
+            role="status"
+            data-testid="load-policy-diagnostics"
+            style={{
+              padding: "8px 18px",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: "var(--text-muted)",
+              fontSize: 12,
+            }}
+          >
+            {withheldDiagnostics.join(" · ")}
           </div>
         )}
 

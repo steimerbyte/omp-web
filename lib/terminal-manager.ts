@@ -2,8 +2,11 @@ import { randomUUID } from "crypto";
 import os from "os";
 import path from "path";
 import type { Subprocess } from "bun";
-import { checkSandboxPrerequisites, planSandboxSpawn } from "./sandbox";
+import { buildTerminalEnv, planSandboxSpawn, type SandboxFailureReason } from "./sandbox";
 import { getUserHome } from "./request-identity";
+import { childEnv, resolveSecretsFile } from "./runtime-secrets";
+import { resolveWebAccountsFile, resolveWebAuthFile } from "../bin/web-auth-store.js";
+import { sessionKeyFile } from "./web-auth-session";
 
 export type TerminalStatus = "running" | "exited";
 
@@ -45,17 +48,35 @@ interface TerminalRecord {
 }
 
 /**
- * Besitzer-Markierung fuer eine Shell ohne Angabe.
+ * Besitzer einer Shell.
  *
- * Der Leerstring passt zu keinem Benutzernamen, also ist eine so markierte
- * Shell fuer niemanden sichtbar — auch nicht fuer einen Admin, denn der
- * Admin-Filter greift nur fuer einen *gesetzten* Besitz. Ein Aufruf von
- * `spawn()` ohne `owner` erzeugt damit bewusst eine tote Shell statt einer,
-   * die in fremden Händen landet.
+ * Pflichtargument, kein Default: eine Shell ohne Konto haette kein Home und
+ * damit nichts zu isolieren — die alte Fassung oeffnete sie unconfined.
  */
-const UNCLAIMED_OWNER = "";
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Dieselbe Form, die `validateAccountName` in `bin/web-auth-store.js` zulaesst. */
+const SHELL_SAFE_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
+
+/**
+ * Ist die Shell verweigert worden, weil keine Sandbox moeglich ist?
+ *
+ * Fuer einen Mandanten ist "keine Sandbox" keine Warnung mehr, sondern eine
+ * Absage: die alte Fassung oeffnete stattdessen eine unconfined Shell mit der
+ * vollen Dienstumgebung (`SHELL-ISOLATION-SCAN.md` §2, dreifach gemessen).
+ * Die Route antwortet damit 503 und nennt `remediation`; der Status 500 ist
+ * danach echte Serverfehler.
+ */
+export class TerminalUnavailableError extends Error {
+  readonly reason: SandboxFailureReason | "unsupported-platform";
+
+  constructor(reason: SandboxFailureReason, detail: string, readonly remediation: string) {
+    super(`Shell unavailable on this host: ${detail} ${remediation}`.trim());
+    this.name = "TerminalUnavailableError";
+    this.reason = reason;
+  }
+}
 
 declare global {
   // Stored on globalThis so Next.js hot-reload in dev mode does not wipe
@@ -109,7 +130,18 @@ export class TerminalManager {
   // plain `Bun.spawn`: the boundary is now enforced by the kernel, which
   // measured out as `sudo: no new privileges flag is set` and
   // `cat: /home/<other>: No such file or directory`.
-  async spawn(cwd: string, cols = 80, rows = 24, owner: string = UNCLAIMED_OWNER): Promise<TerminalInfo> {
+  async spawn(cwd: string, cols: number, rows: number, owner: string, isAdmin = false): Promise<TerminalInfo> {
+    // Der Kontoname landet in der Shell-Zeichenkette (siehe `USER=` unten).
+    // Die Route bekommt ihn schon validiert, aber diese Klasse ist auch direkt
+    // aufrufbar — eine Zeichenkette, die in ein `sh -c` geht, wird hier geprueft,
+    // nicht dort, wo sie zufaellig herkommt.
+    if (!SHELL_SAFE_NAME.test(owner)) {
+      throw new TerminalUnavailableError(
+        "bad-username",
+        `${JSON.stringify(owner)} is not a usable account name for a shell.`,
+        "Account names are [a-z_][a-z0-9_-]{0,31}; no other name can be put into a shell.",
+      );
+    }
     const isWindows = os.platform() === "win32";
     const shell = process.env.SHELL?.trim() || (isWindows ? "powershell.exe" : "bash");
     const id = randomUUID();
@@ -129,52 +161,84 @@ export class TerminalManager {
       // kann einen interpolierten String nicht matchen, das Argument muss also
       // statisch bleiben. Was der Banner anzeigt, ist der Grund fuer die
       // Einschraenkung, nicht ihre Ursache.
-      const inner = `printf '\\033[36m[omp-web terminal]\\033[0m ready in %s (shell=%s %dx%d)\\n' "$PWD" "$0" "${cols}" "${rows}"; exec ${shell} -i`;
+      // `USER`/`LOGNAME` muessen **hinter** `script` wieder gesetzt werden:
+      // util-linux' `script` ueberschreibt `USER` aus dem passwd-Eintrag der
+      // aufrufenden uid (gemessen: `--setenv USER=omp` kam als `USER=steimer`
+      // in der Shell an, `LOGNAME` blieb richtig). Ohne das zeigt die Shell den
+      // Dienstbenutzer an, obwohl `HOME` schon das Konto ist.
+      const inner = `printf '\\033[36m[omp-web terminal]\\033[0m ready in %s (shell=%s %dx%d)\\n' "$PWD" "$0" "${cols}" "${rows}"; USER=${owner} LOGNAME=${owner} exec ${shell} -i`;
       cmd = ["/usr/bin/script", "-qfc", inner, "/dev/null"];
     }
 
-    // Sandboxed on Linux, when the preconditions hold. A missing `bwrap` is
-    // not fatal: the shell still opens, unisolated, and the caller is told.
-    // Refusing outright would take the terminal away from every install that
-    // has no bubblewrap yet, which is a worse failure than a warning.
-    let sandboxed = false;
-    let env: NodeJS.ProcessEnv = process.env;
-    if (!isWindows && owner !== UNCLAIMED_OWNER) {
-      const preflight = checkSandboxPrerequisites(process.env);
-      if (preflight.ok) {
-        const plan = planSandboxSpawn({
-          home: getUserHome({ username: owner, isAdmin: false }),
-          username: owner,
-          command: cmd,
-          cwd,
-        });
-        if (plan.ok) {
-          cmd = plan.argv;
-          sandboxed = true;
-          // Was die Namespace-Welt dem Mandanten verspricht, kommt aus dem
-          // argv, nicht aus dieser Kopie: `--setenv HOME` setzt das Home auf
-          // `/home/<name>`, und das Home des Dienstbenutzers steht einfach
-          // nicht in den Binds — deshalb ist es nicht erreichbar. Der einzige
-          // echte Schnitt in dieser Kopie ist `OMP_WEB_PASSWORD`: das
-          // Admin-Geheimnis darf in einer Mandanten-Shell nicht liegen.
-          env = { ...process.env };
-          delete env.OMP_WEB_PASSWORD;
-        }
-      } else if (preflight.remediation) {
-        console.warn(`[terminal] sandbox unavailable, shell runs unisolated: ${preflight.remediation}`);
-      }
-    }
-
-    const child = Bun.spawn({
-      cmd,
-      cwd,
-      env: {
-        ...env,
+    // Die Umgebung ist eine allow-gelistete Menge, nicht `process.env` mit einem
+    // `delete`. Der Unterschied ist gemessen: ein `delete` wirkt nur auf die
+    // Kopie, nicht auf das, was im Prozess steht, und der alte Fallback-Zweig hat
+    // `OMP_WEB_PASSWORD` gleich mit durchgereicht.
+    //
+    // Auf Windows ist die Allow-Liste die falsche Form: `powershell.exe` braucht
+    // `SystemRoot` und `PATHEXT`, und dort gibt es ohnehin keine Sandbox (siehe
+    // `unsupported-platform` in `lib/sandbox.ts`). Also die gescrubbte
+    // Prozessumgebung — dieselbe Grenze wie `git`/`du`, nur ohne die
+    // Geheimnis-Namen.
+    const env: Record<string, string> = isWindows
+      ? (childEnv() as Record<string, string>)
+      : {
+        ...buildTerminalEnv(),
         TERM: "xterm-256color",
         COLORTERM: "truecolor",
         COLUMNS: String(cols),
         LINES: String(rows),
-      },
+      };
+
+    // Ein Konto ohne Shell-Sandbox bekommt keine Shell. Windows hat keine
+    // User-Namespaces (siehe `unsupported-platform` in `lib/sandbox.ts`), und
+    // die alte Bedingung `!isWindows` hat dort jeden Mandanten unconfined
+    // durchgelassen — mit `sandboxed: false`, also genau dem Zustand, den die
+    // API sonst nicht mehr ausgibt.
+    if (isWindows && !isAdmin) {
+      throw new TerminalUnavailableError(
+        "unsupported-platform",
+        "This host has no user namespaces, so a tenant shell cannot be sandboxed.",
+        "Run omp-web on Linux with bubblewrap, or open the terminal as an admin (sandboxed: false).",
+      );
+    }
+
+    let sandboxed = false;
+    if (!isWindows && !isAdmin) {
+      // Genau ein Aufruf beantwortet alle Absagegruende: fehlendes `bwrap`,
+      // abgeschaltete User-Namespaces, fehlendes Home, cwd ausserhalb des
+      // Homes, unbrauchbarer Kontoname. Vorher stand hier ein `console.warn`
+      // und die Shell lief unconfined weiter — dreifach fail-open gemessen.
+      const plan = planSandboxSpawn({
+        home: getUserHome({ username: owner, isAdmin: false }),
+        username: owner,
+        command: cmd,
+        cwd,
+        env,
+        // Alles, was der Dienst an Geheimnissen auf der Platte haelt. `/etc` ist
+        // als Ganzes readonly gebunden (eine Shell ohne `/etc/passwd` ist keine),
+        // also waere die Geheimnisdatei darin fuer den Mandanten lesbar — die
+        // Namespace aendert die uid nicht, und die Datei gehoert dem
+        // Dienstbenutzer. Ohne diese Liste waere die Umgebung sauber und der
+        // Weg zum Admin-Passwort offen (`cat /etc/omp-web.env`).
+        maskFiles: [resolveSecretsFile(), resolveWebAuthFile(), resolveWebAccountsFile(), sessionKeyFile()],
+      });
+      if (!plan.ok) {
+        throw new TerminalUnavailableError(plan.reason, plan.detail, plan.remediation);
+      }
+      cmd = plan.argv;
+      sandboxed = true;
+    }
+    // Der Admin-Zweig ist eine Entscheidung, kein Versehen: ein Admin ist der
+    // Host, sein Home ist `/`, und eine Sandbox um `/` waere die ganze Platte.
+    // `sandboxed: false` in der Antwort sagt es, und `TerminalInfo` fuehrt den
+    // Schluessel immer. Die Umgebung ist trotzdem die allow-gelistete, also
+    // sieht auch er nur PATH/HOME/LANG und nicht die Unit.
+
+    const child = Bun.spawn({
+      cmd,
+      cwd,
+      env,
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

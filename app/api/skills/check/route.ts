@@ -5,6 +5,7 @@ import { loadSkillsWithInstallInfo } from "@/lib/skills-service";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { getRequestIdentity } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { getRuntimeSecret } from "@/lib/runtime-secrets";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,9 @@ export async function POST(req: Request) {
     }
 
     const updates = await checkSkillUpdates(installs, {
-      githubToken: process.env.GITHUB_TOKEN || process.env.GH_TOKEN,
+      // Aus der Geheimnisdatei, nicht aus der Umgebung: die Unit setzt
+      // `GITHUB_TOKEN` nach der Umstellung nicht mehr (lib/runtime-secrets.ts).
+      githubToken: getRuntimeSecret("GITHUB_TOKEN") ?? getRuntimeSecret("GH_TOKEN"),
     });
     return NextResponse.json({ updates });
   } catch (error) {

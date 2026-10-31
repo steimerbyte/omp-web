@@ -304,25 +304,49 @@ beim nächsten Refactor wegoptimiert wird.
   faellt auf einen Prozess-Salz zurueck: Anmelden funktioniert weiter, Sessions sterben mit dem
   Prozess. Ein `Set-Cookie`-Fehler wuerde eine laufende Installation wegen einer
   Verzeichnisberechtigung komplett abschalten.
-- **Darf nicht**: `SESSION_TTL_MS` (1 h, `:52`) **nicht** wieder auf 24 h drehen. Die Stunde ist
-  jetzt eine **Gleitfrist**: `proxy.ts:178-191` stellt den Cookie neu aus, sobald mehr als
-  `SESSION_RENEW_AFTER_MS` (`:60`, die Haelfte) seit `issuedAt` vergangen sind. Damit ist die Stunde
-  die Leerlaufzeit, nicht die Sitzungslaenge — und die Drosselung ist der Punkt: ein offener Tab
-  stellt gemessen ~36 authentifizierte Requests pro Minute; ohne die Halbwertsregel entstuende auf
-  jedem davon ein `Set-Cookie`. Eine Verlaengerung der TTL ohne die Gleitfrist (oder umgekehrt)
-  macht aus einem vergessenen Laptop eine Woche lang eine offene Sitzung.
+- **Ist**: `SESSION_TTL_MS` (`:63`) ist **30 Tage**, nicht eine Stunde. Die Zahl ist die
+  **Leerlaufzeit**, nicht die Sitzungslaenge: `proxy.ts:178-191` stellt den Cookie neu aus, sobald
+  mehr als `SESSION_RENEW_AFTER_MS` (`:71`, die Haelfte) seit `issuedAt` vergangen sind, und die
+  Drosselung ist der Punkt — ein offener Tab stellt gemessen ~36 authentifizierte Requests pro
+  Minute; ohne die Halbwertsregel entstuende auf jedem davon ein `Set-Cookie`.
+- **Darf nicht**: Die Lebensdauer wieder unter die Rueckkehrzeit eines Handys senken. Eine Stunde
+  war der alte Wert und der Grund fuer den Fehler „nach dem Schliessen des Tabs wieder am Login":
+  ein geschlossener Tab stellt keine Anfragen, also erreicht ihn die Gleitfrist nicht, und der
+  Browser verwirft den Cookie, sobald `Max-Age` abgelaufen ist. Gemessen mit einem
+  Handy-Viewport: 61 Minuten alter Cookie → Browser hat ihn geloescht → `/` antwortet mit `302` auf
+  `/login`; 40 Minuten → `/`. Wer die TTL senkt, muss diese Messung wiederholen.
+- **Darf nicht**: Eine lange TTL **ohne** die Gleitfrist. Beides zusammen ist die Regel: die
+  Gleitfrist macht aus „in Benutzung“ ein immer neues Fenster und aus „nicht in Benutzung“ ein
+  endliches. Eine Verlaengerung der TTL ohne die Gleitfrist (oder umgekehrt) macht aus einem
+  vergessenen Laptop eine dauerhaft offene Sitzung.
+- **Preis**: Ein kopierter Cookie ist eine kopierte Sitzung, jetzt bis zu 30 Tage statt einer
+  Stunde. Die Gegenmittel haengen nicht am Ablaufdatum und sind unveraendert: Logout dreht die
+  Epoche (alle Geraete), Passwortwechsel dreht den Schluessel, Schluesseldatei loeschen + Neustart
+  meldet alles ab.
 - **Darf nicht**: Im Gleit-Zweig **kein** `Set-Cookie` auf einem abgelehnten Request und keines auf
   dem Basic-Auth-Pfad. Beide kehren vor `proxy.ts:178` zurueck (`identity === null` bzw.
   `session === null`), und das muss so bleiben: sonst verlaengert ein Angreifer mit einem
   gestohlenen Cookie die Lebensdauer durch Klopfen auf einen 401.
 - **Darf nicht**: Die Attribute der Erneuerung **nicht** getrennt von der Login-Route pflegen. Beide
-  benutzen `sessionCookieOptions()` (`:420-430`): `HttpOnly`, `SameSite=strict`, `Path=/`,
+  benutzen `sessionCookieOptions()` (`:420-430`): `HttpOnly`, `SameSite=lax`, `Path=/`,
   `Max-Age` aus `SESSION_TTL_MS`, `Secure` **nur** wenn die Anfrage ueber HTTPS kam
   (`x-forwarded-proto` oder `https:`-URL), nie `Domain`. Zwei `Set-Cookie` mit demselben Namen und
   unterschiedlichen Attributen sind zwei Cookies, und welches der Browser behaelt, haengt an der
   Header-Reihenfolge. `proxy.session-cookie.test.mjs` und
   `app/api/web-access/login/route.test.mjs` pruefen genau einen Header und die Attribute; vor
   dieser Aenderung hat **kein** Test die Attribute geprueft.
+- **Ist**: `SameSite=lax`, **nicht** `strict`, und das ist kein Nachlassen. Ein Link, den der
+  Betreiber in einer Mail oder einem Messenger antippt, ist eine **Cross-Site-Navigation**; `strict`
+  haelt den Cookie bei genau dieser Anfrage zurueck, `proxy.ts` sieht keine Identitaet und
+  antwortet `302 /login` — neben einem voll gueltigen Cookie im Browser. Gemessen mit einem echten
+  Cross-Site-Link (`Sec-Fetch-Site: cross-site`, `Sec-Fetch-Mode: navigate`): `strict` landet auf
+  `/login`, `lax` auf `/`.
+- **Darf nicht**: `lax` fuer eine Absicherung der API halten. `lax` haelt den Cookie auf
+  Cross-Site-**Subrequests** und Cross-Site-**POSTs** zurueck, und zusaetzlich weist
+  `isApiRequestAllowed()` (`lib/request-security.ts`:112-119) `sec-fetch-site: cross-site` ab,
+  **bevor** `proxy.ts` den Cookie liest — der 403 kommt vor jeder Authentifizierung.
+  `proxy.session-cookie.test.mjs` haelt beides fest: derselbe Cross-Site-POST mit gueltigem Cookie
+  bleibt 403, derselbe POST same-origin 200.
 - **Darf nicht**: `SESSION_VERSION` nicht entfernen, wenn sich das Payload-Format aendert — ein
   alter Cookie muss **verworfen**, nicht falsch gelesen werden.
 - **Ort**: `lib/web-auth-session.ts:35` (Cookie-Name), `:52` (TTL), `:60` (Erneuerungs-Schwelle),
@@ -389,7 +413,7 @@ beim nächsten Refactor wegoptimiert wird.
   der Login waere unmoeglich — und hinter der TLS-Terminierung ist es an. Kein Schalter, den
   jemand vergessen kann: derselbe Helper schreibt Login, Erneuerung und Logout.
 - **Darf nicht**: `maxAge` **nicht** hier berechnen. Es kommt aus `sessionCookieOptions()` und damit
-  aus `SESSION_TTL_MS` (3600 s); eine zweite Zahl an dieser Stelle waere die erste, die nach der
+  aus `SESSION_TTL_MS`; eine zweite Zahl an dieser Stelle waere die erste, die nach der
   naechsten TTL-Aenderung falsch ist.
 - **Ort**: `app/api/web-access/login/route.ts:33` (`REJECTED`), `:40` (Delay), `:54-104` (POST),
   `:55-62` (Guards), `:80` (Verifikation), `:97-98` (Cookie-Set ueber `sessionCookieOptions`)
@@ -771,7 +795,8 @@ Refactor sonst wegoptimiert. Ausformuliert als „darf nicht".
   Weg gegen das Symptom gibt: mit dem Schalter ist jeder Restart wieder ein Logout, und das sind
   auf agent-pc zehn pro Tag.
 - **Darf nicht**: In Commit-Nachrichten oder Release-Notes eine feste Sitzungslaenge versprechen
-  („24-Stunden-Session", „ueberlebt den Arbeitstag"). Die TTL ist eine Stunde und gleitet, und die
-  alte Formulierung stand schon einmal falsch da.
+  („24-Stunden-Session", „ueberlebt den Arbeitstag"). Die TTL ist eine **Leerlaufzeit**, sie gleitet,
+  und die alte Formulierung stand schon einmal falsch da. Seit der Telefon-Messung sind es 30 Tage;
+  eine Zahl in einer Release-Note ist nach der naechsten Aenderung falsch.
 - **Ort**: `lib/web-auth-session.ts:66-166`, `docs/known-findings.md:111-134`,
   `docs/authentication.md` (Abschnitt „Sessions and what ends them")

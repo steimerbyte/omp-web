@@ -132,3 +132,61 @@ nicht der Default. Die Begruendung und der Preis stehen in
 Steht hier weiterhin, weil ein Commit sonst etwas anderes versprechen kann, als
 der Code tut — und weil die Umkehr einer dokumentierten Sicherheitsentscheidung
 einen Ort braucht, an dem sie nachlesbar ist.
+## Zwei Ursachen, ein Bildschirm: der Link und der geschlossene Tab
+
+**Behoben.** Der Bericht kam vom Telefon: den Link im Browser oeffnen, anmelden,
+Tab schliessen, spaeter wieder auf die Seite — und statt der letzten Sitzung die
+Anmeldeseite. Es waren **zwei** unabhaengige Ursachen mit demselben Bild, und das
+ist der Grund, warum dieser Eintrag beide nennt: wer nur eine davon prueft, hoert
+auf, weil er „die" Ursache gefunden hat.
+
+### 1. `SameSite=strict` auf einer Cross-Site-Navigation
+
+Ein Link, den man in Mail, Messenger oder Chat antippt, startet die Navigation
+auf einer **anderen Seite**. Der Browser schickt bei `strict` den Cookie auf
+genau dieser Anfrage nicht mit, `proxy.ts` sieht keine Identitaet und antwortet
+`302 /login` — der Cookie liegt dabei gueltig im Browser.
+
+**Gemessen** (Chromium, iPhone-14-Viewport, echter Cross-Site-Link von einem
+anderen Host): `Sec-Fetch-Site: cross-site`, `Sec-Fetch-Mode: navigate`,
+Cookie im Jar vorhanden, beim Request **withheld**, gelandet auf `/login`. Nach
+`sameSite: "lax"`: derselbe Klick landet auf `/`.
+
+`lax` ist die sichere Seite davon, nicht die schwache: der Cookie reist weiterhin
+nicht auf Cross-Site-Subrequests oder Cross-Site-POSTs mit, und
+`isApiRequestAllowed()` (`lib/request-security.ts:112-119`) weist
+`sec-fetch-site: cross-site` ab, **bevor** `proxy.ts` den Cookie liest. Test:
+derselbe Cross-Site-POST mit gueltigem Cookie → 403; derselbe POST same-origin →
+200.
+
+### 2. Die Lebensdauer war eine Stunde
+
+`SESSION_TTL_MS` war eine **Leerlaufzeit**, und der Cookie gleitet nur, wenn
+Anfragen kommen. Ein geschlossener Tab stellt keine, also verwirft der Browser
+ihn, sobald `Max-Age` abgelaufen ist.
+
+**Gemessen:** ein Cookie, der vor 61 Minuten ausgestellt wurde, liegt im Browser
+nicht mehr (mit seiner eigenen `expires` gesetzt, beim Aufruf abgelaufen), und
+`GET /` antwortet mit `302` auf `/login`; bei 40 Minuten landet derselbe Aufruf
+auf `/`.
+
+**Ausgeschlossen, jeweils gemessen:** Login, Gleit-Erneuerung und Logout tragen
+identische Attribute inklusive `Max-Age` und `Expires` — kein Session-Cookie,
+keine Verkuerzung auf dem Erneuerungspfad; ein Browserneustart mit demselben
+Profil landet innerhalb der Lebensdauer auf `/`; ein Neustart des Prozesses
+ebenfalls, weil die Schluesseldatei da ist (`0600`, 44 Byte); `Secure` erscheint
+genau dann, wenn die Anfrage ueber HTTPS kam (`x-forwarded-proto`).
+
+**Warum es wie der Neustart-Befund oben aussah:** beide Symptome sind derselbe
+Text („wieder am Login") und haben verschiedene Ursachen. Der Eintrag oben ist
+der Prozess, dieser hier sind das Attribut und die Zeit. Wer das naechste Mal
+„abgemeldet" hoert, misst zuerst das Alter des Cookies — juenger als die TTL
+heisst Schluessel oder Attribut, aelter heisst Ablauf.
+
+**Jetzt:** `sameSite: "lax"` und 30 Tage Lebensdauer, weiterhin gleitend
+(`SESSION_RENEW_AFTER_MS` = die Haelfte). Die 30 Tage sind eine Setzung, keine
+Messung: die Zeitspanne, die ein Telefon ohne Anfrage bleiben darf. Der Preis
+steht in `docs/inventory-auth.md`: ein kopierter Cookie ist bis zu 30 Tage eine
+kopierte Sitzung. Die Gegenmittel haengen nicht am Ablaufdatum — Logout dreht die
+Epoche, Passwortwechsel dreht den Schluessel, Schluesseldatei loeschen plus
+Neustart meldet jedes Geraet ab.

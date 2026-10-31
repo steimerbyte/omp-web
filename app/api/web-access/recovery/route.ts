@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import {
   RECOVERY_CODE_TTL_MS,
   consumeRecoveryCode,
-  getWebAuthStatus,
   issueRecoveryCode,
 } from "@/bin/web-auth-store.js";
 import { hasJsonContentType } from "@/lib/request-security";
+import { getWebAccessStatus } from "@/lib/web-auth";
+
 
 /**
  * Password recovery, and the only endpoint `proxy.ts` lets through unauthenticated.
@@ -49,11 +50,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Expected a JSON body" }, { status: 400 });
   }
 
-  const status = getWebAuthStatus();
+  const status = getWebAccessStatus();
   if (status.managedByEnvironment) {
     return NextResponse.json({
-      error: "Password access comes from the OMP_WEB_PASSWORD environment variable, which omp-web cannot reset."
-        + " Change the variable on the server and restart it.",
+      error: "Password access is configured by the deployment through OMP_WEB_PASSWORD"
+        + " (the unit environment or the secrets file at OMP_WEB_SECRETS_FILE), which omp-web cannot reset."
+        + " Change it on the server and restart it.",
     }, { status: 409 });
   }
   // A credential file that cannot be parsed cannot hold a recovery code either,

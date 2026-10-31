@@ -8,9 +8,10 @@ import type { AnySetting } from "@oh-my-pi/pi-coding-agent/config/registry";
 import { SETTING_TABS, TAB_GROUPS, TAB_METADATA } from "@oh-my-pi/pi-tui/overlays/settings-defs";
 import { getSettingsForIdentity } from "@/lib/omp-runtime";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
-import { getRequestIdentity } from "@/lib/request-identity";
+import { getRequestIdentity, isAdminIdentity, requireAdmin } from "@/lib/request-identity";
 import { getAvailableWebThemes, getWebThemeConfig } from "@/lib/omp-theme";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { isAdminOnlySetting } from "@/lib/settings-api";
 import type {
   SettingsField,
   SettingsFieldType,
@@ -122,7 +123,9 @@ export async function GET(req: Request) {
     // Die Identitaet wird hier wie beim cwd-Pfad ueber den Header gelesen und
     // durchgereicht: ohne sie sieht ein Mandant die `config.yml` des
     // Prozesskontos, also auch dessen gespeicherte Werte.
-    const settings = await getSettingsForIdentity(getRequestIdentity(req.headers), cwd);
+    const identity = getRequestIdentity(req.headers);
+    const settings = await getSettingsForIdentity(identity, cwd);
+    const isAdmin = isAdminIdentity(identity);
     const [availableThemes, theme] = await Promise.all([
       getAvailableWebThemes(),
       getWebThemeConfig(settings),
@@ -146,6 +149,10 @@ export async function GET(req: Request) {
           value: secret ? null : serializableValue(setting.get(settings)),
           defaultValue: secret ? null : serializableValue(setting.default),
           configured: setting.isConfigured(settings),
+          // Dieselbe Frage, die `PATCH` stellt: was hier `false` ist, weist die
+          // Schreibroute mit 403 ab. Die Anzeige darf nicht klickbar sein, wenn
+          // der Server sie ohnehin ablehnt.
+          writable: isAdmin || !isAdminOnlySetting(setting.id),
           options: optionsFor(setting, themeNames),
           ordered: ui.ordered === true,
           condition: ui.condition,
@@ -186,6 +193,17 @@ export async function PATCH(req: Request) {
     const setting = body.path ? SETTINGS_BY_ID.get(body.path) : undefined;
     if (!setting || !setting.ui) {
       return NextResponse.json({ error: "Unknown setting" }, { status: 400 });
+    }
+    // Einstellungen, die bestimmen, was eine Sitzung laedt, gelten fuer den
+    // ganzen Host (siehe `isAdminOnlySetting`): `autolearn` schaltet
+    // `manage_skill` frei, das in den Prozess-Store schreibt, `memory.backend`
+    // laesst eine Sitzung den Speicher des Betreibers lesen, `skills.*` und
+    // `commands.*` verschieben die Discovery. `requireAdmin` ist die Antwort des
+    // Repos auf eine hostweite Aenderung — und sie gilt nur fuer diese Pfade,
+    // damit ein Mandant Theme und Anzeige weiter selbst stellt.
+    if (isAdminOnlySetting(setting.id)) {
+      const denied = requireAdmin(req);
+      if (denied) return denied;
     }
     const value = validateSettingValue(setting, body.value);
     if (

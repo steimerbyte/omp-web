@@ -3,6 +3,7 @@ import { promisify } from "util";
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { execPath } from "process";
+import { runtimeSecrets } from "./runtime-secrets";
 
 const execFileAsync = promisify(execFile);
 
@@ -58,8 +59,12 @@ function isSensitiveEnvName(name: string): boolean {
  */
 export function getSafeNpxEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   const safe = {} as NodeJS.ProcessEnv;
+  // Die Datei-Schluessel stehen ausdruecklich hier: ein Geheimnis, dessen Name
+  // nicht wie eines aussieht (`AWS_ACCESS_KEY_ID`), wuerde den Namensfilter
+  // sonst passieren — gemessen mit einem Schluessel aus der Geheimnisdatei.
+  const fromSecretsFile = runtimeSecrets();
   for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && !isSensitiveEnvName(name)) safe[name] = value;
+    if (value !== undefined && !isSensitiveEnvName(name) && !fromSecretsFile.has(name)) safe[name] = value;
   }
   for (const [name, value] of Object.entries(overrides)) {
     if (value !== undefined) safe[name] = value;
@@ -72,7 +77,8 @@ export function redactNpxOutput(value: string, env: Record<string, string | unde
   let redacted = value;
   const secrets = [...new Set(
     Object.entries(env)
-      .filter(([name, secret]) => isSensitiveEnvName(name) && typeof secret === "string" && secret.length >= 4)
+      .filter(([name, secret]) => (isSensitiveEnvName(name) || runtimeSecrets().has(name))
+        && typeof secret === "string" && secret.length >= 4)
       .map(([, secret]) => secret as string),
   )].sort((a, b) => b.length - a.length);
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "[REDACTED]");

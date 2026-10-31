@@ -124,6 +124,79 @@ function normalizeProfileName(profile) {
   return PROFILE_NAME_RE.test(normalized) && !normalized.endsWith(".") ? normalized : undefined;
 }
 
+const DEFAULT_SECRETS_FILE = "/etc/omp-web.env";
+
+/**
+ * Wo die Geheimnisse des Dienstes liegen — und warum dort und nicht in der env.
+ *
+ * `Environment=`/`EnvironmentFile=` in der systemd-Unit schreiben den Wert in
+ * die Umgebung, und von dort erbt ihn jeder Kindprozess: der Agent-`bash` (die
+ * Brush-Shell laeuft im selben Prozess), die MCP-stdio-Server, der Zeitplaner,
+ * `git`. Gemessen auf Bun 1.4.4: ein `delete process.env.X` nimmt den Wert aus
+ * `process.env`, aber nicht aus `/proc/self/environ` und nicht aus einem Kind,
+ * das mit der geerbten Umgebung startet. Der einzige Schnitt ist deshalb, ihn
+ * nie hineinzuschreiben.
+ *
+ * Der Parser und der Cache stehen hier, nicht in `lib/runtime-secrets.ts`, weil
+ * der Launcher (`bin/omp-web.js`) dieselbe Datei lesen muss und kein TypeScript
+ * laden kann. Zwei Parser waeren zwei Wahrheiten ueber dieselbe Datei.
+ */
+function resolveSecretsFile(env = process.env) {
+  const configured = typeof env.OMP_WEB_SECRETS_FILE === "string" ? env.OMP_WEB_SECRETS_FILE.trim() : "";
+  return configured.length > 0 ? configured : DEFAULT_SECRETS_FILE;
+}
+
+/**
+ * `KEY=VALUE`-Zeilen, mehr nicht: Kommentare, Leerzeilen, ein optionales
+ * `export`, und genau ein Paar Anfuehrungszeichen um den Wert. Alles andere
+ * wird uebersprungen statt geraten — eine Datei, die sich nicht parsen laesst,
+ * soll nicht halb gelten.
+ *
+ * Der Cache haengt an der mtime: die Datei wird pro Anfrage gebraucht
+ * (Passwort-Pruefung) und darf trotzdem nicht pro Anfrage gelesen werden.
+ */
+const environmentFileCache = new Map();
+
+function readEnvironmentFile(file) {
+  let mtimeMs;
+  try {
+    mtimeMs = statSync(file).mtimeMs;
+  } catch {
+    return new Map();
+  }
+  const cached = environmentFileCache.get(file);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.values;
+
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return new Map();
+  }
+  const values = new Map();
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#")) continue;
+    const body = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const separator = body.indexOf("=");
+    if (separator <= 0) continue;
+    const name = body.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+    let value = body.slice(separator + 1).trim();
+    const quoted = value.length >= 2
+      && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")));
+    if (quoted) value = value.slice(1, -1);
+    values.set(name, value);
+  }
+  environmentFileCache.set(file, { mtimeMs, values });
+  return values;
+}
+
+/** Nur fuer Tests: den Cache verwerfen, nachdem die Datei umgeschrieben wurde. */
+function clearEnvironmentFileCache() {
+  environmentFileCache.clear();
+}
+
 /** Absolute path of the credential file. `OMP_WEB_AUTH_FILE` overrides the location entirely. */
 function resolveWebAuthFile(env = process.env) {
   return env.OMP_WEB_AUTH_FILE
@@ -1372,6 +1445,10 @@ function consumeRecoveryCode(code, password, options = {}) {
 
 module.exports = {
   ACCOUNT_NAME_MAX_LENGTH,
+  DEFAULT_SECRETS_FILE,
+  clearEnvironmentFileCache,
+  readEnvironmentFile,
+  resolveSecretsFile,
   DEFAULT_WEB_ADMIN_USERNAMES,
   DEFAULT_WEB_AUTH_USERNAME,
   MIN_PASSWORD_LENGTH,

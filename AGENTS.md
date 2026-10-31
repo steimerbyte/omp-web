@@ -243,16 +243,98 @@ silently.
 ### Project trust is omp-web's own
 omp has no trust store — it runs a repository's extensions because you ran it
 there. A browser tab is not that decision, so `lib/project-trust.ts` keeps a
-store in `~/.omp/agent/omp-web-trusted-projects.json` and, for an untrusted
-project, filters project-local entries out of omp's discovered extension and
-custom-tool paths, disables MCP, and drops project-scoped skills from
-`createAgentSession`. Rules stay data and always load; skills follow trust
-because they are prompt text a merely-opened repository must not write.
-`trustedProjectSkills` keeps anything `level: "user"` **and** outside the
-project root — the level alone misses a project pointing
+store in `~/.omp/agent/omp-web-trusted-projects.json`. A project requires trust
+when it ships executable resources (extension, hook and tool directories, an
+MCP manifest), a project skill, or a settings file whose *keys* name code:
+`.omp/config.yml`, `.omp/settings.json`, `.claude/settings.json`. The settings
+files are on that list because `.omp/config.yml` carries `extensions` and omp
+honours it from the merged project layer — measured,
+`extensions: [/tmp/outside-evil2/ext.ts]` ran while the detector reported
+nothing to decide.
+
+For an untrusted project nothing loads from inside it: rules, `AGENTS.md` and
+the other context files, prompt templates, slash commands, a project's
+`SYSTEM.md` / `APPEND_SYSTEM.md`, extensions, custom tools and skills. Code is
+filtered by a **positive allowlist**, not by "not under the project": only
+paths under `getAgentDir()` or `os.homedir()` survive, because a project's
+`config.yml` can name a path *outside* itself and an exclusion test cannot see
+that. An extension the operator configured at `/opt/foo.ts` therefore does not
+load in a project they have not trusted, and comes back when they trust it.
+The container is `filterLoads` in `lib/load-policy.ts`; the code half is
+`untrustedProjectSessionOptions()`.
+
+Skills follow trust because they are prompt text a merely-opened repository must
+not write. `trustedProjectSkills` keeps anything `level: "user"` **and** outside
+the project root — the level alone misses a project pointing
 `skills.customDirectories` at itself. `loadSessionSkills()` is the one loader
 `GET /api/skills` and the session both call, so the panel never lists a skill
 the agent lacks. See `docs/project-trust.md`.
+
+### The load policy decides what an identity loads
+`lib/load-policy.ts` is the one place that decides it. `startRpcSession()` calls
+`resolveSessionLoads(identity, sessionCwd, settings)` once and spreads
+`loads.options` into `createAgentSession`; `GET /api/skills` merges the same
+`diagnostics`. Two rules, no more: project trust (above) and the identity.
+
+- **A tenant does not inherit the operator's authoring store.** omp's loaders
+  take `getAgentDir()` and `os.homedir()` from process state, so every session
+  reads the operator's files unless the caller decides otherwise. `AGENTS.md`,
+  `RULES.md`, `SYSTEM.md`, `APPEND_SYSTEM.md`, custom prompt templates and
+  slash commands from the operator's agent directory and home do not reach a
+  tenant, the `~/.agents` and `~/.claude` variants included. Their own
+  `$HOME/.omp/agent` rules and prompt templates load: `resolveSessionLoads()`
+  resolves those against `resolveTenantAgentDir()`. Context files are the
+  exception — `discoverContextFiles()` ignores its agent-directory argument,
+  so a tenant's `AGENTS.md` is the project's and the operator's is what gets
+  dropped.
+- **What a tenant keeps** is what a session needs to work: the provider catalog
+  and credentials (`getOmpRuntime()`), the skills the operator installed (the
+  v0.20.0 decision — rule 1 does not apply to skills), installed extensions and
+  custom tools, and a project's own content while it requires no trust.
+  Installed tooling is deliberately not filtered by identity: it is the
+  operator's store, not authored material for their agent.
+- **`lib/session-system-prompt.ts` takes the identity.** User-level prompt
+  files live in the process roots, so they are resolved for an admin or a
+  `null` identity only, and that lookup passes `project: false` — `user: true`
+  alone still scans the project roots and would hand an untrusted project's
+  file back. A tenant gets none rather than a guess at their own root, because
+  `findConfigFile` takes no agent directory.
+- **MCP is off for a tenant**, not only for an untrusted project. `enableMCP`
+  is the only lever omp has (`sdk.ts:783`), and an operator MCP server is a
+  process with this host's rights; a per-account MCP manager does not exist.
+  Known gap: `/api/mcp` still lists the project scope a tenant is allowed to
+  edit, while his sessions start with `enableMCP: false` — the panel therefore
+  offers entries the session will not launch until a per-account manager can
+  decide per server.
+- **Memory and autolearn are pinned off.** `sessionSettings()` hands a tenant an
+  in-memory `Settings.overlay` with `memory.backend: "off"` and
+  `autolearn.enabled: false`. A session reads `getMemoryRoot(agentDir, cwd)`
+  with the process agent directory (`memoryAgentDir: agentDir`, `sdk.ts:4941`),
+  and `autolearn` gates `manage_skill`, whose `getManagedSkillsDir()` defaults
+  to the process agent directory — without the pins a tenant would read the
+  operator's memory and mint skills into the operator's store. Known gap:
+  memory for tenants needs an SDK seam (`memoryAgentDir` is not a session
+  option), so it is off rather than redirected.
+- **One asymmetry is a gap.** A tenant has no slash commands of their own:
+  `discoverSlashCommands({ cwd })` takes no agent directory, so the operator's
+  are dropped and nothing replaces them. Bundled commands remain, and a
+  project's own while it requires no trust.
+- **Withheld loads are never silent.** Each shortened list yields one `info`
+  diagnostic with a count ("3 rules not loaded: this project is not
+  trusted."), `GET /api/skills` merges the same lines, and the session start
+  logs each one with a `[load-policy]` prefix.
+- **A reload cannot widen the list.** Rules, context files, prompt templates and
+  skills are pinned at creation (pre-built lists; a `skills` list sets
+  `skillsReloadable: false`). Slash commands are not:
+  `refreshSkillsAndCommands()` re-discovers them from the process roots, so the
+  session subscribes to `subscribeCommandMetadataChanged()` and re-applies the
+  filter with `setSlashCommands()`.
+- **Settings that decide what every session loads are admin-only.**
+  `isAdminOnlySetting()` (`lib/settings-api.ts`) covers `skills.*`,
+  `commands.*`, `autolearn.*`, `memory.*`, `extensions`, `disabledExtensions`,
+  `enabledProviders`, `disabledProviders`; `PATCH /api/settings` answers 403
+  through `requireAdmin()`, and `GET` marks the same fields `writable: false`
+  so the panel disables the control. Theme and UI settings stay per-account.
 
 ### `SYSTEM.md` / `APPEND_SYSTEM.md` are resolved per session cwd
 `omp` resolves both files before it creates a session and passes them as
@@ -263,9 +345,16 @@ options, so `lib/session-system-prompt.ts` does the same for the browser: omp's
 set the fields — so the text goes through the same templates the CLI renders it
 with. Every lookup is bound to the session's cwd, because the CLI's default
 (`getProjectDir()`) is the server's own directory here, not the project's.
-Project-local prompt files load for untrusted projects too: they are data, like
-rules (`docs/project-trust.md`). Skills do **not** — a `SKILL.md` is prompt text
-a merely-opened repository must not write on its own.
+`lib/session-system-prompt.ts` takes the identity because of two gates: a
+project's prompt files are dropped for an untrusted project (they are data, but
+they are instructions too — `docs/project-trust.md`), and user-level ones come
+from the process roots, so `resolveSessionSystemPrompts(cwd, identity)` asks for
+them only for an admin or a `null` identity — with `project: false`, because
+`findConfigFile({ user: true })` scans the project roots too. A tenant gets
+none rather than a guess at their own root, because `findConfigFile` takes no
+agent directory.
+Skills do **not** load for an untrusted project either — a `SKILL.md` is prompt
+text a merely-opened repository must not write on its own.
 
 ### SSE reconnect on page refresh mid-stream
 On `ChatWindow` mount, `GET /api/agent/[id]` is called. If `state.isStreaming === true`, SSE is reconnected automatically. `thinkingLevel` and `isCompacting` are also synced from this response.
@@ -298,7 +387,13 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - `allowFileRoot()` buckets grants per identity. A call without an identity lands in the unattributed bucket, which only admins can see.
 - `/api/sessions` and `/api/terminal` filter by owner, and so do the `agent/running` snapshot and its event stream — the ids those two publish are what the rest of the API addresses things by, so leaving them unfiltered leaks through an open SSE channel. A foreign session or shell answers **404, not 403**: a 403 would confirm that the id exists, and the point of the filter is that another account's work is not merely unreadable but undiscoverable. Session ownership comes from the `cwd` in the session file, which means the sessions live in one shared tree owned by the account the service runs as — see the containment note below.
 - `lib/sandbox.ts` is the one boundary here that the kernel enforces rather than this code: a tenant shell runs in a `bubblewrap` user namespace, and **exactly one `--bind`**, the tenant's own home, is the whole invariant. Everything else is either a read-only system directory or absent. Measured on the build host: a foreign home answers `No such file or directory` (not `Permission denied` — it is not mounted at all), `/etc/shadow` is `Permission denied`, `sudo -n true` reports that no new privileges flag is set, `su nobody` fails on the token, and `uid=0` in the namespace is not host root. Without root, sudo or `setpriv` the OS-user-per-account route is unavailable, which is why this exists.
-- The sandbox refuses rather than guesses: a username that would escape its path segment is `bad-username`, a working directory outside the home is `cwd-outside-home`, and both come back with a remediation. Passing such a cwd through verbatim would only surface later as `[Process exited with code 1]` in the SSE stream. Missing `bwrap` or disabled user namespaces are **not** fatal — the shell opens unconfined, `sandboxed: false` in `GET /api/terminal` says so, and the key is never absent.
+- The sandbox refuses rather than guesses, and a tenant terminal **fails closed**: a username that would escape its path segment is `bad-username`, a home that does not exist is `home-missing`, a home of `/` is `admin-home` (never `--bind /`, which is the whole disk read-write), a working directory outside the home is `cwd-outside-home`, and a missing `bwrap` or disabled user namespaces is `bwrap-missing`/`userns-disabled`. Every one of them comes back with a `detail` and a `remediation`, and `POST /api/terminal` answers **503**: no shell starts. Passing such a cwd through verbatim would only surface later as `[Process exited with code 1]` in the SSE stream, and the earlier fail-open branch was worse than either — it opened an unconfined shell with the full service environment (`SHELL-ISOLATION-SCAN.md` §2, measured three ways).
+- The terminal's environment is a **positive allowlist behind `--clearenv`** (`TERMINAL_ENV_ALLOWLIST` in `lib/sandbox.ts`), on the sandboxed *and* the admin branch. A `delete env.X` is the wrong shape twice over: it is a blocklist against an environment that grows from outside, and on Bun it does not even remove the value from `/proc/self/environ` let alone from a child. Adding a variable there is a decision that needs a reason. **The allowlist is what the spawn hands over, not the final environment:** the interactive shell is started through `script(1)` and reads `/etc/profile`, so `/etc/profile.d/*` adds to it — measured in a tenant shell: `VSSCRIPT_PATH`, `VIRTUAL_ENV_DISABLE_PROMPT` and `XDG_DATA_DIRS` were present without being in the allowlist. That is root-owned, read-only inside the sandbox, and none of it is a service secret; a secret cannot arrive this way because it is not in the service environment at all.
+- An **admin** terminal is never sandboxed, and that is a decision: `getUserHome` gives an admin `/`, and a sandbox around `/` is the disk. `sandboxed: false` in `GET /api/terminal` carries it, the environment is still the allowlist, and the route passes the real `isAdmin` flag into `spawn()` instead of the old hardcoded `isAdmin: false`.
+- **Service secrets are not in the process environment, and not readable inside the tenant's shell.** `/etc` is bound read-only (a shell needs it), so the service's own secret files under it — secrets, credential, accounts, session key — are masked with an empty file each (`--ro-bind <empty> <path>`; `/dev/null` fails on `MS_NODEV`, measured).
+- **Service secrets are not in the process environment.** The keys omp-web itself reads (`OMP_WEB_PASSWORD`, `GITHUB_TOKEN`) come from `OMP_WEB_SECRETS_FILE` (default `/etc/omp-web.env`) through `lib/runtime-secrets.ts` and `bin/web-auth-store.js`, which keep them in a module value; the unit must not use `Environment=`/`EnvironmentFile=` for them, because every child inherits the process environment — the agent's `bash` (its shell is in-process and reads the native environ, measured), MCP stdio servers (they build `{...Bun.env}`), the scheduler, `git`, `npx`. Keys the SDK resolves itself (model providers, MCP server env) are not read from this file: they belong in the SDK's own store, or they stay in the environment and stay inheritable. `childEnv()` is the map the app hands to the children it starts itself; it drops anything whose name looks like a secret or is a key of the secrets file. Startup logs the names of secrets it still finds inherited.
+- **`git` runs with hooks and repo-defined drivers disabled, and without the service env** (`lib/git-safe.ts`: `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `diff.external=`, `--no-optional-locks`, plus `filter.*.clean/smudge/process` and `diff.*.textconv/command` from the repo's own `.git/config`; the diffs pass `--no-textconv`). A driver pulled in through `include.path` stays open — that is the edge of this fix, not an oversight. A tenant-writable repository is otherwise a shell: a `core.fsmonitor` hook received `BRAVE_API_KEY`, `OMP_WEB_PASSWORD` and `OPENROUTER_API_KEY` on the first `git status` (`SHELL-ISOLATION-SCAN.md` §4b, measured).
+- **The agent's `bash` tool has no sandbox and cannot get one from this SDK** (18.14.0 has no `sandbox`/`allowedPaths`/`noNewPrivs`, and the shell is embedded, so there is no `bash` binary to wrap). What it does get is a per-session `tool_call` guard (`lib/session-shell-guard.ts`, registered through `CreateAgentSessionOptions.extensions`): `bash` is refused when the session cwd is outside the account's home and the roots explicitly granted to it. **That is the whole gate, measured:** the bash tool's LLM-facing schema in 18.14.0 is `{command, timeout}` — `BashToolOptions` has a `spawnHook`, but the tool input carries no working directory, so the hook resolves one value per call (the session cwd; a `cwd` key only appears if the model invents one) and a `cd /` inside the command text is invisible to it. The shell also runs as the service user with whatever the uid can read, and the guard therefore narrows nothing beyond "this session was opened in a directory the account may use". Only per-account OS users (unavailable, see `lib/sandbox.ts`) or an SDK spawn hook would change that; `docs/inventory-tools.md` states the residual plainly.
 - None of the others are containment. Every one is an assignment decided from data the service process can write, so they stop an account from seeing another's work by accident and through the routes that exist, not against someone who edits the underlying files. `docs/authentication.md` says so in the place a reader of this file is pointed at.
 
 ### Plugins and skills
@@ -455,12 +550,24 @@ TypeScript half type-checks against — keep the two in sync.
   paths. They still go through the host allow-list and cross-site checks, and
   the recovery code is printed on the server's stdout, never returned in the
   response.
+- The session cookie is **one attribute set**, written only by
+  `sessionCookieOptions()`: `HttpOnly`, `SameSite=lax`, `Path=/`, `Secure` only
+  when the request arrived over HTTPS, and `Max-Age` from `SESSION_TTL_MS`
+  (30 days, sliding — re-issued past half its life). Login, `proxy.ts`'s
+  renewal and logout all call it, because two `Set-Cookie` headers that differ
+  in an attribute are two cookies. `lax` and not `strict` is deliberate: a link
+  from another app is a cross-site top-level navigation, `strict` withholds the
+  cookie on exactly that request and lands a signed-in user on `/login`. It is
+  not the lock on the API — `isApiRequestAllowed()` refuses
+  `sec-fetch-site: cross-site` before the cookie is read.
 - **Passing `proxy.ts` is not being an admin.** The proxy answers three
   questions — host allow-list, cross-site, valid credentials — and releases
   *every* valid account. A tenant passes it exactly like the operator. Every
-  route that changes something host-wide (`/api/web-access`, `/api/web-access/users`,
-  global skill writes) calls `requireAdmin()` from `lib/request-identity.ts`,
-  next to `isAdminIdentity`; that function is not copied into routes. A route
+  route that changes something host-wide (`/api/web-access`,
+  `/api/web-access/users`, global skill writes, and the host-wide keys of
+  `PATCH /api/settings` — see "The load policy decides what an identity
+  loads") calls `requireAdmin()` from `lib/request-identity.ts`, next to
+  `isAdminIdentity`; that function is not copied into routes. A route
   that writes and does not call one is a hole, the same way `isWritePathAllowed`
   is — and on 12.10.2026 a comment claiming the proxy had already covered it
   is exactly what let `bob` turn the password lock off and walk in.

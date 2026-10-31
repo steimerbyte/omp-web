@@ -5,6 +5,7 @@ import {
   SIZE_TIMEOUT_MS,
   type SizeMeasurement,
 } from "./projects-schema";
+import { childEnv } from "./runtime-secrets";
 
 const execFileAsync = promisify(execFile);
 
@@ -230,6 +231,9 @@ export async function measureProjectSize(root: string): Promise<SizeMeasurement>
       timeout: SIZE_TIMEOUT_MS,
       maxBuffer: MAX_OUTPUT_BYTES,
       encoding: "utf8",
+      // Ohne eigene env-Map erbt `du` die ganze Dienstumgebung. `childEnv()`
+      // ist die Map ohne jeden Geheimnis-Namen (SHELL-ISOLATION-SCAN §4).
+      env: childEnv(),
     });
     const bytes = parseDuTotal(stdout);
     return bytes === null ? { bytes: null, partial: false } : { bytes, partial: false };

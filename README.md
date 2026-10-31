@@ -128,10 +128,37 @@ There are two ways in, and they answer different questions:
 - **The password store** (`~/.omp/agent/omp-web-auth.json`, mode `0600`, a `scrypt`
   digest — never the password) with accounts in `omp-web-accounts.json` beside it.
   This is the multi-user door.
-- **`OMP_WEB_PASSWORD`** in the environment, which overrides the stored credential
-  completely. While it is set there is **exactly one account** — any other name is
-  not a second user with a wrong password, it is not an account at all. It is a
-  single-credential door, not a multi-user configuration.
+- **`OMP_WEB_PASSWORD`**, read from the **secrets file** (`OMP_WEB_SECRETS_FILE`,
+  default `/etc/omp-web.env`) or, for a single-process launch, from the
+  environment — it overrides the stored credential completely. While it is set
+  there is **exactly one account** — any other name is not a second user with a
+  wrong password, it is not an account at all. It is a single-credential door, not
+  a multi-user configuration.
+
+  The file is for the keys **omp-web itself reads** (`OMP_WEB_PASSWORD`,
+  `GITHUB_TOKEN`). Keys the SDK consumes — model provider credentials, MCP server
+  env — are resolved from `process.env` inside the SDK, so they belong in the
+  SDK's own store (`models.yml` / the MCP server's `env`), not in this file: a key
+  that is never in the environment is a key no tenant shell and no MCP child can
+  inherit.
+
+  **Do not wire that file into the unit as `Environment=` or `EnvironmentFile=`.**
+  Both copy the values into the process environment, and every child process
+  inherits them: the agent's `bash` tool (its shell runs inside this process), MCP
+  stdio servers, the scheduler, `git`. Measured on Bun 1.4.4: `delete
+  process.env.X` does not even remove the value from `/proc/self/environ`, so
+  deleting after the fact is not a fix. Point `OMP_WEB_SECRETS_FILE` at the file
+  and let omp-web read it — it holds the values in a module value, never in the
+  environment. On startup it logs every secret it still finds in the environment,
+  by name, because from outside you cannot tell a sandboxed shell from an
+  unconfined one with a leaked key.
+
+  ```bash
+  # in the service unit — the only Environment= lines should be non-secrets
+  Environment=OMP_WEB_SECRETS_FILE=/etc/omp-web.env
+  # and in /etc/omp-web.env (0600, owned by the service user):
+  OMP_WEB_PASSWORD=...
+  ```
 
 **One setting decides whether account creation works at all.** Creating an account
 makes a directory for it, and the default parent is `/home`. An unprivileged
@@ -290,14 +317,43 @@ A PTY-backed shell in a browser tab, with input, resize and a stream. Each
 terminal opens as a tab beside the file view, and the top-bar button lists the
 running ones.
 
-**Tenant shells run in a user namespace.** `lib/sandbox.ts` builds a `bubblewrap`
-argv whose only bind is the account's own home, so a foreign home answers `No such
-file or directory` rather than `Permission denied` — it does not exist inside
-rather than merely being unreadable — `/etc/shadow` stays unreadable, and `uid=0`
-inside the namespace is not the host's root. Where `bwrap` or user namespaces are
-unavailable the shell opens unconfined and says so: `sandboxed` is `false` in
-`GET /api/terminal`. The key is always present, never absent, so a client does not
-have to tell "not isolated" from "unknown".
+**Tenant shells run in a user namespace, and they fail closed.** `lib/sandbox.ts`
+builds a `bubblewrap` argv whose only bind is the account's own home, so a foreign
+home answers `No such file or directory` rather than `Permission denied` — it does
+not exist inside rather than merely being unreadable — `/etc/shadow` stays
+unreadable, and `uid=0` inside the namespace is not the host's root. The
+environment inside is `--clearenv` plus a short allowlist (`PATH`, `LANG`, `LC_*`,
+`HOME`, `USER`, `LOGNAME`): the process environment is not inherited at all, so a
+key the unit exports does not reach a tenant. The spawn hands that set over; the
+interactive shell then reads `/etc/profile`, so `/etc/profile.d/*` can add to it —
+root-owned, read-only inside, and never a secret. `/run/systemd/resolve` is bound
+read-only when it exists, because `/etc/resolv.conf` points into it and name
+resolution would otherwise be dead inside — a legitimate `npm install` needs it.
+
+Where `bwrap` or user namespaces are unavailable, or the working directory is
+outside the home, `POST /api/terminal` answers **503** with `reason` and
+`remediation` and **no shell is started**. A home that does not exist is refused
+by the cwd allow-list first (403, the directory cannot be resolved) and by the plan
+as `home-missing` for any caller that reaches it directly. On Windows a tenant
+shell is refused with `unsupported-platform`: there are no user namespaces and the
+only honest answer is no shell.
+
+Because `/etc` has to be bound read-only for a shell to work at all, the service's
+own secret files inside it — the secrets file, the credential file, the accounts
+file, the session key — are masked with an **empty file** over the top
+(`--ro-bind <empty> <path>`). A `/dev/null` bind does not work: bubblewrap mounts
+with `MS_NODEV` and opening the device node gives `Permission denied` (measured).
+Without the mask the environment would be clean and `cat /etc/omp-web.env` would
+still hand a tenant the admin password. That is a change from the
+earlier fail-open: every one of those branches used to hand a tenant an unconfined
+shell with the service environment, `OMP_WEB_PASSWORD` included.
+
+An **admin** is the exception by decision, not by accident: they are the host,
+their home is `/`, and their shell runs unconfined with `sandboxed: false` in
+`GET /api/terminal` — with the same allowlisted environment. The key is always
+present, never absent, so a client does not have to tell "not isolated" from
+"unknown". `sandboxed: false` on a tenant shell is therefore not a state the API
+can return; the request fails instead.
 
 The Docker image installs `bubblewrap`, because it is the one host where every
 terminal would otherwise take the `bwrap-missing` branch.
@@ -384,9 +440,10 @@ every deploy and on a five-minute healthcheck. A stolen key file is a second
 secret for the same service account, so it is `0600` in the same `0700`
 directory as the credential; deleting it and restarting is the rotation and
 revokes every live session. `OMP_WEB_SESSION_KEY_EPHEMERAL=1` restores the old
-per-process salt, where a restart *is* a logout. The cookie lasts an hour and is
-re-issued while a page is in use, and signing out revokes every session of that
-account rather than only the copy in the current browser.
+per-process salt, where a restart *is* a logout. The cookie lasts thirty days and
+is re-issued once half of that has passed, so a page in use stays signed in and
+one that is never used stops working after a month; signing out revokes every
+session of that account rather than only the copy in the current browser.
 
 `--reset-password` recovers from the machine itself; the browser path is `/recover`.
 Both prove access to that machine, and neither can hand the old password back.

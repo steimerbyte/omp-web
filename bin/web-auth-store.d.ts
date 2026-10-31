@@ -154,6 +154,7 @@ export interface WebAccountEntry {
 }
 
 export declare const ACCOUNT_NAME_MAX_LENGTH: number;
+export declare const DEFAULT_SECRETS_FILE: string;
 export declare const DEFAULT_WEB_ADMIN_USERNAMES: string[];
 export declare const DEFAULT_WEB_AUTH_USERNAME: string;
 export declare const MIN_PASSWORD_LENGTH: number;
@@ -254,6 +255,9 @@ export declare function getWebAuthStatus(options?: WebAuthStoreOptions): WebAuth
 export declare function issueRecoveryCode(options?: WebAuthStoreOptions): RecoveryIssueResult;
 export declare function normalizeRecoveryCode(code: unknown): string;
 export declare function readWebAuthState(file?: string): WebAuthState;
+export declare function clearEnvironmentFileCache(): void;
+export declare function readEnvironmentFile(file: string): Map<string, string>;
+export declare function resolveSecretsFile(env?: NodeJS.ProcessEnv): string;
 export declare function resolveAgentDir(env?: NodeJS.ProcessEnv): string;
 export declare function resolveWebAuthFile(env?: NodeJS.ProcessEnv): string;
 export declare function resolveWebAuthPolicy(options?: WebAuthStoreOptions): WebAuthPolicy;

@@ -237,12 +237,25 @@ ends when:
 - someone signs out: the account's epoch is incremented, and every cookie signed
   under the old one stops verifying on the next request — on every browser that
   had one, not just the one that clicked;
-- nobody sends a request for an hour. The lifetime is one hour and it slides:
-  `proxy.ts` re-issues the cookie once more than half of it has passed, so a page
-  in use stays signed in and an abandoned tab does not. The renewal is capped at
-  one `Set-Cookie` per half hour by the `issuedAt` that rides in the cookie
-  itself, which matters on this UI: an open tab polls a few dozen authenticated
-  requests a minute, and an uncapped renewal would set a cookie on every one.
+- nobody sends a request for thirty days. The lifetime is thirty days and it
+  slides: `proxy.ts` re-issues the cookie once more than half of it has passed, so
+  a browser in use stays signed in and one that is never used stops working after
+  a month. The renewal is capped at one `Set-Cookie` per half-life by the
+  `issuedAt` that rides in the cookie itself, which matters on this UI: an open
+  tab polls a few dozen authenticated requests a minute, and an uncapped renewal
+  would set a cookie on every one.
+
+  It was one hour until this change, and an hour was wrong for the device the
+  cookie exists for. A closed tab sends no requests, so the renewal cannot reach
+  it — the browser simply drops a cookie whose `Max-Age` is spent, and the next
+  visit is a login. Measured on a phone-shaped browser: a session that had sat for
+  61 minutes came back to `/login`, unchanged by anything the server did. "Open it
+  on the phone, close the tab, come back later" is the normal case, and one hour
+  is shorter than that. The cost is the other side of the same coin: a copied
+  cookie is a copied session for up to thirty days instead of one hour. What ends
+  a session *early* does not depend on the expiry and is listed above — signing
+  out anywhere bumps the epoch, a password change rotates the key, and deleting
+  the key file and restarting signs every device out at once.
 
 A restart is no longer a logout. The salt lives in a file — `0600`, one line,
 `<agent dir>/omp-web-session-key` by default, `OMP_WEB_SESSION_KEY_FILE` to move

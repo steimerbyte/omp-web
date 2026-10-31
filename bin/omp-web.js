@@ -31,7 +31,9 @@ const fs = require("fs");
 const { parseLaunchOptions } = require("./omp-web-options");
 const {
   getWebAuthStatus,
+  readEnvironmentFile,
   resolveWebAuthFile,
+  resolveSecretsFile,
   setWebPassword,
   setWebPasswordEnabled,
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -68,6 +70,19 @@ const loopbackHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 // launcher and the Next.js process can never disagree about which credential
 // file is in force.
 const webAuthFile = resolveWebAuthFile();
+// Der Launcher und der Server muessen denselben Sperrzustand sehen. Der Server
+// liest das Passwort aus der Geheimnisdatei (die Unit setzt es nicht mehr in die
+// Umgebung, weil jeder Kindprozess sie sonst erbt); der Launcher muss dieselbe
+// Datei lesen, sonst meldet `--reset-password` "gespeichert" und das neue
+// Passwort wirkt nie, waehrend das alte aus der Datei weiter gilt.
+const secretsFile = resolveSecretsFile();
+const filePassword = readEnvironmentFile(secretsFile).get("OMP_WEB_PASSWORD");
+const launcherEnv = typeof filePassword === "string" && filePassword.length > 0
+  ? { ...process.env, OMP_WEB_PASSWORD: filePassword }
+  : process.env;
+if (launcherEnv !== process.env) {
+  console.log(`Password access is configured by ${secretsFile} (OMP_WEB_PASSWORD).`);
+}
 
 if (!fs.existsSync(nextDir)) {
   console.error("Build artifacts not found. Please report this issue.");
@@ -93,7 +108,7 @@ async function setPasswordInteractively(intro) {
   console.log(intro);
   console.log(`It is stored as a scrypt hash in ${webAuthFile} — omp-web never keeps the password itself.`);
   const password = await readNewPassword();
-  const status = setWebPassword(password, { file: webAuthFile });
+  const status = setWebPassword(password, { file: webAuthFile, env: launcherEnv });
   console.log(`Password saved. omp-web now asks for the username "${status.username}" and this password.`);
 }
 
@@ -104,7 +119,7 @@ async function setPasswordInteractively(intro) {
  * credential is written first and `next start` is spawned afterwards.
  */
 async function configurePasswordAccess() {
-  const status = getWebAuthStatus({ file: webAuthFile });
+  const status = getWebAuthStatus({ file: webAuthFile, env: launcherEnv });
 
   if (resetPassword) {
     if (status.managedByEnvironment) {
@@ -125,7 +140,7 @@ async function configurePasswordAccess() {
   }
   if (status.stored) {
     if (!status.enabled) {
-      setWebPasswordEnabled(true, { file: webAuthFile });
+      setWebPasswordEnabled(true, { file: webAuthFile, env: launcherEnv });
       console.log("Password access enabled with the password already stored on this machine.");
     }
     return;
@@ -137,7 +152,7 @@ async function configurePasswordAccess() {
 
 function warnAboutExposure() {
   if (loopbackHostnames.has(hostname)) return;
-  if (getWebAuthStatus({ file: webAuthFile }).enabled) {
+  if (getWebAuthStatus({ file: webAuthFile, env: launcherEnv }).enabled) {
     console.warn(
       `Warning: omp-web is listening on ${hostname} with Basic Auth over HTTP. Use HTTPS or a trusted VPN to protect the password in transit.`,
     );

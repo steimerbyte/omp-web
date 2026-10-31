@@ -140,9 +140,11 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 ### Anmelden — `POST` / `DELETE` `/api/web-access/login`
 
 - **Kann**: `POST {username?, password}` prüft die Credential und setzt
-  `omp_session` als httpOnly-Cookie (`sameSite: strict`, `path: /`,
-  `secure` nur wenn die Anfrage ueber HTTPS kam, `maxAge` aus `SESSION_TTL_MS` =
-  1 h). Die Attribute kommen aus `sessionCookieOptions()`, demselben Helper, den
+  `omp_session` als httpOnly-Cookie (`sameSite: lax`, `path: /`,
+  `secure` nur wenn die Anfrage ueber HTTPS kam, `maxAge` aus `SESSION_TTL_MS`).
+  `lax` und nicht `strict`, weil ein Link aus einer anderen App eine
+  Cross-Site-Navigation ist und `strict` den Cookie dort zurueckhaelt — dann
+  steht der Nutzer mit gueltiger Sitzung auf `/login` (`docs/inventory-auth.md`). Die Attribute kommen aus `sessionCookieOptions()`, demselben Helper, den
   `proxy.ts` fuer die Erneuerung benutzt. `username` ist optional und fällt auf
   den konfigurierten Einzelbenutzernamen zurück — das ist der Weg, den jede
   bestehende Installation geht, und deshalb kommt die Login-Seite vorbelegt.
@@ -1149,5 +1151,6 @@ Fehlerpfad.
   vorigen. Vorher war er `randomBytes(32)` pro Kaltstart; auf agent-pc mit
   `Restart=always` und einem Healthcheck-Restart alle fünf Minuten war das
   gemessen zehn Neustarts am Tag und damit ein Logout im Stundenraster — das
-  eigentliche „nach zehn Minuten abgemeldet". Die TTL ist eine Stunde und
-  gleitet (Renewal nach der halben Lebenszeit), kein 24-h-Fenster mehr.
+  eigentliche „nach zehn Minuten abgemeldet". Die TTL ist **30 Tage** und
+  gleitet (Renewal nach der halben Lebenszeit), kein 24-h-Fenster und seit
+  v0.21 keine Stunde mehr (`docs/inventory-auth.md`).

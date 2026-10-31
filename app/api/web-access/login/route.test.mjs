@@ -24,7 +24,8 @@ const jiti = createJiti(import.meta.url, {
 });
 const { POST, DELETE } = await jiti.import("./route.ts");
 const { proxy } = await jiti.import("@/proxy.ts");
-const { SESSION_COOKIE_NAME, readSession } = await jiti.import("@/lib/web-auth-session.ts");
+const { SESSION_COOKIE_NAME, SESSION_TTL_MS, SESSION_RENEW_AFTER_MS, __testSessionKeySalt, readSession } = await jiti.import("@/lib/web-auth-session.ts");
+const { forgeSession } = await jiti.import("@/test/forge-session.mjs");
 
 const PASSWORD = "correct horse battery staple";
 const HOST = "localhost:30141";
@@ -72,16 +73,17 @@ function asRequest(cookie) {
   return new NextRequest(`${ORIGIN}/api/whoami`, { headers: { host: HOST, cookie: `${SESSION_COOKIE_NAME}=${cookie}` } });
 }
 
-test("der Login setzt den Cookie mit allen Attributen und 3600 Sekunden", async (t) => {
+test("der Login setzt den Cookie mit allen Attributen und der Lebensdauer aus SESSION_TTL_MS", async (t) => {
   await withServer(t, async () => {
     const response = await login();
     assert.equal(response.status, 200);
 
     const { header, value } = cookieFrom(response);
     assert.match(header, /Path=\//);
-    assert.match(header, /Max-Age=3600/, "eine Stunde, nicht mehr 86400");
+    assert.match(header, new RegExp(`Max-Age=${SESSION_TTL_MS / 1000}`), "die Lebensdauer, nicht eine zweite Zahl");
+    assert.match(header, /Expires=[^;]+GMT/, "ohne Expires ueberlebt der Cookie den Browserstart nicht");
     assert.match(header, /HttpOnly/i);
-    assert.match(header, /SameSite=strict/i);
+    assert.match(header, /SameSite=Lax/i, "Lax, nicht Strict: ein Link aus einer anderen App ist eine Cross-Site-Navigation");
     assert.doesNotMatch(header, /Secure/i, "ueber HTTP darf kein Secure-Cookie entstehen");
     assert.doesNotMatch(header, /Domain=/i);
     assert.equal(readSession(value)?.username, "omp");
@@ -93,8 +95,49 @@ test("hinter TLS traegt derselbe Login Secure", async (t) => {
     const { header } = cookieFrom(await login({ "x-forwarded-proto": "https" }));
     assert.match(header, /Secure/i);
     // Und die uebrigen Attribute bleiben, sonst waere es ein zweiter Cookie.
-    assert.match(header, /SameSite=strict/i);
-    assert.match(header, /Max-Age=3600/);
+    assert.match(header, /SameSite=Lax/i, "Lax, nicht Strict: ein Link aus einer anderen App ist eine Cross-Site-Navigation");
+    assert.match(header, new RegExp(`Max-Age=${SESSION_TTL_MS / 1000}`));
+  });
+});
+
+/** Die Attributnamen eines `Set-Cookie`, ohne Wert und ohne Zeitstempel. */
+function attributeNames(header) {
+  return header.slice(header.indexOf(";") + 1).split(/;\s*/).map((part) => part.split("=")[0].trim().toLowerCase()).sort();
+}
+
+function attributeValue(header, name) {
+  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`, "i"));
+  return match ? match[1].trim() : null;
+}
+
+test("die Erneuerung schreibt denselben Cookie wie der Login", async (t) => {
+  await withServer(t, async () => {
+    const { header: loginHeader } = cookieFrom(await login());
+
+    // Dieselbe Signatur wie der Login, nur so alt, dass die Gleitfrist faellig
+    // ist und die Lebensdauer noch nicht abgelaufen: dann schreibt der Proxy.
+    const agedSecondsAgo = (SESSION_TTL_MS - 60_000) / 1000;
+    assert.ok(agedSecondsAgo * 1000 > SESSION_RENEW_AFTER_MS, "Vorbedingung: die Erneuerung ist faellig");
+    const aged = forgeSession({
+      secret: `omp:${PASSWORD}|session:0`,
+      salt: __testSessionKeySalt(),
+      username: "omp",
+      issuedAt: Date.now() - agedSecondsAgo * 1000,
+      ttlMs: SESSION_TTL_MS,
+    });
+    const renewed = proxy(asRequest(aged)).headers.getSetCookie();
+    assert.equal(renewed.length, 1, `genau ein Set-Cookie aus der Erneuerung: ${JSON.stringify(renewed)}`);
+
+    // Namen *und* die Lebensdauer-Attribute. Ein Attribut, das nur einer der
+    // beiden Pfade setzt, ist ein zweiter Cookie desselben Namens, und welchen
+    // der Browser behaelt, haengt an der Reihenfolge der Header.
+    assert.deepEqual(attributeNames(renewed[0]), attributeNames(loginHeader),
+      "Login und Erneuerung muessen dieselben Attribute tragen");
+    assert.equal(attributeValue(renewed[0], "Max-Age"), attributeValue(loginHeader, "Max-Age"),
+      "die Erneuerung darf die Lebensdauer nicht verkuerzen");
+    assert.equal(attributeValue(loginHeader, "Max-Age"), String(SESSION_TTL_MS / 1000));
+    assert.ok(attributeValue(renewed[0], "Expires"), "die Erneuerung verliert Expires nicht");
+    assert.ok(attributeValue(loginHeader, "Expires"), "der Login setzt Expires");
   });
 });
 

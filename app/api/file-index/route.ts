@@ -10,6 +10,8 @@ import {
   isWindowsAbsolutePath,
 } from "@/lib/file-access";
 import { getRequestIdentity } from "@/lib/request-identity";
+import { gitIsolationArgs } from "@/lib/git-safe";
+import { childEnv } from "@/lib/runtime-secrets";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { buildEntriesFromFiles, filterFileEntries, type FileIndexEntry } from "@/lib/file-fuzzy";
 import { isPathWithinRoots } from "@/lib/path-security";
@@ -67,8 +69,8 @@ async function listWithGit(cwd: string): Promise<FileListing | null> {
   try {
     const { stdout } = await execFileAsync(
       "git",
-      ["-C", cwd, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-      { timeout: 10_000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, LC_ALL: "C" } },
+      ["-C", cwd, ...gitIsolationArgs(cwd), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+      { timeout: 10_000, maxBuffer: 64 * 1024 * 1024, env: { ...childEnv(), LC_ALL: "C" } },
     );
     const all = stdout.split("\0").filter(Boolean);
     if (all.length > GIT_HARD_CAP) {
