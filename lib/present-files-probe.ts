@@ -11,6 +11,7 @@ import {
   shouldSniffPresentKind,
   type PresentItem,
   type PresentKind,
+  type PresentRejection,
 } from "./present-files";
 
 /** What the model is allowed to hand in per item. */
@@ -21,38 +22,78 @@ export interface PresentItemInput {
   open?: boolean;
 }
 
+/** What one call's entries came to: the ones that can become cards and the others. */
+export interface PresentItemsResult {
+  items: PresentItemInput[];
+  rejected: PresentRejection[];
+}
+
+/** The entry as a path, for the message that says it was not one. */
+function describeEntry(entry: unknown): string {
+  if (typeof entry === "string") return entry;
+  const json = JSON.stringify(entry);
+  return json === undefined ? String(entry) : json;
+}
+
 /**
- * Trim, normalize separators, drop entries without a path, de-duplicate, cap.
+ * Trim, normalize separators, de-duplicate, cap — and report what was refused.
  *
  * The backslash fold matters: Windows models routinely emit `a\b\c.png`, which
  * is one filename on their side and three path segments on this one.
+ *
+ * A refused entry never discards the call: it comes back in `rejected` with a
+ * reason, and the entries that are usable are probed as usual. A single path
+ * or a single item object counts as a call with one file, because that is the
+ * shape a loose `xd://` argument arrives in — the schema has not checked it.
  */
 export function normalizePresentItems(
   raw: unknown,
   max: number = MAX_PRESENT_ITEMS,
-): PresentItemInput[] {
-  if (!Array.isArray(raw)) return [];
+): PresentItemsResult {
+  // One path is a call with one file. The schema declares `{path}` objects, so
+  // a bare string only arrives through the loose `xd://` argument — accept it
+  // in the argument and inside the list rather than turning it into a refusal.
+  if (typeof raw === "string") raw = { path: raw };
+  if (!Array.isArray(raw) && raw !== undefined && raw !== null) raw = [raw];
+  const rejected: PresentRejection[] = [];
+  if (!Array.isArray(raw)) return { items: [], rejected };
 
-  const out: PresentItemInput[] = [];
+  const items: PresentItemInput[] = [];
   const seen = new Set<string>();
-  for (const entry of raw) {
-    if (typeof entry !== "object" || entry === null) continue;
-    if (!("path" in entry) || typeof entry.path !== "string") continue;
+  for (const rawEntry of raw) {
+    const entry: unknown = typeof rawEntry === "string" ? { path: rawEntry } : rawEntry;
+    if (typeof entry !== "object" || entry === null) {
+      rejected.push({ path: describeEntry(entry), reason: "invalid" });
+      continue;
+    }
+    if (!("path" in entry) || typeof entry.path !== "string") {
+      rejected.push({ path: describeEntry(entry), reason: "invalid" });
+      continue;
+    }
 
     const trimmed = entry.path.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      rejected.push({ path: entry.path, reason: "empty" });
+      continue;
+    }
     const normalized = trimmed.replace(/\\/g, "/");
-    if (seen.has(normalized)) continue;
-
+    if (seen.has(normalized)) {
+      rejected.push({ path: normalized, reason: "duplicate" });
+      continue;
+    }
     seen.add(normalized);
-    out.push({
+    if (items.length >= max) {
+      rejected.push({ path: normalized, reason: "overflow" });
+      continue;
+    }
+
+    items.push({
       path: normalized,
       caption: "caption" in entry && typeof entry.caption === "string" ? entry.caption : undefined,
       open: "open" in entry && entry.open === true,
     });
-    if (out.length >= max) break;
   }
-  return out;
+  return { items, rejected };
 }
 
 /** Read the head of a file, or `null` when it cannot be read at all. */

@@ -6,6 +6,8 @@ import {
   MAX_PRESENT_ITEMS,
   type PresentFilesDetails,
   type PresentItem,
+  type PresentRejection,
+  type PresentRejectionReason,
 } from "./present-files";
 import {
   normalizePresentItems,
@@ -48,13 +50,43 @@ import {
  * keeps its cards instead of degrading to text.
  */
 
+/** Why an entry did not become a card, in the words the model reads. */
+const PRESENT_REJECTION_TEXT: Record<PresentRejectionReason, string> = {
+  invalid: "not a path",
+  empty: "empty path",
+  duplicate: "duplicate",
+  overflow: `over the ${MAX_PRESENT_ITEMS}-item limit`,
+  missing: "missing or unreadable",
+};
+
+/** One refused entry: the path it named, and the reason it is not a card. */
+function formatPresentRejection(rejection: PresentRejection): string {
+  return `${rejection.path} (${PRESENT_REJECTION_TEXT[rejection.reason]})`;
+}
+
 /**
- * The model's half of the answer: which files are on screen now, which are not,
- * and a reminder that the contents are already reachable from the cards.
+ * How many refusals are spelled out in the text.
+ *
+ * A call that dumps a directory hands in a hundred entries; naming all of the
+ * refused ones would cost the model more context than the cards are worth, and
+ * the count says the rest.
+ */
+const MAX_NAMED_REJECTIONS = 10;
+
+/** The refusals as one clause, capped at {@link MAX_NAMED_REJECTIONS} named entries. */
+function rejectionList(rejected: PresentRejection[]): string {
+  const named = rejected.slice(0, MAX_NAMED_REJECTIONS).map(formatPresentRejection).join(", ");
+  const rest = rejected.length - MAX_NAMED_REJECTIONS;
+  return rest > 0 ? `${named}, and ${rest} more` : named;
+}
+
+/**
+ * The model's half of the answer: which files are on screen now, which are not
+ * and why, and a reminder that the contents are already reachable from the cards.
  */
 export function buildPresentResultText(
   shown: PresentItem[],
-  missing: PresentItem[],
+  rejected: PresentRejection[],
   title: string | undefined,
 ): string {
   const lines: string[] = [];
@@ -65,8 +97,8 @@ export function buildPresentResultText(
     const caption = item.caption ? ` — ${item.caption}` : "";
     lines.push(`${item.abs} (${item.kind}, ${size})${caption}`);
   }
-  if (missing.length > 0) {
-    lines.push(`Not shown (path missing or unreadable): ${missing.map((m) => m.path).join(", ")}`);
+  if (rejected.length > 0) {
+    lines.push(`Not shown (${rejected.length}): ${rejectionList(rejected)}`);
   }
   lines.push(
     "The user can preview or download these from the cards — do not paste their contents again.",
@@ -91,7 +123,9 @@ export function makePresentFilesTool() {
       "and HTML open in a preview dialog. Every card can be downloaded. " +
       "Call this after producing something visual or user-facing (screenshot, chart, recording, " +
       "report, log tail, build output). Do not call it for ordinary source edits the user did not " +
-      "ask to see, and never call it twice for the same file in one turn.",
+      "ask to see, and never call it twice for the same file in one turn. " +
+      `One call takes up to ${MAX_PRESENT_ITEMS} files; an entry that cannot be shown is named in ` +
+      "the answer and does not cost you the others.",
     // Read-only: it stats files and reads a bounded head, nothing more.
     approval: "read",
     // "essential" — this is a core capability of this UI, and the card in
@@ -126,9 +160,13 @@ export function makePresentFilesTool() {
     }),
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const items = normalizePresentItems(params.items);
+      const { items, rejected } = normalizePresentItems(params.items);
       if (items.length === 0) {
-        throw new Error("present_files needs at least one item with a path.");
+        throw new Error(
+          rejected.length === 0
+            ? "present_files needs at least one item with a path."
+            : `present_files showed nothing, every entry was refused: ${rejectionList(rejected)}`,
+        );
       }
 
       const cwd = ctx.cwd;
@@ -140,14 +178,20 @@ export function makePresentFilesTool() {
       }
 
       const shown = probed.filter((item) => item.kind !== "missing");
-      const missing = probed.filter((item) => item.kind === "missing");
+      // A path that is not there is a refusal like the others, so the text can
+      // name every entry that did not arrive in one list, in one shape.
+      const refused: PresentRejection[] = [
+        ...rejected,
+        ...probed
+          .filter((item) => item.kind === "missing")
+          .map((item) => ({ path: item.path, reason: "missing" as const })),
+      ];
 
-      // Everything unreadable is not an error either — but then there is no
-      // card, and the model has to know that, or it will assume the file is on
-      // screen when it is not.
+      // Nothing readable is not a card either — and then the model has to know
+      // that, or it will assume the file is on screen when it is not.
       if (shown.length === 0) {
         throw new Error(
-          `None of these paths exist or are readable, nothing was shown: ${missing.map((m) => m.path).join(", ")}`,
+          `None of these paths exist or are readable, nothing was shown: ${rejectionList(refused)}`,
         );
       }
 
@@ -157,7 +201,7 @@ export function makePresentFilesTool() {
 
       return {
         content: [
-          { type: "text" as const, text: buildPresentResultText(shown, missing, params.title) },
+          { type: "text" as const, text: buildPresentResultText(shown, refused, params.title) },
         ],
         details,
       };

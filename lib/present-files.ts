@@ -260,8 +260,43 @@ export function formatPresentBytes(bytes: number | undefined): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-/** Entry cap. Beyond this it stops being "here is something for you". */
-export const MAX_PRESENT_ITEMS = 12;
+/**
+ * Why one entry of a `present_files` call produced no card.
+ *
+ * Typed rather than free text, so a refused entry is named with its reason
+ * instead of being dropped: the model has to be able to tell the user which of
+ * its paths did not arrive, and the call has to keep the ones that did.
+ */
+export type PresentRejectionReason =
+  /** Not an object with a string `path`. */
+  | "invalid"
+  /** `path` is blank once trimmed. */
+  | "empty"
+  /** The same path was already accepted earlier in this call. */
+  | "duplicate"
+  /** Past {@link MAX_PRESENT_ITEMS}; the earlier entries were kept. */
+  | "overflow"
+  /** Nothing on disk at that path, or it could not be stat'ed. */
+  | "missing";
+
+/** One entry of a `present_files` call that produced no card. */
+export interface PresentRejection {
+  /** The path as it was handed in, or its JSON form when it was not a path. */
+  path: string;
+  reason: PresentRejectionReason;
+}
+
+/**
+ * Entry cap for one call.
+ *
+ * 12 was the cap while this was a "here is the one thing you asked for"
+ * affordance, and ordinary runs hit it: a screenshot set, a report with its
+ * charts, a bundle of test artifacts. 48 covers those. The payload does not
+ * grow with the count — the excerpt budget is a separate cap
+ * ({@link MAX_PRESENT_EXCERPT_TOTAL_CHARS}), and the rest of a card is a name,
+ * a kind and a size. Pinned by number in `lib/present-files.test.mjs`.
+ */
+export const MAX_PRESENT_ITEMS = 48;
 /** Characters of excerpt per item. */
 export const MAX_PRESENT_EXCERPT_CHARS = 1200;
 /** Characters of excerpt across one call — `details` rides along in every snapshot. */

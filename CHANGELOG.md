@@ -303,6 +303,33 @@ release API and nothing else, a foreign npm package with a higher version
 yields neither `canInstall: true` nor a foreign release URL, and the module
 names neither the upstream repository nor the npm registry.
 
+**`present_files` trug zwölf Dateien, jetzt achtundvierzig — und was es nicht
+zeigt, sagt es.** Der Deckel stand als `MAX_PRESENT_ITEMS` in
+`lib/present-files.ts`, und gerissen ist er im Normalfall: ein Satz
+Screenshots, ein Bericht mit seinen Diagrammen, ein Bündel Testartefakte. Was
+darüber lag, fiel ohne ein Wort aus dem Aufruf; `normalizePresentItems()`
+verwarf genauso stillschweigend jeden Eintrag, der kein Objekt mit einem
+String-Pfad war, dazu leere Pfade und Duplikate.
+
+Jetzt bricht der Aufruf nicht mehr ab, wenn ein Eintrag nicht taugt. Was nicht
+zur Karte wird, kommt mit einem Grund zurück — `invalid`, `empty`, `duplicate`,
+`overflow`, `missing` —, und der Ergebnistext nennt es beim Namen, neben den
+Karten, die es gibt:
+
+    Not shown (2): {"path":42} (not a path), docs/gone.png (missing or unreadable)
+
+Ein Aufruf mit gültigen und ungültigen Pfaden liefert die gültigen. Nur wenn
+gar nichts gezeigt werden kann, scheitert er weiterhin laut und nennt dabei
+jeden Eintrag. Ein einzelner Pfad oder ein einzelnes Objekt gilt als Aufruf mit
+einer Datei statt als leerer Aufruf, weil das Argument über die
+`xd://`-Brücke ungeprüft ankommt. Eine Datei über
+`MAX_PRESENT_SNIFFABLE_BYTES` behält ihre Karte und bekommt keinen Auszug —
+abgelehnt wird sie nicht, die Karte ist der Zweck.
+
+Der Deckel steht an einer Stelle, und `lib/present-files.test.mjs` pinnt die 48
+als Zahl: eine spätere Änderung ist damit eine Entscheidung und keine stille
+Korrektur.
+
 ### Settings
 
 - Draw the navigation entries that are inactive without a project in the
