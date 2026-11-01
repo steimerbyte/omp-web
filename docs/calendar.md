@@ -369,8 +369,8 @@ Kalender öffnet, ist aus demselben Grund deutsch beschriftet
 ### Die drei Ansichten
 
 - **Monat** — ein 6×7-Raster, Montag zuerst. Jede Zelle zeigt den Tag, den
-  Feiertagsnamen und die Termine. Ein Klick auf einen Tag **ohne** Termine
-  legt einen Termin an; ein Tag **mit** Terminen öffnet erst die Terminliste
+  Feiertagsnamen und die Termine. Ein Klick auf die Tagesfläche legt einen
+  Termin an — außer in den beiden Fällen, in denen er die Terminliste öffnet
   (siehe unten).
 - **Woche** — sieben Tagesspalten mit einer Stundenskala von 00 bis 24 Uhr.
   Ganztagestermine stehen in einer eigenen Zeile darüber, Termine mit Uhrzeit
@@ -385,14 +385,25 @@ damit jeder Termin erreichbar, den die Zelle abgeschnitten hatte — aber nur
 über einen Ansichtswechsel, und die Zelle selbst ließ sich nicht antippen,
 ohne einen *neuen* Termin anzulegen.
 
-Ein Klick auf einen Tag mit Terminen öffnet deshalb eine Liste
+Ein Klick auf die Tagesfläche öffnet deshalb in genau zwei Fällen eine Liste
 (`components/calendar/DayEventsSheet.tsx`, ein `Dialog` aus
 `components/ui/dialog`): jeder Termin mit Titel und Uhrzeit, die Liste
 scrollt innerhalb des Dialogs, und darunter stehen „Neuer Termin" und
-„Schließen". Aus der Liste geht es in den Termin-Dialog. Die Liste ist der
-einzige Weg — auch „N weitere" öffnet sie.
+„Schließen". Aus der Liste geht es in den Termin-Dialog.
 
-Auf einem 390 Pixel breiten Bildschirm ist das der Unterschied zwischen
+1. **Auf dem schmalen Bildschirm** (dieselbe 640-Pixel-Schwelle wie
+   `useIsMobile`) — immer, auch bei einem einzigen Termin. Dort ist die
+   Zelle das Ziel, nicht der Chip: 51 Pixel breit und 17 Pixel hoch trifft
+   kein Finger.
+2. **Auf dem Desktop, wenn die Zelle Termine verschluckt** (`hiddenCount > 0`,
+   also wenn „N weitere" dasteht). Dann ist die Liste der einzige Weg zu
+   diesen Terminen.
+
+Sonst — breiter Bildschirm und alle Termine sichtbar — legt der Klick auf
+die Tagesfläche wie bisher direkt einen Termin an. Ein Klick auf einen
+Termin-Chip öffnet immer direkt den Termin-Dialog.
+
+Auf einem 390 Pixel breiten Bildschirm ist die Liste der Unterschied zwischen
 einem 50 Pixel breiten Chip, den niemand trifft, und einer Liste mit
 44 Pixel hohen Zeilen.
 

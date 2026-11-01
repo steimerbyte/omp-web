@@ -179,6 +179,10 @@ globalThis.EventSource = class {
 
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { CalendarView } = await jiti.import("../CalendarView.tsx");
+// Die deutschen Texte des Kalenders — die Quelle der Beschriftungen. Der Test
+// schreibt sie nicht noch einmal hin.
+const { deLocale } = await jiti.import("@/lib/i18n/messages/de.ts");
+const deMessages = deLocale.messages;
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -387,7 +391,72 @@ test("ein Termin, der in der Wochenansicht auf eine andere Stunde gezogen wird, 
 
 // ------------------------- der Tag mit vielen Terminen als Zwischenschritt --
 
-test("ein Klick auf einen Tag mit Terminen oeffnet erst die Terminliste", async () => {
+/**
+ * Misst den Test als schmalen Bildschirm.
+ *
+ * `useIsMobile` liest die Breite ueber `matchMedia`; das ist der einzige Weg,
+ * der Ansicht einen 390-Pixel-Bildschirm zu sagen. Der Austausch gilt nur
+ * fuer die Dauer des Aufrufs.
+ */
+async function withMobile(run) {
+  const original = win.matchMedia;
+  win.matchMedia = (query) => ({
+    matches: query.includes("max-width: 640px"),
+    media: query,
+    addEventListener() {}, removeEventListener() {},
+    addListener() {}, removeListener() {},
+    onchange: null,
+    dispatchEvent() { return false; },
+  });
+  try {
+    return await run();
+  } finally {
+    win.matchMedia = original;
+  }
+}
+
+test("schmal: ein Klick auf einen Tag oeffnet erst die Terminliste", async () => {
+  await withMobile(async () => {
+    const { root } = await mount();
+
+    const chip = chipWith("Teammeeting");
+    assert.ok(chip, "der Termin-Chip wurde nicht gerendert");
+    const cell = chip.closest("[data-cal-cell]");
+    assert.ok(cell, "die Tageszelle wurde nicht gefunden");
+
+    await act(async () => {
+      cell.dispatchEvent(new win.Event("click", { bubbles: true }));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    // Der Termin-Dialog ist **nicht** aufgegangen: erst kommt die Liste.
+    assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
+    assert.ok(
+      win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
+      "die Terminliste wurde nicht geoeffnet",
+    );
+
+    // Die Liste nennt beide Termine des Tages und ihre Uhrzeit.
+    const rows = [...win.document.querySelectorAll("button")].filter(
+      (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
+    );
+    assert.equal(rows.length, 2, "die Liste zeigt nicht alle Termine des Tages");
+    const meeting = rows.find((row) => row.textContent.includes("Teammeeting"));
+    assert.match(meeting.textContent, /15:00–16:30/, "die Uhrzeit des Termins fehlt in der Liste");
+
+    // Und *daraus* kommt der Dialog, mit dem gewaehlten Termin.
+    await act(async () => { meeting.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    const title = byId("calendar-title");
+    assert.ok(title, "der Termin-Dialog ging aus der Liste nicht auf");
+    assert.equal(title.value, "Teammeeting", "der Dialog hat nicht den gewaehlten Termin gefuellt");
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+test("breit: passen alle Termine in die Zelle, legt der Klick direkt an", async () => {
   const { root } = await mount();
 
   const chip = chipWith("Teammeeting");
@@ -400,26 +469,68 @@ test("ein Klick auf einen Tag mit Terminen oeffnet erst die Terminliste", async 
   });
   await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 
-  // Der Termin-Dialog ist **nicht** aufgegangen: erst kommt die Liste.
-  assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
-
-  // Die Liste nennt beide Termine des Tages und ihre Uhrzeit.
-  const rows = [...win.document.querySelectorAll("button")].filter(
-    (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
+  // Keine Liste, kein Zwischenschritt: auf dem Desktop ist der Klick auf die
+  // Tagesflaeche das Anlegen, solange die Zelle nichts verschluckt.
+  assert.equal(
+    win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
+    false,
+    "auf dem Desktop wurde die Terminliste geoeffnet, obwohl alle Termine sichtbar sind",
   );
-  assert.equal(rows.length, 2, "die Liste zeigt nicht alle Termine des Tages");
-  const meeting = rows.find((row) => row.textContent.includes("Teammeeting"));
-  assert.match(meeting.textContent, /15:00–16:30/, "die Uhrzeit des Termins fehlt in der Liste");
-
-  // Und *daraus* kommt der Dialog, mit dem gewaehlten Termin.
-  await act(async () => { meeting.click(); });
-  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
-
   const title = byId("calendar-title");
-  assert.ok(title, "der Termin-Dialog ging aus der Liste nicht auf");
-  assert.equal(title.value, "Teammeeting", "der Dialog hat nicht den gewaehlten Termin gefuellt");
+  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.equal(title.value, "", "der Dialog ist nicht leer");
 
   await act(async () => { root.unmount(); });
+});
+
+test("breit mit verdeckten Terminen: der Klick auf den Tag oeffnet die Liste", async () => {
+  // Ohne Layout misst das Raster keine Hoehen, und `hiddenCount` bliebe 0.
+  // Fuer diesen Fall bekommt der Test ein Layout: jede Zelle 50 Pixel hoch,
+  // die Tageszeile 20, ein Termin-Chip 16 — damit passt genau ein Chip
+  // hinein, und eine Zelle mit zwei Terminen verschluckt einen.
+  const proto = win.HTMLElement.prototype;
+  const originalRect = win.Element.prototype.getBoundingClientRect;
+  Object.defineProperty(proto, "clientHeight", { configurable: true, get() { return 50; } });
+  Object.defineProperty(proto, "offsetHeight", { configurable: true, get() { return 20; } });
+  win.Element.prototype.getBoundingClientRect = () => ({
+    height: 16, width: 100, top: 0, left: 0, right: 100, bottom: 16, x: 0, y: 0,
+    toJSON() { return {}; },
+  });
+
+  try {
+    const { root } = await mount();
+
+    const more = [...win.document.querySelectorAll("button")]
+      .find((button) => /^\d+ weitere$/.test(button.textContent.trim()));
+    assert.ok(more, "der Hinweis „N weitere\" wurde nicht gerendert");
+    // Zwei Termine, Platz fuer einen: die Zelle verschluckt einen davon.
+    assert.equal(more.textContent.trim(), "2 weitere", "der Hinweis nennt nicht beide verdeckten Termine");
+    const cell = more.closest("[data-cal-cell]");
+    assert.ok(cell, "die Tageszelle wurde nicht gefunden");
+
+    await act(async () => {
+      cell.dispatchEvent(new win.Event("click", { bubbles: true }));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
+    assert.ok(
+      win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
+      "die Terminliste wurde nicht geoeffnet",
+    );
+    // Der verdeckte Termin steht in der Liste — vorher war er nur ueber den
+    // Wechsel in die Tagesansicht erreichbar.
+    const rows = [...win.document.querySelectorAll("button")].filter(
+      (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
+    );
+    assert.equal(rows.length, 2, "die Liste zeigt nicht alle Termine des Tages");
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    delete proto.clientHeight;
+    delete proto.offsetHeight;
+    win.Element.prototype.getBoundingClientRect = originalRect;
+  }
 });
 
 test("ein Klick auf einen leeren Tag legt weiterhin direkt einen Termin an", async () => {
@@ -449,20 +560,7 @@ test("ein Klick auf einen leeren Tag legt weiterhin direkt einen Termin an", asy
 });
 
 test("auf 390 Pixeln passen alle sieben Tage in die Breite — Monat und Woche", async () => {
-  // Der Bildschirm des iPhone 14: 390 CSS-Pixel, also unter der Schwelle
-  // von `useIsMobile`. `matchMedia` ist der einzige Weg, das der Ansicht zu
-  // sagen — hier wird es fuer die Dauer dieses Tests umgestellt.
-  const original = win.matchMedia;
-  win.matchMedia = (query) => ({
-    matches: query.includes("max-width: 640px"),
-    media: query,
-    addEventListener() {}, removeEventListener() {},
-    addListener() {}, removeListener() {},
-    onchange: null,
-    dispatchEvent() { return false; },
-  });
-
-  try {
+  await withMobile(async () => {
     const { root } = await mount();
 
     // Das Monatsraster: sieben Spalten, keine harte Mindestbreite. Beides
@@ -499,7 +597,5 @@ test("auf 390 Pixeln passen alle sieben Tage in die Breite — Monat und Woche",
     );
 
     await act(async () => { root.unmount(); });
-  } finally {
-    win.matchMedia = original;
-  }
+  });
 });

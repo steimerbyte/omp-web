@@ -249,9 +249,11 @@ entfällt die Mindestbreite, und die sieben Spalten teilen sich die
 Panelbreite.
 
 Ein Tag mit mehr Terminen, als in eine Monatszelle passen, ist jetzt
-auswählbar: ein Klick auf den Tag öffnet eine scrollbare Terminliste, und
-erst aus der Liste kommt der Termin-Dialog. Vorher führte nur „N weitere" in
-die Tagesansicht, und ein Klick auf die Zelle legte einen neuen Termin an.
+auswählbar: ein Klick auf die Tagesfläche öffnet eine scrollbare Terminliste,
+und erst aus der Liste kommt der Termin-Dialog. Das gilt auf dem Handy immer
+(dort trifft der Finger keinen 50 Pixel breiten Chip) und auf dem Desktop
+dann, wenn die Zelle Termine verschluckt und „N weitere" dasteht. Sonst legt
+der Klick auf die Fläche wie bisher direkt einen Termin an.
 
 **Deutsch als Oberflächensprache.** `lib/i18n/messages/de.ts` ist ein
 vollständiges Sprachpaket: es trägt alle 690 Schlüssel des englischen Katalogs

@@ -958,11 +958,19 @@ function MonthGrid({
               key={date}
               data-cal-cell="true"
               onClick={() => {
-                // Ein Tag mit Terminen oeffnet erst die Liste: in die Zelle
-                // passen nur wenige Chips, und ein Chip ist auf einem Handy
-                // 50 Pixel breit. Ein leerer Tag legt dagegen direkt an —
-                // dort gibt es nichts auszuwaehlen.
-                if (dayEvents.length > 0) onOpenDay(date);
+                // Zwei Faelle oeffnen die Liste, alle anderen legen an:
+                //
+                // 1. `compact` — auf einem Handy ist die Zelle das Ziel, nicht
+                //    der Chip: 51 Pixel breit und 17 Pixel hoch trifft kein
+                //    Finger, und der Desktop-Direktklick (`onCreate`) wuerde
+                //    dort staendig einen Termin anlegen wollen, statt den
+                //    gemeinten zu oeffnen.
+                // 2. `hiddenCount > 0` — auf dem Desktop gibt es das Problem
+                //    nicht, solange alle Termine in die Zelle passen; dann ist
+                //    der Klick auf die Flaeche das Anlegen. Erst wenn die
+                //    Zelle Termine verschluckt („N weitere"), ist die Liste
+                //    der einzige Weg zu ihnen.
+                if (compact || hiddenCount > 0) onOpenDay(date);
                 else onCreate(date, null);
               }}
               onDragEnter={(event) => {

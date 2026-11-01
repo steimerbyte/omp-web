@@ -23,6 +23,10 @@ import { useCalendarText } from "./useCalendarText";
  * *aus* der Liste kommt der Termin-Dialog. Damit ist jeder Termin eines Tages
  * erreichbar, unabhaengig davon, wie viele in die Zelle passen.
  *
+ * Wann der Klick die Liste oeffnet und wann er direkt anlegt, entscheidet
+ * `MonthGrid` (`compact || hiddenCount > 0`): auf dem Desktop bleibt der
+ * Ein-Klick-Weg zum Anlegen erhalten, solange die Zelle nichts verschluckt.
+ *
  * ### Warum ein `Dialog` und kein eigenes Popup
  *
  * Fokusfalle, Escape, Klick auf den Hintergrund und `aria-modal` sind die
