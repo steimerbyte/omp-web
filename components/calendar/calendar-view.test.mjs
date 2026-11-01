@@ -533,6 +533,34 @@ test("breit mit verdeckten Terminen: der Klick auf den Tag oeffnet die Liste", a
   }
 });
 
+test("schmal: ein leerer Tag legt direkt an, statt die Liste zu oeffnen", async () => {
+  await withMobile(async () => {
+    const { root } = await mount();
+
+    const empty = [...win.document.querySelectorAll("[data-cal-cell]")]
+      .find((cell) => !cell.querySelector("[data-cal-chip]"));
+    assert.ok(empty, "es gibt keine leere Tageszelle im Raster");
+
+    await act(async () => {
+      empty.dispatchEvent(new win.Event("click", { bubbles: true }));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    // Eine Liste ohne Eintraege waere ein Zwischenschritt ohne Auswahl: dort
+    // gibt es nichts zu waehlen, also legt der Klick direkt an.
+    assert.equal(
+      win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
+      false,
+      "auf dem schmalen Bildschirm wurde fuer einen leeren Tag die Liste geoeffnet",
+    );
+    const title = byId("calendar-title");
+    assert.ok(title, "der Termin-Dialog ging nicht auf");
+    assert.equal(title.value, "", "der Dialog ist nicht leer");
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
 test("ein Klick auf einen leeren Tag legt weiterhin direkt einen Termin an", async () => {
   const { root } = await mount();
 

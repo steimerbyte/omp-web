@@ -385,23 +385,25 @@ damit jeder Termin erreichbar, den die Zelle abgeschnitten hatte — aber nur
 über einen Ansichtswechsel, und die Zelle selbst ließ sich nicht antippen,
 ohne einen *neuen* Termin anzulegen.
 
-Ein Klick auf die Tagesfläche öffnet deshalb in genau zwei Fällen eine Liste
+Ein Klick auf die Tagesfläche öffnet deshalb eine Liste
 (`components/calendar/DayEventsSheet.tsx`, ein `Dialog` aus
-`components/ui/dialog`): jeder Termin mit Titel und Uhrzeit, die Liste
-scrollt innerhalb des Dialogs, und darunter stehen „Neuer Termin" und
-„Schließen". Aus der Liste geht es in den Termin-Dialog.
+`components/ui/dialog`) — aber nur, wenn der Tag mindestens einen Termin hat
+**und** einer der beiden Gründe vorliegt: jeder Termin mit Titel und Uhrzeit,
+die Liste scrollt innerhalb des Dialogs, und darunter stehen „Neuer Termin"
+und „Schließen". Aus der Liste geht es in den Termin-Dialog.
 
 1. **Auf dem schmalen Bildschirm** (dieselbe 640-Pixel-Schwelle wie
-   `useIsMobile`) — immer, auch bei einem einzigen Termin. Dort ist die
-   Zelle das Ziel, nicht der Chip: 51 Pixel breit und 17 Pixel hoch trifft
-   kein Finger.
+   `useIsMobile`) — auch bei einem einzigen Termin. Dort ist die Zelle das
+   Ziel, nicht der Chip: 51 Pixel breit und 17 Pixel hoch trifft kein Finger.
 2. **Auf dem Desktop, wenn die Zelle Termine verschluckt** (`hiddenCount > 0`,
    also wenn „N weitere" dasteht). Dann ist die Liste der einzige Weg zu
    diesen Terminen.
 
-Sonst — breiter Bildschirm und alle Termine sichtbar — legt der Klick auf
-die Tagesfläche wie bisher direkt einen Termin an. Ein Klick auf einen
-Termin-Chip öffnet immer direkt den Termin-Dialog.
+Sonst legt der Klick auf die Tagesfläche wie bisher direkt einen Termin an —
+auf dem breiten Bildschirm, wenn alle Termine sichtbar sind, und in **beiden**
+Ansichten auf einem leeren Tag: eine Liste ohne Einträge wäre ein
+Zwischenschritt ohne Auswahl. Ein Klick auf einen Termin-Chip öffnet immer
+direkt den Termin-Dialog.
 
 Auf einem 390 Pixel breiten Bildschirm ist die Liste der Unterschied zwischen
 einem 50 Pixel breiten Chip, den niemand trifft, und einer Liste mit

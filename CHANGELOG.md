@@ -250,10 +250,11 @@ Panelbreite.
 
 Ein Tag mit mehr Terminen, als in eine Monatszelle passen, ist jetzt
 auswählbar: ein Klick auf die Tagesfläche öffnet eine scrollbare Terminliste,
-und erst aus der Liste kommt der Termin-Dialog. Das gilt auf dem Handy immer
-(dort trifft der Finger keinen 50 Pixel breiten Chip) und auf dem Desktop
-dann, wenn die Zelle Termine verschluckt und „N weitere" dasteht. Sonst legt
-der Klick auf die Fläche wie bisher direkt einen Termin an.
+und erst aus der Liste kommt der Termin-Dialog. Das gilt für einen Tag mit
+Terminen auf dem Handy (dort trifft der Finger keinen 50 Pixel breiten Chip)
+und auf dem Desktop dann, wenn die Zelle Termine verschluckt und „N weitere"
+dasteht. Sonst legt der Klick auf die Fläche wie bisher direkt einen Termin
+an — auch auf einem leeren Tag in der schmalen Ansicht.
 
 **Deutsch als Oberflächensprache.** `lib/i18n/messages/de.ts` ist ein
 vollständiges Sprachpaket: es trägt alle 690 Schlüssel des englischen Katalogs

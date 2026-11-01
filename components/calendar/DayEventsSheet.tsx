@@ -24,7 +24,8 @@ import { useCalendarText } from "./useCalendarText";
  * erreichbar, unabhaengig davon, wie viele in die Zelle passen.
  *
  * Wann der Klick die Liste oeffnet und wann er direkt anlegt, entscheidet
- * `MonthGrid` (`compact || hiddenCount > 0`): auf dem Desktop bleibt der
+ * `MonthGrid` (`dayEvents.length > 0 && (compact || hiddenCount > 0)`): ein
+ * leerer Tag legt immer direkt an, und auf dem Desktop bleibt der
  * Ein-Klick-Weg zum Anlegen erhalten, solange die Zelle nichts verschluckt.
  *
  * ### Warum ein `Dialog` und kein eigenes Popup
