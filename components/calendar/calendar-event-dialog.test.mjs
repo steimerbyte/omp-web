@@ -537,3 +537,129 @@ test("aendert sich die Beginnzeit, laeuft das Ende mit — nicht nur beim Oeffne
   assert.equal(saved[0].end, "2026-03-14T17:00");
   assert.equal(minutenZwischen(saved[0].start, saved[0].end), 60);
 });
+
+// ------------------------------------- die Uhrzeit ist immer einstellbar --
+
+test("ein neuer Termin aus der Monatsansicht hat Uhrzeitfelder — 09:00 bis 10:00", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    // Der Klick auf eine Tageszelle im Monatsraster liefert keine Uhrzeit.
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  const start = startZeitFeld();
+  const end = endZeitFeld();
+  assert.ok(start, "das Zeitfeld des Beginns fehlt im Monatskontext");
+  assert.ok(end, "das Zeitfeld des Endes fehlt im Monatskontext");
+  assert.equal(start.disabled, false, "das Zeitfeld des Beginns ist gesperrt");
+  assert.equal(end.disabled, false, "das Zeitfeld des Endes ist gesperrt");
+
+  await submitWithTitle("Teammeeting");
+
+  assert.equal(saved.length, 1, "das Formular wurde nicht abgeschickt");
+  // Ein Datum **mit** Uhrzeit: der Termin ist damit kein Ganztagestermin.
+  assert.equal(saved[0].start, "2026-03-14T09:00");
+  assert.equal(saved[0].end, "2026-03-14T10:00");
+  assert.equal(saved[0].allDay, false, "der Termin wurde als Ganztagestermin gespeichert");
+});
+
+test("ein bestehender Termin mit Uhrzeit zeigt und behaelt seine Zeitfelder", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: {
+      id: "e1", title: "Teammeeting", allDay: false,
+      start: "2026-03-14T15:00", end: "2026-03-14T16:30",
+    },
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  assert.equal(startZeitFeld()?.value, "15:00", "die Beginnzeit steht nicht im Feld");
+  assert.equal(endZeitFeld()?.value, "16:30", "die Endzeit steht nicht im Feld");
+  assert.equal(startZeitFeld()?.disabled, false, "die Beginnzeit ist gesperrt");
+
+  await submitWithTitle("Teammeeting");
+  assert.equal(saved[0].start, "2026-03-14T15:00");
+  assert.equal(saved[0].end, "2026-03-14T16:30");
+});
+
+test("ein Ganztagestermin sperrt die Zeitfelder, statt sie zu verstecken", async () => {
+  await mount(React.createElement(CalendarEventDialog, {
+    event: {
+      id: "e1", title: "Urlaub", allDay: true,
+      start: "2026-03-14", end: "2026-03-14",
+    },
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  const start = startZeitFeld();
+  assert.ok(start, "das Zeitfeld des Beginns ist verschwunden statt gesperrt");
+  assert.equal(start.disabled, true, "das Zeitfeld eines Ganztagestermins ist bedienbar");
+});
+
+test("ein Ende vor dem Beginn wird im Dialog gemeldet und nicht gespeichert", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: "18:00" },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  const end = endZeitFeld();
+  assert.ok(end, "das Zeitfeld des Endes fehlt");
+  // 18:00 bis 17:00 — ein Tippfehler, kein Termin.
+  await setInputValue(end, "17:00");
+
+  await submitWithTitle("Teammeeting");
+
+  assert.equal(saved.length, 0, "ein Termin mit dem Ende vor dem Beginn wurde gespeichert");
+  assert.match(
+    win.document.body.textContent,
+    new RegExp(deMessages["calendar.invalidRange"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    "der Grund steht nicht im Dialog",
+  );
+});
+
+test("ein Termin ueber Mitternacht braucht das Enddatum des naechsten Tages", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: "22:00" },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  // Ohne neues Enddatum ist 22:00 bis 02:00 ungueltig …
+  await setInputValue(endZeitFeld(), "02:00");
+  await submitWithTitle("Nachtwache");
+  assert.equal(saved.length, 0, "der ungueltige Zeitraum wurde gespeichert");
+
+  // … mit dem 15. als Enddatum ist es ein gueltiger Termin ueber Mitternacht.
+  await setInputValue(byId("calendar-end-date"), "15.03.2026");
+  const form = win.document.querySelector("form");
+  await act(async () => {
+    form.dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+  assert.equal(saved.length, 1, "der Termin ueber Mitternacht wurde nicht gespeichert");
+  assert.equal(saved[0].start, "2026-03-14T22:00");
+  assert.equal(saved[0].end, "2026-03-15T02:00");
+});

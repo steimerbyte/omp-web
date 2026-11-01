@@ -196,6 +196,9 @@ async function mount() {
 /** Der Knopf mit dem gegebenen Text. */
 const buttonWith = (text) => [...win.document.querySelectorAll("button")].find((b) => b.textContent.trim() === text);
 
+/** Ein Element ueber seine Kennung. */
+const byId = (id) => win.document.getElementById(id);
+
 /** Der Chip (der ziehbare Termin) mit dem gegebenen Titel. */
 const chipWith = (title) =>
   [...win.document.querySelectorAll("[draggable=true]")].find((c) => c.textContent.includes(title));
@@ -380,4 +383,123 @@ test("ein Termin, der in der Wochenansicht auf eine andere Stunde gezogen wird, 
   assert.equal(patch.body.end, `${EVENT_DAY}T10:30`, "die Dauer des Termins ging beim Ziehen verloren");
 
   await act(async () => { root.unmount(); });
+});
+
+// ------------------------- der Tag mit vielen Terminen als Zwischenschritt --
+
+test("ein Klick auf einen Tag mit Terminen oeffnet erst die Terminliste", async () => {
+  const { root } = await mount();
+
+  const chip = chipWith("Teammeeting");
+  assert.ok(chip, "der Termin-Chip wurde nicht gerendert");
+  const cell = chip.closest("[data-cal-cell]");
+  assert.ok(cell, "die Tageszelle wurde nicht gefunden");
+
+  await act(async () => {
+    cell.dispatchEvent(new win.Event("click", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  // Der Termin-Dialog ist **nicht** aufgegangen: erst kommt die Liste.
+  assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
+
+  // Die Liste nennt beide Termine des Tages und ihre Uhrzeit.
+  const rows = [...win.document.querySelectorAll("button")].filter(
+    (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
+  );
+  assert.equal(rows.length, 2, "die Liste zeigt nicht alle Termine des Tages");
+  const meeting = rows.find((row) => row.textContent.includes("Teammeeting"));
+  assert.match(meeting.textContent, /15:00–16:30/, "die Uhrzeit des Termins fehlt in der Liste");
+
+  // Und *daraus* kommt der Dialog, mit dem gewaehlten Termin.
+  await act(async () => { meeting.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const title = byId("calendar-title");
+  assert.ok(title, "der Termin-Dialog ging aus der Liste nicht auf");
+  assert.equal(title.value, "Teammeeting", "der Dialog hat nicht den gewaehlten Termin gefuellt");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("ein Klick auf einen leeren Tag legt weiterhin direkt einen Termin an", async () => {
+  const { root } = await mount();
+
+  // Die Zelle ohne Chip — dort gibt es nichts auszuwaehlen.
+  const empty = [...win.document.querySelectorAll("[data-cal-cell]")]
+    .find((cell) => !cell.querySelector("[data-cal-chip]"));
+  assert.ok(empty, "es gibt keine leere Tageszelle im Raster");
+
+  await act(async () => {
+    empty.dispatchEvent(new win.Event("click", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const title = byId("calendar-title");
+  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.equal(title.value, "", "der Dialog ist nicht leer");
+  // Ein neuer Termin bringt seine Uhrzeit selbst mit: 09:00 bis 10:00.
+  assert.equal(
+    win.document.querySelector(`input[aria-label="Beginn (Uhrzeit)"]`)?.value,
+    "09:00",
+    "der neue Termin hat keine Beginnzeit",
+  );
+
+  await act(async () => { root.unmount(); });
+});
+
+test("auf 390 Pixeln passen alle sieben Tage in die Breite — Monat und Woche", async () => {
+  // Der Bildschirm des iPhone 14: 390 CSS-Pixel, also unter der Schwelle
+  // von `useIsMobile`. `matchMedia` ist der einzige Weg, das der Ansicht zu
+  // sagen — hier wird es fuer die Dauer dieses Tests umgestellt.
+  const original = win.matchMedia;
+  win.matchMedia = (query) => ({
+    matches: query.includes("max-width: 640px"),
+    media: query,
+    addEventListener() {}, removeEventListener() {},
+    addListener() {}, removeListener() {},
+    onchange: null,
+    dispatchEvent() { return false; },
+  });
+
+  try {
+    const { root } = await mount();
+
+    // Das Monatsraster: sieben Spalten, keine harte Mindestbreite. Beides
+    // ist der Unterschied zwischen „alle sieben Tage sichtbar" und 672
+    // Pixeln Raster auf 390 Pixeln Bildschirm.
+    const month = [...win.document.querySelectorAll("div")].find(
+      (d) => d.style.gridTemplateRows === "repeat(6, 1fr)",
+    );
+    assert.ok(month, "das Monatsraster wurde nicht gerendert");
+    assert.equal(
+      month.style.gridTemplateColumns,
+      "repeat(7, minmax(0, 1fr))",
+      "die Monatsspalten duerfen unter ihre Inhaltsbreite schrumpfen — sonst scrollt die Ansicht",
+    );
+    const monthBox = month.parentElement;
+    assert.ok(
+      ["0", "0px", ""].includes(monthBox.style.minWidth),
+      `die Mindestbreite ${monthBox.style.minWidth} erzwingt seitliches Scrollen`,
+    );
+
+    // Die Wochenansicht: Stundenskala 28 statt 56, Tagesspalten ohne die
+    // 120-Pixel-Untergrenze — 28 + 7 × 51 waeren sonst 896 Pixel.
+    await act(async () => { buttonWith("Woche").click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    const week = [...win.document.querySelectorAll("div")].find(
+      (d) => d.style.gridTemplateColumns?.startsWith("28px repeat(7,"),
+    );
+    assert.ok(week, "das Wochenraster nutzt nicht die schmale Stundenskala");
+    assert.equal(
+      week.style.gridTemplateColumns,
+      "28px repeat(7, minmax(0, 1fr))",
+      "die Wochentage duerfen unter 120 Pixel schrumpfen — sonst scrollt die Ansicht",
+    );
+
+    await act(async () => { root.unmount(); });
+  } finally {
+    win.matchMedia = original;
+  }
 });

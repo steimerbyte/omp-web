@@ -26,8 +26,10 @@ import {
   todayDateString,
 } from "./calendar/calendar-model";
 import { useCalendar, type CalendarEventInput } from "@/hooks/useCalendar";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { CalendarEventDialog } from "./calendar/CalendarEventDialog";
 import { CalendarImportButton } from "./calendar/CalendarImport";
+import { DayEventsSheet } from "./calendar/DayEventsSheet";
 import { useCalendarText } from "./calendar/useCalendarText";
 
 /**
@@ -62,6 +64,16 @@ type CalendarMode = "month" | "week" | "day";
  *
  * Deshalb hat das Raster eine Mindestbreite, und die Area, in der es
  * liegt, scrollt waagerecht.
+ *
+ * ### Auf dem Handy faellt sie weg
+ *
+ * Auf einem 390 Pixel breiten Bildschirm sind 672 Pixel nicht „etwas
+ * breiter", sondern fast das Doppelte: man sieht Montag bis Donnerstag und
+ * muss fuer Sonntag seitlich scrollen. Dort zeigt das Raster deshalb alle
+ * sieben Spalten gleichzeitig (`repeat(7, minmax(0, 1fr))`); die Zelle wird
+ * schmaler, und der Termin-Chip kuerzt seinen Titel mit Auslassungspunkten.
+ * Eine Woche, die man ganz sieht, ist mehr wert als ein Titel, den man ganz
+ * liest.
  */
 const MONTH_MIN_WIDTH = 7 * 96;
 
@@ -75,6 +87,20 @@ const TIME_COLUMN_MIN_WIDTH = 120;
 
 /** Die Breite der Stundenskala links neben den Tagen. */
 const TIME_AXIS_WIDTH = 56;
+
+/**
+ * Dieselben Masse fuer den schmalen Bildschirm.
+ *
+ * `TIME_AXIS_WIDTH_SMALL` traegt noch die zweistellige Stundenzahl; die
+ * Spalte selbst schrumpft auf den Platz, den sieben Tage in 390 Pixeln
+ * teilen. Gerechnet: 390 − 28 = 362, geteilt durch sieben sind 51 Pixel je
+ * Tag — genug fuer den Tag, die Stunde und einen gekuerzten Titel.
+ */
+const TIME_AXIS_WIDTH_SMALL = 28;
+
+/** Der Innenabstand einer Tageszelle, schmal und breit. */
+const CELL_PADDING = "4px 5px";
+const CELL_PADDING_SMALL = "3px 3px";
 
 /**
  * Wohin ein Termin gezogen wurde.
@@ -103,10 +129,20 @@ interface EditingState {
 export function CalendarView() {
   const t = useCalendarText();
   const { events, error, create, update, remove, reload } = useCalendar();
+  /** `true` unter 640 Pixel — dieselbe Schwelle wie `app/globals.css`. */
+  const isMobile = useIsMobile();
 
   const [mode, setMode] = useState<CalendarMode>("month");
   const [anchor, setAnchor] = useState<string>(todayDateString);
   const [editing, setEditing] = useState<EditingState | null>(null);
+  /**
+   * Der Tag, dessen Terminliste gerade offen ist — oder `null`.
+   *
+   * Die Liste ist der Zwischenschritt zwischen Monatszelle und Dialog: ein
+   * Tag mit mehr Terminen, als in die Zelle passen, laesst sich sonst nicht
+   * auswaehlen.
+   */
+  const [dayList, setDayList] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -180,6 +216,9 @@ export function CalendarView() {
     setDialogError(null);
     setEditing({ event, preset: { date: event.start.slice(0, 10), time: null } });
   }, []);
+
+  /** Oeffnet die Terminliste eines Tages — der Zwischenschritt zum Dialog. */
+  const openDayList = useCallback((date: string) => setDayList(date), []);
 
   /** Speichert den Termin aus dem Dialog. */
   const handleSave = useCallback(async (input: CalendarEventInput, id: string | null) => {
@@ -524,27 +563,46 @@ export function CalendarView() {
           anchor={anchor}
           events={allEvents}
           holidays={holidays}
+          compact={isMobile}
           onCreate={openCreate}
           onEdit={openEdit}
           onMove={moveEvent}
-          onShowDay={(date) => {
-            // Der Hinweis „N weitere" fuehrt in die Tagesansicht dieses
-            // Tages: dort stehen alle Termine, ohne dass einer abgeschnitten
-            // wird.
-            setMode("day");
-            setAnchor(date);
-          }}
+          onOpenDay={openDayList}
         />
       ) : (
         <TimeGrid
           days={gridDays}
           events={allEvents}
           holidays={holidays}
+          compact={isMobile}
           onCreate={openCreate}
           onEdit={openEdit}
           onMove={moveEvent}
         />
       )}
+
+      {dayList ? (
+        <DayEventsSheet
+          date={dayList}
+          // Alle Termine des Tages, nach Beginn sortiert — dieselbe Reihenfolge
+          // wie im Raster.
+          events={allEvents
+            .filter((event) => eventSpansDay(event, dayList))
+            .sort((left, right) => (left.start < right.start ? -1 : left.start > right.start ? 1 : 0))}
+          onSelect={(event) => {
+            // Erst die Liste schliessen, dann den Dialog oeffnen: der Dialog
+            // ist modal, und zwei modale Ebenen uebereinander faengt der
+            // Fokus falsch ein.
+            setDayList(null);
+            openEdit(event);
+          }}
+          onCreate={(date) => {
+            setDayList(null);
+            openCreate(date, null);
+          }}
+          onClose={() => setDayList(null)}
+        />
+      ) : null}
 
       {editing ? (
         <CalendarEventDialog
@@ -684,20 +742,23 @@ function MonthGrid({
   anchor,
   events,
   holidays,
+  compact,
   onCreate,
   onEdit,
   onMove,
-  onShowDay,
+  onOpenDay,
 }: {
   days: string[];
   anchor: string;
   events: CalendarEvent[];
   holidays: Map<string, string>;
+  /** Schmaler Bildschirm: alle sieben Spalten in der Panelbreite. */
+  compact: boolean;
   onCreate: (date: string, time: string | null) => void;
   onEdit: (event: CalendarEvent) => void;
   onMove: (event: CalendarEvent, target: MoveTarget) => void;
-  /** Wechselt in die Tagesansicht — fuer den Hinweis „N weitere". */
-  onShowDay: (date: string) => void;
+  /** Oeffnet die Terminliste eines Tages. */
+  onOpenDay: (date: string) => void;
 }) {
   const t = useCalendarText();
   const month = anchor.slice(0, 7);
@@ -802,6 +863,9 @@ function MonthGrid({
         * waagerecht. Nicht die Seite: eine Seite, die seitlich scrollt,
         * verschiebt beim Scrollen das ganze Fenster, und das Panel waere
         * nicht mehr an seinem Platz.
+        *
+        * Auf dem schmalen Bildschirm gibt es diese Mindestbreite nicht: dort
+        * passt die Woche in die Panelbreite, und es gibt nichts zu scrollen.
         */}
       <div
         style={{
@@ -809,13 +873,13 @@ function MonthGrid({
           minHeight: 0,
           display: "flex",
           flexDirection: "column",
-          overflowX: "auto",
+          overflowX: compact ? "hidden" : "auto",
           overflowY: "hidden",
         }}
       >
         <div
           style={{
-            minWidth: MONTH_MIN_WIDTH,
+            minWidth: compact ? 0 : MONTH_MIN_WIDTH,
             display: "flex",
             flexDirection: "column",
             flex: 1,
@@ -826,7 +890,10 @@ function MonthGrid({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
+              // `minmax(0, 1fr)` statt `1fr`: `1fr` ist `minmax(auto, 1fr)`,
+              // und `auto` ist die Mindestbreite des Inhalts — die Wochentage
+              // wuerden die Kopfzeile ueber die Panelbreite hinaustreiben.
+              gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
               borderBottom: "1px solid var(--border)",
               flexShrink: 0,
             }}
@@ -835,12 +902,13 @@ function MonthGrid({
               <div
                 key={name}
                 style={{
-                  padding: "6px 8px",
+                  padding: compact ? "4px 2px" : "6px 8px",
                   fontSize: 11,
                   fontWeight: 600,
                   color: "var(--text-dim)",
                   textAlign: "center",
                   borderRight: "1px solid var(--border)",
+                  overflow: "hidden",
                 }}
               >
                 {name}
@@ -854,7 +922,7 @@ function MonthGrid({
               flex: 1,
               minHeight: 0,
               display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
+              gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
               gridTemplateRows: "repeat(6, 1fr)",
             }}
           >
@@ -873,8 +941,8 @@ function MonthGrid({
            * nichts: der Termin ist einfach weg.
            *
            * Deshalb wird die Zahl der sichtbaren Termine berechnet und der
-           * Rest als „N weitere" ausgewiesen. Der Klick darauf wechselt in
-           * die Tagesansicht dieses Tages — dort stehen alle Termine.
+           * Rest als „N weitere" ausgewiesen. Der Klick darauf oeffnet die
+           * Terminliste dieses Tages — dort stehen alle Termine.
            */
           const visibleEvents = visibleEventCount(
             dayEvents.length,
@@ -890,10 +958,12 @@ function MonthGrid({
               key={date}
               data-cal-cell="true"
               onClick={() => {
-                // Der Klick legt einen Termin an — aber nur, wenn er nicht
-                // auf einem bestehenden Termin landete. Der Termin
-                // stoppt die Ereignisweitergabe selbst.
-                onCreate(date, null);
+                // Ein Tag mit Terminen oeffnet erst die Liste: in die Zelle
+                // passen nur wenige Chips, und ein Chip ist auf einem Handy
+                // 50 Pixel breit. Ein leerer Tag legt dagegen direkt an —
+                // dort gibt es nichts auszuwaehlen.
+                if (dayEvents.length > 0) onOpenDay(date);
+                else onCreate(date, null);
               }}
               onDragEnter={(event) => {
                 // `dragenter` ist das Ereignis, das Chromium beim *Betreten*
@@ -927,7 +997,7 @@ function MonthGrid({
                 position: "relative",
                 borderRight: "1px solid var(--border)",
                 borderBottom: "1px solid var(--border)",
-                padding: "4px 5px",
+                padding: compact ? CELL_PADDING_SMALL : CELL_PADDING,
                 minHeight: 0,
                 overflow: "hidden",
                 background: outside ? "color-mix(in srgb, var(--bg) 60%, var(--bg-panel))" : "none",
@@ -985,14 +1055,14 @@ function MonthGrid({
               ))}
 
               {/* Die Termine, die nicht mehr passen, werden nicht
-                  verschwiegen: der Hinweis nennt ihre Zahl und fuehrt in die
-                  Tagesansicht, in der alle stehen. */}
+                  verschwiegen: der Hinweis nennt ihre Zahl und oeffnet
+                  dieselbe Liste wie ein Klick auf den Tag. */}
               {hiddenCount > 0 ? (
                 <button
                   type="button"
                   onClick={(clickEvent) => {
                     clickEvent.stopPropagation();
-                    onShowDay(date);
+                    onOpenDay(date);
                   }}
                   title={t("calendar.more", { count: hiddenCount })}
                   style={{
@@ -1000,7 +1070,7 @@ function MonthGrid({
                     width: "100%",
                     textAlign: "left",
                     marginTop: 2,
-                    padding: "0 5px",
+                    padding: compact ? "2px 2px" : "0 5px",
                     border: "none",
                     borderRadius: 4,
                     background: "none",
@@ -1075,6 +1145,7 @@ function TimeGrid({
   days,
   events,
   holidays,
+  compact,
   onCreate,
   onEdit,
   onMove,
@@ -1082,11 +1153,26 @@ function TimeGrid({
   days: string[];
   events: CalendarEvent[];
   holidays: Map<string, string>;
+  /** Schmaler Bildschirm: alle Spalten in der Panelbreite, ohne Scrollen. */
+  compact: boolean;
   onCreate: (date: string, time: string | null) => void;
   onEdit: (event: CalendarEvent) => void;
   onMove: (event: CalendarEvent, target: MoveTarget) => void;
 }) {
   const t = useCalendarText();
+  /** Die Breite der Stundenskala — schmal, wenn der Bildschirm es ist. */
+  const axisWidth = compact ? TIME_AXIS_WIDTH_SMALL : TIME_AXIS_WIDTH;
+  /**
+   * Die Vorlage der Tagesspalten.
+   *
+   * `minmax(0, 1fr)` auf dem schmalen Bildschirm: die Spalte darf bis auf
+   * den geteilten Platz schrumpfen. Die harte Mindestbreite von 120 Pixeln
+   * wuerde sieben Tage auf 896 Pixel zwingen — auf einem 390 Pixel breiten
+   * Display waeren das 506 Pixel, die man seitlich schieben muss.
+   */
+  const columnTemplate = compact
+    ? "minmax(0, 1fr)"
+    : `minmax(${TIME_COLUMN_MIN_WIDTH}px, 1fr)`;
   /** Die Ganztagestermine eines Tages. */
   const allDayOf = (date: string) =>
     events.filter((event) => event.allDay && eventSpansDay(event, date));
@@ -1113,11 +1199,14 @@ function TimeGrid({
         * Deshalb hat der Raster eine Mindestbreite, und *diese* Area
         * scrollt waagerecht. Nicht die Seite: eine Seite, die seitlich
         * scrollt, verschiebt beim Scrollen das ganze Fenster.
+        *
+        * Auf dem schmalen Bildschirm entfaellt beides: dort teilen sich die
+        * sieben Tage die Panelbreite, und es gibt nichts zu schieben.
         */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: compact ? "hidden" : "auto" }}>
         <div
           style={{
-            minWidth: TIME_AXIS_WIDTH + days.length * TIME_COLUMN_MIN_WIDTH,
+            minWidth: compact ? 0 : TIME_AXIS_WIDTH + days.length * TIME_COLUMN_MIN_WIDTH,
             display: "flex",
             flexDirection: "column",
           }}
@@ -1129,14 +1218,14 @@ function TimeGrid({
               // `minmax` statt `1fr`: die Spalte *darf* schrumpfen, aber
               // nicht unter ihre Mindestbreite — sonst ist ein Tag so breit
               // wie ein Pixel und ein Termin unlesbar.
-              gridTemplateColumns: `${TIME_AXIS_WIDTH}px repeat(${days.length}, minmax(${TIME_COLUMN_MIN_WIDTH}px, 1fr))`,
+              gridTemplateColumns: `${axisWidth}px repeat(${days.length}, ${columnTemplate})`,
               borderBottom: "1px solid var(--border)",
               flexShrink: 0,
             }}
           >
             <div />
             {days.map((date) => (
-              <div key={date} style={{ padding: "4px 6px", borderRight: "1px solid var(--border)" }}>
+              <div key={date} style={{ padding: compact ? "3px 2px" : "4px 6px", borderRight: "1px solid var(--border)" }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
                   {Number(date.slice(8, 10))}.
                 </div>
@@ -1161,7 +1250,7 @@ function TimeGrid({
           </div>
 
           {/* Die Stundenskala. */}
-          <div style={{ display: "grid", gridTemplateColumns: `${TIME_AXIS_WIDTH}px repeat(${days.length}, minmax(${TIME_COLUMN_MIN_WIDTH}px, 1fr))`, flex: 1, minHeight: HOUR_HEIGHT * (MINUTES_PER_DAY / 60) }}>
+          <div style={{ display: "grid", gridTemplateColumns: `${axisWidth}px repeat(${days.length}, ${columnTemplate})`, flex: 1, minHeight: HOUR_HEIGHT * (MINUTES_PER_DAY / 60) }}>
         <div>
           {Array.from({ length: MINUTES_PER_DAY / 60 }, (_, hour) => (
             <div

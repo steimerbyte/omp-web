@@ -369,12 +369,43 @@ Kalender öffnet, ist aus demselben Grund deutsch beschriftet
 ### Die drei Ansichten
 
 - **Monat** — ein 6×7-Raster, Montag zuerst. Jede Zelle zeigt den Tag, den
-  Feiertagsnamen und die Termine. Ein Klick auf eine freie Stelle legt einen
-  Ganztagestermin an.
+  Feiertagsnamen und die Termine. Ein Klick auf einen Tag **ohne** Termine
+  legt einen Termin an; ein Tag **mit** Terminen öffnet erst die Terminliste
+  (siehe unten).
 - **Woche** — sieben Tagesspalten mit einer Stundenskala von 00 bis 24 Uhr.
   Ganztagestermine stehen in einer eigenen Zeile darüber, Termine mit Uhrzeit
   werden absolut positioniert.
 - **Tag** — eine Spalte, dieselbe Stundenskala.
+
+#### Die Terminliste eines Tages
+
+In eine Monatszelle passen nur wenige Termine: der Rest steht als „N weitere"
+da. Früher führte dieser Hinweis in die Tagesansicht; auf einem Handy war
+damit jeder Termin erreichbar, den die Zelle abgeschnitten hatte — aber nur
+über einen Ansichtswechsel, und die Zelle selbst ließ sich nicht antippen,
+ohne einen *neuen* Termin anzulegen.
+
+Ein Klick auf einen Tag mit Terminen öffnet deshalb eine Liste
+(`components/calendar/DayEventsSheet.tsx`, ein `Dialog` aus
+`components/ui/dialog`): jeder Termin mit Titel und Uhrzeit, die Liste
+scrollt innerhalb des Dialogs, und darunter stehen „Neuer Termin" und
+„Schließen". Aus der Liste geht es in den Termin-Dialog. Die Liste ist der
+einzige Weg — auch „N weitere" öffnet sie.
+
+Auf einem 390 Pixel breiten Bildschirm ist das der Unterschied zwischen
+einem 50 Pixel breiten Chip, den niemand trifft, und einer Liste mit
+44 Pixel hohen Zeilen.
+
+### Der Bildschirm entscheidet über die Spaltenbreite
+
+Das Monatsraster hat auf dem Desktop eine Mindestbreite von 672 Pixeln
+(7 × 96) und die Wochenansicht 896 (56 + 7 × 120); darunter scrollt die
+Ansicht waagerecht. Auf einem Handy (bis 640 Pixel, dieselbe Schwelle wie
+`hooks/useIsMobile.ts` und `app/globals.css`) fällt beides weg: dort teilen
+sich die sieben Spalten die Panelbreite (`repeat(7, minmax(0, 1fr))` bzw.
+eine Stundenskala von 28 Pixeln), und nichts scrollt seitlich. Der Preis ist
+ein gekürzter Termintitel in der Wochenansicht — eine Woche, die man ganz
+sieht, ist mehr wert als ein Titel, den man ganz liest.
 
 ### Ein neuer Termin bekommt eine echte Endzeit
 
@@ -391,14 +422,29 @@ Beginnzeit auf 16:00 setzt, bekommt 16:00 bis 17:00. Ein stehen gebliebenes
 Ende wäre entweder vor dem Beginn (und der Termin ungültig) oder läge
 plötzlich weit in der Zukunft.
 
-Ein Ganztagestermin aus der Monatsansicht bekommt den angeklickten Tag als
-Beginn und denselben Tag als Ende — das ist ein Termin mit genau einem Tag,
-kein leerer Zeitraum.
+Ein Termin aus der Monatsansicht bekommt den angeklickten Tag als Beginn und
+denselben Tag als Ende; die Uhrzeit steht auf 09:00 bis 10:00 und ist im
+Dialog änderbar. Ein **Ganztagestermin** ist die ausdrückliche Wahl über das
+Kästchen — nicht mehr die Vorbelegung. Vorher hing sie an der Stelle des
+Klicks (`preset.time === null`), und wer in der Monatsansicht auf einen Tag
+klickte, bekam einen Ganztagestermin, dessen Uhrzeit er nicht mehr setzen
+konnte.
 
 ### Das Zeit- und Datumsfeld
 
 Der Dialog hat **eigene Textfelder** für Datum und Uhrzeit: die Uhrzeit im
 24-Stunden-Format `HH:MM`, das Datum in deutscher Schreibweise `DD.MM.JJJJ`.
+Die Uhrzeitfelder sind **immer** da. Bei einem Ganztagestermin sind sie
+gesperrt (und abgeblendet), nicht ausgeblendet: der Wert bleibt stehen, und
+ein gesperrtes Feld sagt die Wahrheit — ein Feld, das einen getippten Wert
+stillschweigend verwirft, tut es nicht.
+
+Ein Ende vor oder auf dem Beginn wird beim Speichern abgelehnt und im Dialog
+begründet. Die Regel steht in der Domäne (`validateEventRange()`) und gilt in
+Dialog, Route und Werkzeug gleich. Ein Termin **über Mitternacht** ist gültig,
+wenn sein Enddatum der nächste Tag ist — 22:00 am 14.03. bis 02:00 am 15.03.
+Ein Endzeitpunkt vor dem Beginn am selben Tag ist der Tippfehler, nicht der
+Sonderfall.
 
 Der Grund ist eine Messung in Chromium mit englischem Browser-Locale: ein
 natives `<input type="time">` zeigt den Wert `15:00` als `03:00 PM`, ein

@@ -232,6 +232,27 @@ Ereignisse (`event: calendar_changed`), und der Browser hört mit
 `event:`-Zeile käme als Standard-Ereignis `message` an und der Listener
 feuerte nie — die Live-Aktualisierung fände dann stillschweigend nicht statt.
 
+**Drei Mängel der Kalender-Oberfläche.** Die Uhrzeit im Termin-Dialog hing
+daran, wo der Termin angelegt wurde: ein Klick auf ein Zeitfenster im
+Tagesraster lieferte eine Uhrzeit mit, ein Klick auf einen Tag in der
+Monatsansicht nicht — und der Dialog blendete die Zeitfelder dann aus und
+speicherte einen Ganztagestermin. Die Felder sind jetzt immer da; bei einem
+Ganztagestermin sind sie gesperrt statt versteckt, und ein neuer Termin aus
+der Monatsansicht ist 09:00 bis 10:00. Ein Ende vor dem Beginn wird im Dialog
+gemeldet, statt als „konnte nicht gespeichert werden" vom Server
+zurückzukommen.
+
+Die Monats- und die Wochenansicht waren auf einem Handy breiter als das
+Display (672 bzw. 896 Pixel Raster auf 390 Pixel Bildschirm): man sah Montag
+bis Donnerstag und musste für Sonntag seitlich scrollen. Unter 640 Pixeln
+entfällt die Mindestbreite, und die sieben Spalten teilen sich die
+Panelbreite.
+
+Ein Tag mit mehr Terminen, als in eine Monatszelle passen, ist jetzt
+auswählbar: ein Klick auf den Tag öffnet eine scrollbare Terminliste, und
+erst aus der Liste kommt der Termin-Dialog. Vorher führte nur „N weitere" in
+die Tagesansicht, und ein Klick auf die Zelle legte einen neuen Termin an.
+
 **Deutsch als Oberflächensprache.** `lib/i18n/messages/de.ts` ist ein
 vollständiges Sprachpaket: es trägt alle 690 Schlüssel des englischen Katalogs
 in derselben Reihenfolge und dazu 53 eigene `calendar.*`-Schlüssel, insgesamt

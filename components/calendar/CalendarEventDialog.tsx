@@ -22,6 +22,7 @@ import {
   normalizeDateInput,
   normalizeTimeInput,
   sanitizeHexInput,
+  validateEventRange,
   type CalendarColorPreset,
 } from "@/lib/calendar";
 import type { CalendarEventInput } from "@/hooks/useCalendar";
@@ -32,9 +33,18 @@ import type { CalendarEventInput } from "@/hooks/useCalendar";
  * ### Warum Datum und Uhrzeit getrennt sind
  *
  * Der Kalender speichert Ganztagestermine als `"2026-03-14"` und Termine mit
- * Uhrzeit als `"2026-03-14T15:00"`. Der Dialog zeigt deshalb zwei Felder
- * (Datum und Uhrzeit), und das Kaestchen "Ganztaegig" entscheidet, welches
- * davon ueberhaupt sichtbar ist.
+ * Uhrzeit als `"2026-03-14T15:00"`. Der Dialog zeigt deshalb je zwei Felder
+ * (Datum und Uhrzeit) — die Uhrzeit **immer**, denn welcher Tag und welche
+ * Stunde gemeint ist, entscheidet der Nutzer und nicht die Stelle, an der er
+ * den Kalender angeklickt hat. Das Kaestchen "Ganztaegig" nimmt die Uhrzeit
+ * aus dem gespeicherten Wert heraus; es blendet die Felder nicht aus. Sie
+ * sind in diesem Fall gesperrt, damit ein getippter Wert nicht stillschweigend
+ * verworfen wird, und nach dem Abwaehlen wieder da.
+ *
+ * Ein neuer Termin ist deshalb zunaechst ein Termin **mit** Uhrzeit: wer in
+ * der Monatsansicht auf einen Tag klickt, bekommt 09:00 bis 10:00 und kann
+ * beides aendern. Ein Ganztagestermin ist die ausdrueckliche Wahl ueber das
+ * Kaestchen.
  *
  * ### Warum die Felder *Textfelder* sind und keine nativen
  *
@@ -162,7 +172,7 @@ export function CalendarEventDialog({
   const [title, setTitle] = useState(event?.title ?? "");
   const [description, setDescription] = useState(event?.description ?? "");
   const [location, setLocation] = useState(event?.location ?? "");
-  const [allDay, setAllDay] = useState(event?.allDay ?? preset.time === null);
+  const [allDay, setAllDay] = useState(event?.allDay ?? false);
 
   /**
    * Der Dialog fragt *im Dialog* nach, bevor er loescht.
@@ -255,7 +265,7 @@ export function CalendarEventDialog({
     setTitle(event?.title ?? "");
     setDescription(event?.description ?? "");
     setLocation(event?.location ?? "");
-    setAllDay(event?.allDay ?? preset.time === null);
+    setAllDay(event?.allDay ?? false);
     setStartDate(nextStartDate);
     setStartTime(nextStartTime);
     setEndDate(nextEndDate);
@@ -427,8 +437,12 @@ export function CalendarEventDialog({
     submitEvent.preventDefault();
     if (!title.trim()) return;
     // Ein unbrauchbarer Wert wird nicht gespeichert: der Dialog meldet es
-    // und laesst das Speichern nicht zu.
-    if (startDate === null || endDate === null || startTime === null || endTime === null) return;
+    // und laesst das Speichern nicht zu. Die Uhrzeit zaehlt nur, wenn der
+    // Termin kein Ganztagestermin ist — ein gesperrtes Feld kann leer sein,
+    // ohne dass der Termin dadurch falsch waere.
+    if (startDate === null || endDate === null) return;
+    if (!allDay && (startTime === null || endTime === null)) return;
+    if (rangeInvalid) return;
     if (hexText !== "" && !isCalendarHexColor(hexText)) return;
     void onSave(buildInput(), event?.id ?? null);
   };
@@ -499,9 +513,34 @@ export function CalendarEventDialog({
     marginTop: 4,
   };
 
+  /**
+   * Die Uhrzeitfelder eines Ganztagestermins.
+   *
+   * Gesperrt, nicht ausgeblendet: der Wert bleibt stehen, und ein Feld, das
+   * gesperrt ist, sagt die Wahrheit — ein Feld, das den getippten Wert
+   * stillschweigend verwirft, tut es nicht.
+   */
+  const releasedStyle = { opacity: 0.45, cursor: "not-allowed" as const };
+
   const timeInvalid = startTime === null || endTime === null;
   const dateInvalid = startDate === null || endDate === null;
   const hexInvalid = hexText !== "" && !isCalendarHexColor(hexText);
+
+  /**
+   * Liegt das Ende vor (oder auf) dem Beginn?
+   *
+   * Der Beginn eines Termins ueber Mitternacht ist der *naechste* Tag; ein
+   * Endzeitpunkt vor dem Beginn auf demselben Tag ist deshalb ein Fehler und
+   * kein Sonderfall. Die Regel selbst steht in der Domaene
+   * (`validateEventRange`), damit Dialog, Route und Werkzeug dieselbe
+   * Antwort geben.
+   */
+  const rangeInvalid = startDate !== null && endDate !== null && startTime !== null && endTime !== null
+    && validateEventRange(
+      allDay ? startDate : `${startDate}T${startTime}`,
+      allDay ? endDate : `${endDate}T${endTime}`,
+      allDay,
+    ) !== null;
 
   /**
    * Das Preset, das als gewaehlt angezeigt wird.
@@ -650,22 +689,21 @@ export function CalendarEventDialog({
                   pattern="\d{1,2}\.\d{1,2}\.\d{4}"
                   style={inputStyle}
                 />
-                {!allDay ? (
-                  <input
-                    ref={startTimeRef}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    defaultValue={startTime ?? "09:00"}
-                    onChange={(inputEvent) => handleTimeInput("start", inputEvent.target.value)}
-                    onBlur={() => handleTimeBlur("start")}
-                    aria-label={t("calendar.eventStartTime")}
-                    pattern="([01]\d|2[0-3]):[0-5]\d"
-                    style={{ ...inputStyle, marginTop: 6 }}
-                  />
-                ) : null}
+                <input
+                  ref={startTimeRef}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  defaultValue={startTime ?? "09:00"}
+                  onChange={(inputEvent) => handleTimeInput("start", inputEvent.target.value)}
+                  onBlur={() => handleTimeBlur("start")}
+                  aria-label={t("calendar.eventStartTime")}
+                  pattern="([01]\d|2[0-3]):[0-5]\d"
+                  disabled={allDay}
+                  style={{ ...inputStyle, marginTop: 6, ...(allDay ? releasedStyle : null) }}
+                />
                 {dateInvalid ? <span style={errorStyle}>{t("calendar.invalidDate")}</span> : null}
-                {timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
+                {!allDay && timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
                 <span style={hintStyle}>{t("calendar.dateFormatHint")}</span>
               </div>
               <div style={{ minWidth: 0 }}>
@@ -683,22 +721,22 @@ export function CalendarEventDialog({
                   pattern="\d{1,2}\.\d{1,2}\.\d{4}"
                   style={inputStyle}
                 />
-                {!allDay ? (
-                  <input
-                    ref={endTimeRef}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    defaultValue={endTime ?? "10:00"}
-                    onChange={(inputEvent) => handleTimeInput("end", inputEvent.target.value)}
-                    onBlur={() => handleTimeBlur("end")}
-                    aria-label={t("calendar.eventEndTime")}
-                    pattern="([01]\d|2[0-3]):[0-5]\d"
-                    style={{ ...inputStyle, marginTop: 6 }}
-                  />
-                ) : null}
+                <input
+                  ref={endTimeRef}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  defaultValue={endTime ?? "10:00"}
+                  onChange={(inputEvent) => handleTimeInput("end", inputEvent.target.value)}
+                  onBlur={() => handleTimeBlur("end")}
+                  aria-label={t("calendar.eventEndTime")}
+                  pattern="([01]\d|2[0-3]):[0-5]\d"
+                  disabled={allDay}
+                  style={{ ...inputStyle, marginTop: 6, ...(allDay ? releasedStyle : null) }}
+                />
                 {dateInvalid ? <span style={errorStyle}>{t("calendar.invalidDate")}</span> : null}
-                {timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
+                {!allDay && timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
+                {rangeInvalid ? <span style={errorStyle}>{t("calendar.invalidRange")}</span> : null}
                 <span style={hintStyle}>{t("calendar.timeFormatHint")}</span>
               </div>
             </div>
