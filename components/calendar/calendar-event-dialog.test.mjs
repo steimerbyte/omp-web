@@ -159,6 +159,28 @@ const buttons = () => [...win.document.querySelectorAll("button")];
 const buttonWith = (text) => buttons().find((b) => b.textContent.trim() === text);
 
 /**
+ * Zaehlt die Netzaufrufe eines Testlaufs ein.
+ *
+ * Der Dialog kennt keinen Server: er meldet den Fehler nach oben und laesst
+ * `onSave` aus. Ein Netzaufruf aus dem Dialog heraus waere deshalb auch dann
+ * falsch, wenn er zufaellig nichts veraendert — der Test haelt fest, dass ein
+ * abgelehnter Termin die API nicht beruehrt.
+ */
+async function withFetchSpy(run) {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: init?.method ?? "GET" });
+    throw new Error("kein Netzaufruf aus dem Termin-Dialog erwartet");
+  };
+  try {
+    await run(calls);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+/**
  * Das Zeitfeld des Beginns und das des Endes.
  *
  * Beide tragen kein `id` — sie werden ueber ihre Beschriftung gefunden. Die
@@ -591,6 +613,55 @@ test("ein bestehender Termin mit Uhrzeit zeigt und behaelt seine Zeitfelder", as
   assert.equal(saved[0].end, "2026-03-14T16:30");
 });
 
+test("ein Ganztagestermin behaelt seine Uhrzeit beim Umschalten", async () => {
+  // Die Felder sind bei einem Ganztagestermin gesperrt, nicht ausgeblendet.
+  // Wer das Kaestchen abwaehlt, muss deshalb genau den Wert wiederfinden, den
+  // er vorher gesehen hat — und beim erneuten Anhaken derselbe Wert, nur
+  // wieder gesperrt. Ein Feld, das beim Umschalten seinen Inhalt verliert,
+  // waere die unauffaelligere Form des alten Fehlers.
+  await mount(React.createElement(CalendarEventDialog, {
+    event: {
+      id: "e1", title: "Urlaub", allDay: true,
+      start: "2026-03-14", end: "2026-03-14",
+    },
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  const kaestchen = win.document.querySelector('input[type="checkbox"]');
+  assert.ok(kaestchen, "das Kaestchen „Ganztägig\" fehlt");
+  assert.equal(kaestchen.checked, true, "der Ganztagestermin ist nicht als solcher markiert");
+
+  const vorher = { start: startZeitFeld().value, ende: endZeitFeld().value };
+  assert.equal(startZeitFeld().disabled, true, "das Zeitfeld des Beginns ist bedienbar");
+
+  // Abwaehlen: bedienbar, aber unveraendert. `checked` wird vor dem Klick
+  // gesetzt, weil linkedom den Haekchenzustand nicht selbst umlegt — React
+  // liest ihn beim Klick aus dem Element.
+  await act(async () => {
+    kaestchen.checked = false;
+    kaestchen.dispatchEvent(new win.Event("click", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+  assert.equal(startZeitFeld().disabled, false, "nach dem Abwaehlen bleibt das Feld gesperrt");
+  assert.equal(endZeitFeld().disabled, false, "nach dem Abwaehlen bleibt das Endfeld gesperrt");
+  assert.equal(startZeitFeld().value, vorher.start, "der Beginn ging beim Umschalten verloren");
+  assert.equal(endZeitFeld().value, vorher.ende, "das Ende ging beim Umschalten verloren");
+
+  // Wieder anhaken: gesperrt, gleicher Wert.
+  await act(async () => {
+    kaestchen.checked = true;
+    kaestchen.dispatchEvent(new win.Event("click", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+  assert.equal(kaestchen.checked, true, "das Kaestchen liess sich nicht wieder ankreuzen");
+  assert.equal(startZeitFeld().disabled, true, "das Feld blieb nach dem Ankreuzen bedienbar");
+  assert.equal(startZeitFeld().value, vorher.start, "der Beginn ging beim zweiten Umschalten verloren");
+});
+
 test("ein Ganztagestermin sperrt die Zeitfelder, statt sie zu verstecken", async () => {
   await mount(React.createElement(CalendarEventDialog, {
     event: {
@@ -611,28 +682,62 @@ test("ein Ganztagestermin sperrt die Zeitfelder, statt sie zu verstecken", async
 
 test("ein Ende vor dem Beginn wird im Dialog gemeldet und nicht gespeichert", async () => {
   const saved = [];
-  await mount(React.createElement(CalendarEventDialog, {
-    event: null,
-    preset: { date: "2026-03-14", time: "18:00" },
-    busy: false,
-    onCancel: () => {},
-    onSave: (input) => { saved.push(input); },
-    onDelete: () => {},
-  }));
+  await withFetchSpy(async (calls) => {
+    await mount(React.createElement(CalendarEventDialog, {
+      event: null,
+      preset: { date: "2026-03-14", time: "18:00" },
+      busy: false,
+      onCancel: () => {},
+      onSave: (input) => { saved.push(input); },
+      onDelete: () => {},
+    }));
 
-  const end = endZeitFeld();
-  assert.ok(end, "das Zeitfeld des Endes fehlt");
-  // 18:00 bis 17:00 — ein Tippfehler, kein Termin.
-  await setInputValue(end, "17:00");
+    const end = endZeitFeld();
+    assert.ok(end, "das Zeitfeld des Endes fehlt");
+    // 18:00 bis 17:00 — ein Tippfehler, kein Termin.
+    await setInputValue(end, "17:00");
 
-  await submitWithTitle("Teammeeting");
+    await submitWithTitle("Teammeeting");
 
-  assert.equal(saved.length, 0, "ein Termin mit dem Ende vor dem Beginn wurde gespeichert");
-  assert.match(
-    win.document.body.textContent,
-    new RegExp(deMessages["calendar.invalidRange"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    "der Grund steht nicht im Dialog",
-  );
+    assert.equal(saved.length, 0, "ein Termin mit dem Ende vor dem Beginn wurde gespeichert");
+    assert.equal(calls.length, 0, "der abgelehnte Termin hat die API beruehrt");
+    assert.match(
+      win.document.body.textContent,
+      new RegExp(deMessages["calendar.invalidRange"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      "der Grund steht nicht im Dialog",
+    );
+  });
+});
+
+test("ein Ende gleich dem Beginn wird ebenso abgelehnt", async () => {
+  // Ein Termin ohne Dauer ist kein Termin: derselbe Fehler wie beim Ende
+  // *vor* dem Beginn, nur auf die Minute genau. Die Grenze ist `>` und nicht
+  // `>=`, deshalb braucht sie einen eigenen Fall — ein Vergleich, der nur den
+  // groesseren Wert abfaengt, waere hier blind.
+  const saved = [];
+  await withFetchSpy(async (calls) => {
+    await mount(React.createElement(CalendarEventDialog, {
+      event: null,
+      preset: { date: "2026-03-14", time: "15:00" },
+      busy: false,
+      onCancel: () => {},
+      onSave: (input) => { saved.push(input); },
+      onDelete: () => {},
+    }));
+
+    assert.equal(startZeitFeld().value, "15:00", "der Beginn ist nicht vorbelegt");
+    await setInputValue(endZeitFeld(), "15:00");
+
+    await submitWithTitle("Teammeeting");
+
+    assert.equal(saved.length, 0, "ein Termin ohne Dauer wurde gespeichert");
+    assert.equal(calls.length, 0, "der abgelehnte Termin hat die API beruehrt");
+    assert.match(
+      win.document.body.textContent,
+      new RegExp(deMessages["calendar.invalidRange"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      "der Grund steht nicht im Dialog",
+    );
+  });
 });
 
 test("ein Termin ueber Mitternacht braucht das Enddatum des naechsten Tages", async () => {
@@ -662,4 +767,11 @@ test("ein Termin ueber Mitternacht braucht das Enddatum des naechsten Tages", as
   assert.equal(saved.length, 1, "der Termin ueber Mitternacht wurde nicht gespeichert");
   assert.equal(saved[0].start, "2026-03-14T22:00");
   assert.equal(saved[0].end, "2026-03-15T02:00");
+  // Eine Endzeit vor der Beginnzeit ist auf dem Folgetag korrekt — die Meldung
+  // darf hier nicht stehen, sonst waere jeder Nachtdienst ein Fehler.
+  assert.equal(
+    win.document.body.textContent.includes(deMessages["calendar.invalidRange"]),
+    false,
+    "ein gueltiger Termin ueber Mitternacht wurde als Fehler gemeldet",
+  );
 });

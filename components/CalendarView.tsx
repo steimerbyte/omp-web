@@ -691,8 +691,12 @@ function IconButton({
  * hinein, wird er gezeigt; passt er nicht, bleibt eine Zeile fuer den
  * Hinweis „N weitere" frei — sonst wuerde der Hinweis selbst abgeschnitten
  * und die Information wieder unsichtbar.
+ *
+ * Die Rechnung steht offen (`export`): drei Hoehen und eine Zahl sind eine
+ * reine Funktion, und ohne Layout kann ein Test die Grenzfaelle nicht ueber
+ * das DOM messen.
  */
-function visibleEventCount(
+export function visibleEventCount(
   count: number,
   cellSpace: number,
   dayRowHeight: number,

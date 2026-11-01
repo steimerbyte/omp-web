@@ -77,7 +77,6 @@ const EVENTS = [
 
 /** Die Anfragen, die der Server in diesem Test bekommen hat. */
 const requests = [];
-
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
 const win = dom.window;
 const fakeNavigator = { userAgent: "test", languages: ["de-DE"], language: "de-DE", platform: "linux" };
@@ -151,6 +150,14 @@ globalThis.localStorage = {
 win.localStorage = globalThis.localStorage;
 
 /**
+ * Die Termine, die der Testserver ausliefert.
+ *
+ * Veraenderlich, damit ein Test eine andere Datenlage stellen kann (etwa
+ * zwoelf Termine an einem Tag); `mount()` liest sie beim Start.
+ */
+let serverEvents = EVENTS;
+
+/**
  * Der Server des Tests.
  *
  * `GET /api/calendar` liefert die Testtermine, `PATCH` merkt sich den
@@ -160,7 +167,7 @@ win.localStorage = globalThis.localStorage;
 globalThis.fetch = async (url, init) => {
   requests.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body) : null });
   if (String(url).includes("/api/calendar/events")) return { ok: true, json: async () => ({}) };
-  return { ok: true, json: async () => ({ events: EVENTS, event: EVENTS[0] }) };
+  return { ok: true, json: async () => ({ events: serverEvents, event: serverEvents[0] }) };
 };
 
 /**
@@ -178,7 +185,7 @@ globalThis.EventSource = class {
 };
 
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
-const { CalendarView } = await jiti.import("../CalendarView.tsx");
+const { CalendarView, visibleEventCount } = await jiti.import("../CalendarView.tsx");
 // Die deutschen Texte des Kalenders — die Quelle der Beschriftungen. Der Test
 // schreibt sie nicht noch einmal hin.
 const { deLocale } = await jiti.import("@/lib/i18n/messages/de.ts");
@@ -202,6 +209,15 @@ const buttonWith = (text) => [...win.document.querySelectorAll("button")].find((
 
 /** Ein Element ueber seine Kennung. */
 const byId = (id) => win.document.getElementById(id);
+
+/** Ein Eingabefeld ueber seine Beschriftung. */
+const inputWith = (label) => win.document.querySelector(`input[aria-label="${label}"]`);
+
+/** Das Datum eines Termintags in der Schreibweise des Dialogs: `TT.MM.JJJJ`. */
+const formatDay = (date) => `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}`;
+
+/** Die offene Terminliste. */
+const sheet = () => win.document.querySelector('[role="dialog"]');
 
 /** Der Chip (der ziehbare Termin) mit dem gegebenen Titel. */
 const chipWith = (title) =>
@@ -294,16 +310,10 @@ test("eine Tageszelle nimmt den Zug schon beim Betreten an", async () => {
 });
 
 test("ein Fehler beim Speichern erscheint nicht als englischer Servertext", async () => {
-  // Der Server antwortet mit einem englischen Text — so, wie die Routen es
-  // tatsaechlich tun.
-  globalThis.fetch = async (url, init) => {
-    requests.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body) : null });
-    if (init?.method === "POST") {
-      return { ok: false, json: async () => ({ error: "The event could not be stored" }) };
-    }
-    return { ok: true, json: async () => ({ events: EVENTS, event: EVENTS[0] }) };
-  };
-
+  // Kein eigener Server fuer diesen Test: er schickt keine Anfrage ab, sondern
+  // liest den Quelltext der Ansicht. Ein ausgetauschter `fetch` waere hier
+  // nicht nur unnoetig, sondern schaedlich — ein nicht zurueckgesetzter Ersatz
+  // laesst alle spaeteren Tests auf einem fremden Datenstand sitzen.
   const { root } = await mount();
 
   // Die Kette, die ein Serverfehler in der Oberflaeche nimmt: der Hook
@@ -626,4 +636,183 @@ test("auf 390 Pixeln passen alle sieben Tage in die Breite — Monat und Woche",
 
     await act(async () => { root.unmount(); });
   });
+});
+
+// ------------------------- Uhrzeit im Dialog, aus jeder Ansicht heraus --
+
+test("Monatsansicht: der Klick auf einen Termin-Chip fuellt die Uhrzeit des Termins", async () => {
+  // Der urspruenglich gemeldete Mangel: ein Termin, der aus der Monatsansicht
+  // geoeffnet wird, hatte keine Zeitfelder — weil der Monatskontext keine
+  // Uhrzeit mitbringt (`preset.time === null`) und der Dialog daraus
+  // "Ganztagestermin" ableitete. Hier steht der Nachweis, dass der Klick auf
+  // den *Chip* die Zeiten des Termins zeigt, nicht die einer Slot-Vorbelegung.
+  const { root } = await mount();
+
+  const chip = chipWith("Teammeeting");
+  assert.ok(chip, "der Termin-Chip wurde nicht gerendert");
+
+  await act(async () => { chip.dispatchEvent(new win.Event("click", { bubbles: true })); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const title = byId("calendar-title");
+  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.equal(title.value, "Teammeeting", "der Dialog hat einen anderen Termin geladen");
+  assert.equal(byId("calendar-start-date").value, formatDay(EVENT_DAY), "das Startdatum fehlt");
+  assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Beginnzeit des Termins fehlt");
+  assert.equal(inputWith("Ende (Uhrzeit)").value, "16:30", "die Endzeit des Termins fehlt");
+  assert.equal(inputWith("Beginn (Uhrzeit)").disabled, false, "die Beginnzeit ist nicht editierbar");
+  assert.equal(inputWith("Ende (Uhrzeit)").disabled, false, "die Endzeit ist nicht editierbar");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Wochenansicht: der Klick auf einen Termin im Zeitraster fuellt die Uhrzeit", async () => {
+  // Dieselbe Zusage fuer das Zeitraster: dort kommt der Termin aus einem
+  // absolut positionierten Block, nicht aus einem Chip. Der Block traegt
+  // seine Uhrzeit im `title` — darueber wird er gefunden.
+  const { root } = await mount();
+
+  await act(async () => { buttonWith("Woche").click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const block = [...win.document.querySelectorAll("[title]")]
+    .find((element) => element.getAttribute("title") === "Teammeeting · 15:00–16:30");
+  assert.ok(block, "der Termin wurde im Zeitraster nicht gefunden");
+
+  await act(async () => { block.dispatchEvent(new win.Event("click", { bubbles: true })); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const title = byId("calendar-title");
+  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.equal(title.value, "Teammeeting", "der Dialog hat einen anderen Termin geladen");
+  assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Beginnzeit des Termins fehlt");
+  assert.equal(inputWith("Ende (Uhrzeit)").value, "16:30", "die Endzeit des Termins fehlt");
+  assert.equal(inputWith("Beginn (Uhrzeit)").disabled, false, "die Beginnzeit ist nicht editierbar");
+
+  await act(async () => { root.unmount(); });
+});
+
+// ------------------------- die Terminliste als Zwischenschritt --
+
+test("Terminliste: die gewaehlte Zeile oeffnet ihren Termin, nicht den ersten", async () => {
+  await withMobile(async () => {
+    const { root } = await mount();
+
+    const chip = chipWith("Teammeeting");
+    const cell = chip.closest("[data-cal-cell]");
+    await act(async () => { cell.dispatchEvent(new win.Event("click", { bubbles: true })); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    const rows = [...win.document.querySelectorAll("button")]
+      .filter((button) => /Urlaub|Teammeeting/.test(button.textContent));
+    assert.equal(rows.length, 2, "die Liste zeigt nicht beide Termine");
+    // Der Ganztagestermin beginnt um 00:00 und steht deshalb vorn — die
+    // gewaehlte Zeile ist also nicht die erste. Genau das ist der Punkt.
+    assert.match(rows[0].textContent, /Urlaub/, "die Liste sortiert nicht nach Beginn");
+
+    await act(async () => { rows[1].click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    const title = byId("calendar-title");
+    assert.ok(title, "der Termin-Dialog ging nicht auf");
+    assert.equal(title.value, "Teammeeting", "der Dialog zeigt nicht den gewaehlten Termin");
+    assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Uhrzeit gehoert nicht zu diesem Termin");
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+test("Terminliste: „Neuer Termin\" oeffnet einen leeren Dialog am Tag der Liste", async () => {
+  await withMobile(async () => {
+    const { root } = await mount();
+
+    const chip = chipWith("Teammeeting");
+    const cell = chip.closest("[data-cal-cell]");
+    await act(async () => { cell.dispatchEvent(new win.Event("click", { bubbles: true })); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    // Der Knopf im Fuss der Liste — nicht der in der Kalender-Kopfzeile, der
+    // den Termin am gewaehlten Tag des Kalenders anlegt.
+    const create = [...sheet().querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === deMessages["calendar.newEvent"]);
+    assert.ok(create, "der Knopf „Neuer Termin\" fehlt in der Liste");
+
+    await act(async () => { create.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    const title = byId("calendar-title");
+    assert.ok(title, "der Termin-Dialog ging nicht auf");
+    assert.equal(title.value, "", "der Dialog ist nicht leer");
+    assert.equal(
+      byId("calendar-start-date").value,
+      formatDay(EVENT_DAY),
+      "der neue Termin steht nicht am Tag der Liste",
+    );
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+test("Terminliste: zwoelf Termine stehen vollstaendig im DOM und die Liste scrollt", async () => {
+  // Ein Tag mit mehr Terminen, als auf einen Bildschirm passen: die Liste darf
+  // keinen davon verschlucken und muss selbst scrollen, statt den Dialog auf
+  // die volle Hoehe wachsen zu lassen.
+  const many = Array.from({ length: 12 }, (_, index) => ({
+    id: `many-${index}`,
+    title: `Termin ${index + 1}`,
+    description: undefined,
+    location: undefined,
+    start: `${EVENT_DAY}T${pad(7 + index)}:00`,
+    end: `${EVENT_DAY}T${pad(7 + index)}:30`,
+    allDay: false,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  }));
+  serverEvents = many;
+  try {
+    await withMobile(async () => {
+      const { root } = await mount();
+
+      const chip = chipWith("Termin 1");
+      assert.ok(chip, "der erste Termin wurde nicht gerendert");
+      const cell = chip.closest("[data-cal-cell]");
+      await act(async () => { cell.dispatchEvent(new win.Event("click", { bubbles: true })); });
+      await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+      const rows = [...sheet().querySelectorAll("button")]
+        .filter((button) => /^Termin \d+/.test(button.textContent.trim()));
+      assert.equal(rows.length, 12, "die Liste verschluckt Termine");
+
+      const list = [...sheet().querySelectorAll("div")]
+        .find((element) => element.style.overflowY === "auto" || element.style.overflowY === "scroll");
+      assert.ok(list, "die Liste hat keinen eigenen Scrollbereich");
+      assert.equal(list.style.overflowY, "auto", "die Liste scrollt nicht selbst");
+
+      await act(async () => { root.unmount(); });
+    });
+  } finally {
+    serverEvents = EVENTS;
+  }
+});
+
+// ------------------------- die Kapazitaetsrechnung der Monatszelle --
+
+test("die Kapazitaetsrechnung zeigt, was passt, und meldet den Rest als verdeckt", async () => {
+  // 50 px Zelle, 18 px Tageszeile, 16 px Chip: 32 px stehen den Chips zur
+  // Verfuegung, also genau zwei. Der Grenzfall ist der Unterschied zwischen
+  // "passt" und "einer zu viel".
+  assert.deepEqual(
+    visibleEventCount(2, 50, 18, 16),
+    { shown: 2, hidden: 0 },
+    "zwei passende Termine muessen beide gezeigt werden",
+  );
+  assert.deepEqual(
+    visibleEventCount(3, 50, 18, 16),
+    { shown: 1, hidden: 2 },
+    "bei einem Termin zu viel bleibt eine Zeile fuer den Hinweis frei",
+  );
+
+  // Ohne Messung (Zelle noch nicht im Layout) wird nichts abgeschnitten —
+  // sonst verschwaende beim ersten Rendern jeder Termin.
+  assert.deepEqual(visibleEventCount(3, 0, 18, 16), { shown: 3, hidden: 0 });
 });
