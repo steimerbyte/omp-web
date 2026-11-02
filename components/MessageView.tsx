@@ -249,6 +249,11 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     if ((message as CustomMessage).customType === "compaction") {
       return <CompactionMessageView message={message as CustomMessage} />;
     }
+    // A background task's arrival is prose the user should read, not a JSON
+    // `details` dump behind a toggle.
+    if ((message as CustomMessage).customType === "async-result") {
+      return <BackgroundResultView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
+    }
     return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (message.role === "bashExecution") {
@@ -847,8 +852,211 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
+// omp's /vibe director drives these five tools; their results carry a screen
+// wall in `details`, which reads far better than the generic JSON card.
+const VIBE_TOOL_NAMES = ["vibe_spawn", "vibe_send", "vibe_wait", "vibe_kill", "vibe_list"];
+
+const VIBE_STATE_COLORS: Record<string, string> = {
+  running: "var(--accent)",
+  starting: "var(--warning)",
+  idle: "var(--success)",
+  dead: "var(--text-dim)",
+};
+
+interface VibeScreenRow {
+  id: string;
+  cli: string;
+  state: string;
+  killed: boolean;
+  turns: number;
+  queued: number;
+  activity: string;
+}
+
+function firstLine(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
+}
+
+function readVibeScreens(details: Record<string, unknown> | null): VibeScreenRow[] {
+  if (!details || !Array.isArray(details.screens)) return [];
+  return details.screens.filter(isRecord).map((screen) => ({
+    id: typeof screen.id === "string" ? screen.id : "?",
+    // Show the recorded flavour; never invent one for a missing field.
+    cli: typeof screen.cli === "string" ? screen.cli : "",
+    state: typeof screen.state === "string" ? screen.state : "unknown",
+    killed: screen.killed === true,
+    turns: typeof screen.turns === "number" ? screen.turns : 0,
+    queued: typeof screen.queued === "number" ? screen.queued : 0,
+    activity: firstLine(screen.turnMessage) || firstLine(screen.lastActivity),
+  }));
+}
+
+function VibeScreenWall({ screens }: { screens: VibeScreenRow[] }) {
+  return (
+    <div style={{ borderTop: "1px solid var(--border)" }}>
+      {screens.map((screen) => {
+        // Object.hasOwn: a state named "constructor" must not resolve a function.
+        const stateColor = Object.hasOwn(VIBE_STATE_COLORS, screen.state)
+          ? VIBE_STATE_COLORS[screen.state]
+          : "var(--text-dim)";
+        return (
+          <div
+            key={screen.id}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 11, minWidth: 0 }}
+          >
+            <span style={{ color: "var(--text-muted)", fontWeight: 600, flexShrink: 0 }}>{screen.id}</span>
+            {screen.cli && (
+              <span style={{ padding: "0 5px", borderRadius: 4, border: "1px solid var(--border)", color: screen.cli === "good" ? "var(--accent)" : "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>{screen.cli}</span>
+            )}
+            <span style={{ color: stateColor, flexShrink: 0 }}>{screen.killed ? `${screen.state} · killed` : screen.state}</span>
+            <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>{screen.turns}t{screen.queued > 0 ? `+${screen.queued}q` : ""}</span>
+            <span style={{ color: "var(--text-dim)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "right" }}>{screen.activity}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function VibeToolCard({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const isError = result?.isError ?? false;
+  const details = isRecord(result?.details) ? result.details : null;
+  const screens = readVibeScreens(details);
+  const spawned = details && isRecord(details.spawned) ? details.spawned : null;
+  const spawnedId = spawned && typeof spawned.id === "string" ? spawned.id : null;
+  const spawnedCli = spawned && typeof spawned.cli === "string" ? spawned.cli : null;
+  const hiddenKilled = details && Array.isArray(details.hiddenKilled) ? details.hiddenKilled.length : 0;
+  const running = screens.filter((screen) => screen.state === "running" || screen.state === "starting").length;
+  const summary = [
+    `${screens.length} ${screens.length === 1 ? "session" : "sessions"}`,
+    running > 0 ? `${running} running` : null,
+    hiddenKilled > 0 ? `${hiddenKilled} killed` : null,
+  ].filter(Boolean).join(" · ");
+  const text = result ? getMessageText(result.content) : "";
+  const inputText = JSON.stringify(block.input ?? {}, null, 2);
+
+  return (
+    <div
+      style={{
+        borderRadius: 7,
+        overflow: "hidden",
+        fontSize: 12,
+        border: `1px solid ${isError ? "var(--danger)" : "var(--border)"}`,
+        background: "var(--bg-panel)",
+      }}
+    >
+      {/* Same affordance as the generic card: a pending call must still show its prompt/message. */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          width: "100%",
+          padding: "6px 10px",
+          background: "none",
+          border: "none",
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          fontSize: 12,
+          textAlign: "left",
+          minWidth: 0,
+        }}
+      >
+        <ToolBlockIcon toolName={block.toolName} isError={isError} />
+        <span style={{ color: isError ? "var(--danger)" : "var(--accent)", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+          {block.toolName}
+        </span>
+        <span style={{ color: "var(--text-dim)", fontSize: 11, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {summary}
+        </span>
+        {duration !== undefined && (
+          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+        )}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+          <polyline points="2 3.5 5 6.5 8 3.5" />
+        </svg>
+      </button>
+
+      {spawnedId && (
+        <div style={{ borderTop: "1px solid var(--border)", padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", minWidth: 0 }}>
+          spawned{" "}
+          <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>{spawnedId}</span>
+          {spawnedCli ? ` · ${spawnedCli}` : ""}
+        </div>
+      )}
+
+      {screens.length > 0 && <VibeScreenWall screens={screens} />}
+
+      {text.trim().length > 0 && <PreformattedText text={text} isError={isError} />}
+
+      {expanded && <PreformattedText text={inputText} />}
+    </div>
+  );
+}
+
+function TaskBatchList({ items }: { items: { name: string; agent: string; task: string }[] }) {
+  return (
+    <div style={{ borderTop: "1px solid var(--border)" }}>
+      {items.map((item, index) => (
+        <div
+          key={`${index}-${item.name}`}
+          style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "4px 10px", fontFamily: "var(--font-mono)", fontSize: 11, minWidth: 0 }}
+        >
+          <span style={{ color: "var(--text-muted)", fontWeight: 600, flexShrink: 0 }}>{item.name || `#${index + 1}`}</span>
+          {item.agent && <span style={{ color: "var(--accent)", flexShrink: 0 }}>{item.agent}</span>}
+          <span style={{ color: "var(--text-dim)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.task}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Plain pre-wrapped text: React already escapes it, so nothing is JSON-quoted. */
+function PreformattedText({ text, isError }: { text: string; isError?: boolean }) {
+  return (
+    <pre
+      style={{
+        margin: 0,
+        padding: "8px 10px",
+        borderTop: "1px solid var(--border)",
+        background: "var(--bg-subtle)",
+        color: isError ? "var(--danger)" : "var(--text-muted)",
+        fontSize: 12,
+        lineHeight: 1.5,
+        maxHeight: 320,
+        overflow: "auto",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+      }}
+    >
+      {text}
+    </pre>
+  );
+}
+
+function readTaskItems(input: unknown): { name: string; agent: string; task: string }[] | null {
+  if (!isRecord(input) || !Array.isArray(input.tasks)) return null;
+  const items = input.tasks.filter(isRecord).map((item) => ({
+    name: typeof item.name === "string" ? item.name.trim() : "",
+    agent: typeof item.agent === "string" ? item.agent : "",
+    // The TUI's taskPreviewText: `task` only when it is a non-empty string,
+    // otherwise the brief path (`??` would keep "" and hide the file).
+    task: firstLine(item.task) || firstLine(item.taskFile),
+  }));
+  return items.length > 0 ? items : null;
+}
+
 function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
   const normalizedToolName = block.toolName.toLowerCase();
+  const isVibeTool = VIBE_TOOL_NAMES.some((name) => normalizedToolName === name || normalizedToolName.endsWith(`.${name}`));
+  const taskItems = normalizedToolName === "task" || normalizedToolName.endsWith(".task")
+    ? readTaskItems(block.input)
+    : null;
   const isEditTool = normalizedToolName === "edit" ||
     normalizedToolName.startsWith("edit_") ||
     normalizedToolName.endsWith(".edit") ||
@@ -882,9 +1090,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
       )
     : null;
 
-  const resultText = result
-    ? result.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n")
-    : null;
+  const resultText = result ? getMessageText(result.content) : null;
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
 
@@ -909,8 +1115,14 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
     return <PresentFiles details={presentDetails} />;
   }
 
+  if (isVibeTool) {
+    return <VibeToolCard block={block} result={result} duration={duration} />;
+  }
+
   const hasStructuredPreview = Boolean(todoPhases || resultDiff);
-  const headerPreview = getStructuredToolPreview(block, todoPhases);
+  const headerPreview = taskItems
+    ? `${taskItems.length} ${taskItems.length === 1 ? "task" : "tasks"}`
+    : getStructuredToolPreview(block, todoPhases);
 
 
   return (
@@ -975,11 +1187,14 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         </div>
       )}
 
+      {taskItems && <TaskBatchList items={taskItems} />}
+
       {result && isError && (
         <PairedResult text={resultText ?? ""} isEmpty={resultIsEmpty} isError />
       )}
 
-      {expanded && !hasStructuredPreview && (
+      {/* Batch task cards keep the raw call reachable even if a result ever carried a diff. */}
+      {expanded && (!hasStructuredPreview || taskItems !== null) && (
         <pre
           style={{
             margin: 0,
@@ -1044,6 +1259,7 @@ function getToolIconKind(toolName: string): ToolIconKind {
   if (toolNameHasPart(normalized, "todo")) return "todo";
   if (toolNameHasPart(normalized, "eval")) return "eval";
   if (toolNameHasPart(normalized, "task") || toolNameHasPart(normalized, "agent")) return "task";
+  if (toolNameHasPart(normalized, "vibe")) return "task";
   if (toolNameHasPart(normalized, "browser") || toolNameHasPart(normalized, "web_search") || toolNameHasPart(normalized, "fetch")) return "browser";
   if (toolNameHasPart(normalized, "image") || toolNameHasPart(normalized, "inspect_image")) return "image";
   return "generic";
@@ -1748,6 +1964,92 @@ function CompactionFileList({ title, files }: { title: string; files: string[] }
   );
 }
 
+/** Inline image attachments of a custom message. */
+function MessageImages({ images, marginBottom }: { images: ImageContent[]; marginBottom?: number }) {
+  if (images.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: marginBottom ?? 0 }}>
+      {images.map((img, i) => {
+        const src = imageSource(img);
+        if (!src) return null;
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={i}
+            src={src}
+            alt=""
+            style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Capture warnings recorded next to a background result, per job and globally. */
+function getArtifactErrors(details: unknown): string[] {
+  if (!isRecord(details)) return [];
+  const errors: string[] = [];
+  const collect = (meta: unknown) => {
+    if (!isRecord(meta) || typeof meta.artifactError !== "string" || errors.includes(meta.artifactError)) return;
+    errors.push(meta.artifactError);
+  };
+  collect(details.meta);
+  if (Array.isArray(details.jobs)) {
+    for (const job of details.jobs) if (isRecord(job)) collect(job.meta);
+  }
+  return errors;
+}
+
+function BackgroundResultView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void }) {
+  const time = formatTime(message.timestamp);
+  const text = getMessageText(message.content).trim();
+  const images = getMessageImages(message.content);
+  const artifactErrors = getArtifactErrors(message.details);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          overflow: "hidden",
+          background: "var(--bg)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 10px",
+            background: "var(--bg-panel)",
+            color: "var(--text-muted)",
+            fontSize: 12,
+          }}
+        >
+          <span style={{ color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>
+            Background result
+          </span>
+          {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
+        </div>
+        {(images.length > 0 || text.length > 0) && (
+          <div style={{ borderTop: "1px solid var(--border)", padding: "6px 9px" }}>
+            <MessageImages images={images} marginBottom={text ? 8 : 0} />
+            {/* Markdown: rehype drops the <system-notice> wrapper the harness wraps around the body. */}
+            {text.length > 0 && <MarkdownBody className="markdown-custom-message" cwd={cwd} onOpenFile={onOpenFile}>{text}</MarkdownBody>}
+          </div>
+        )}
+        {artifactErrors.map((error) => (
+          <div key={error} style={{ borderTop: "1px solid var(--border)", padding: "4px 10px", color: "var(--warning)", fontSize: 11 }}>
+            Full output was not saved completely (artifact {error} failed)
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string) => void }) {
   const { t } = useI18n();
   const isHiddenDisplay = message.display === false;
@@ -1800,23 +2102,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
 
         {contentExpanded ? (
           <div style={{ padding: "6px 9px" }}>
-            {images.length > 0 && (
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: text ? 8 : 0 }}>
-                {images.map((img, i) => {
-                  const src = imageSource(img);
-                  if (!src) return null;
-                  return (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={i}
-                      src={src}
-                      alt=""
-                      style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
-                    />
-                  );
-                })}
-              </div>
-            )}
+            <MessageImages images={images} marginBottom={text ? 8 : 0} />
              {text ? <MarkdownBody className="markdown-custom-message" cwd={cwd} onOpenFile={onOpenFile}>{text}</MarkdownBody> : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("i18n.noMessage")}</span>}
           </div>
         ) : (
@@ -1913,6 +2199,8 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
 
 function getMessageText(content: CustomMessage["content"] | UserMessage["content"]): string {
   if (typeof content === "string") return content;
+  // A recorded message can carry a null/odd content; never throw in the transcript.
+  if (!Array.isArray(content)) return "";
   return content
     .filter((b): b is TextContent => b.type === "text")
     .map((b) => b.text)
@@ -1920,7 +2208,7 @@ function getMessageText(content: CustomMessage["content"] | UserMessage["content
 }
 
 function getMessageImages(content: CustomMessage["content"] | UserMessage["content"]): ImageContent[] {
-  if (typeof content === "string") return [];
+  if (!Array.isArray(content)) return [];
   return content.filter((b): b is ImageContent => b.type === "image");
 }
 

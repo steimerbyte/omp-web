@@ -1,8 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import React from "react";
+import * as linkedom from "linkedom";
+import React, { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createJiti } from "jiti";
+
+/**
+ * A DOM for the one mounted test at the end of this file (the preset menu
+ * after a lock). The static-markup tests above it render on the server and
+ * never touch these globals; `useIsMobile` guards every window access behind
+ * `window.matchMedia`, so a browser-like window changes nothing for them.
+ * The setup mirrors `ChatInput.gradient-border.test.mjs`.
+ */
+const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
+const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
+// linkedom rebuilds `window.navigator` on each access and its methods read
+// state off `this`, so functions are bound and only navigator is replaced.
+globalThis.window = new Proxy(dom.window, {
+  get(target, prop) {
+    if (prop === "navigator") return fakeNavigator;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
+globalThis.document = dom.document;
+globalThis.navigator = fakeNavigator;
+
+const storage = new Map();
+const localStorage = {
+  getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+  setItem: (key, value) => { storage.set(key, String(value)); },
+  removeItem: (key) => { storage.delete(key); },
+  clear: () => { storage.clear(); },
+};
+globalThis.localStorage = localStorage;
+dom.window.localStorage = localStorage;
+
+globalThis.CSS = { supports: () => true, registerProperty: () => {} };
+globalThis.fetch = async (url) => ({
+  ok: true,
+  json: async () => (String(url).includes("/api/quick-phrases") ? { phrases: [] } : {}),
+});
 
 const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
@@ -11,6 +49,7 @@ const jiti = createJiti(import.meta.url, {
 const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canRestoreUserMessage, filterModelOptions, getUserMessageText, getUserMessageDraftImages } = await jiti.import("./ChatInput.tsx");
 const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("../lib/draft-store.ts");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+const { createRoot } = await import("react-dom/client");
 
 test("renders the upstream model error", () => {
   const html = renderToStaticMarkup(
@@ -327,4 +366,85 @@ test("keeps the context indicator visible before usage is available", () => {
   assert.match(html, /role="status"/);
   assert.match(html, /data-context-available="false"/);
   assert.match(html, /\? \/ \?/);
+});
+
+/**
+ * Der Preset-Ausloeser einer gemounteten Eingabe.
+ *
+ * Die `aria-label` wechselt mit der Sperre — "Change tool preset" im
+ * Normalzustand, der Vibe-Name gesperrt —, deshalb wird ueber beide gesucht.
+ */
+function presetTrigger(container) {
+  const button = [...container.querySelectorAll("button")].find((candidate) => {
+    const label = candidate.getAttribute("aria-label") ?? "";
+    return label === "Change tool preset" || label === "Vibe mode";
+  });
+  assert.ok(button, "der Preset-Ausloeser ist gerendert");
+  return button;
+}
+
+/** Die Zeilen des geoeffneten Menues: die Zeile fuer das volle Preset. */
+function presetMenuRows(container) {
+  return [...container.querySelectorAll("button")]
+    .filter((candidate) => (candidate.textContent ?? "").trim().startsWith("full")).length;
+}
+
+/**
+ * Der React-Handler eines Knotens.
+ *
+ * linkedom und React DOM 19 stellen ein `dispatchEvent` auf einem Button
+ * nicht gemeinsam zu (dem Ziel fehlt die Fiber), deshalb wird derselbe
+ * Handler ueber die React-Props gerufen — wie in
+ * `ChatInput.enter-gesture.test.mjs`.
+ */
+function reactOnClick(element) {
+  const key = Object.keys(element).find((candidate) => candidate.startsWith("__reactProps"));
+  assert.ok(key, "kein React-Props-Objekt am Ausloeser");
+  return element[key].onClick;
+}
+
+/**
+ * Ein Preset-Menue, das eine fremde Sitzung sperrt.
+ *
+ * Der Ausloeser wird waehrend der Sperre deaktiviert; waere das Menue nur
+ * visuell ausgeblendet, stuende es nach dem Entsperren wieder offen, obwohl
+ * niemand es geoeffnet hat. Geprueft wird deshalb der Zustand nach
+ * auf → sperren → entsperren: keine Zeilen und kein Hover-Hintergrund.
+ */
+test("a preset lock closes the menu and unlocking does not bring it back", async () => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const render = (vibeEnabled) => root.render(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ChatInput, {
+        onSend() {},
+        onAbort() {},
+        onModelChange() {},
+        modelList: [],
+        modelNames: {},
+        toolPreset: "default",
+        onToolPresetChange() {},
+        vibeEnabled,
+      }),
+    ),
+  );
+
+  await act(async () => { render(false); });
+  assert.equal(presetMenuRows(container), 0, "das Menue ist anfangs zu");
+
+  await act(async () => { reactOnClick(presetTrigger(container))({}); });
+  assert.equal(presetMenuRows(container), 1, "ein Klick oeffnet das Menue");
+  assert.match(presetTrigger(container).getAttribute("style") ?? "", /--bg-hover/);
+
+  await act(async () => { render(true); });
+  assert.equal(presetMenuRows(container), 0, "die Sperre schliesst das Menue");
+  assert.notEqual(presetTrigger(container).getAttribute("disabled"), null, "der Ausloeser ist gesperrt");
+  assert.doesNotMatch(presetTrigger(container).getAttribute("style") ?? "", /--bg-hover/);
+
+  await act(async () => { render(false); });
+  assert.equal(presetMenuRows(container), 0, "nach dem Entsperren bleibt das Menue zu");
+  assert.doesNotMatch(presetTrigger(container).getAttribute("style") ?? "", /--bg-hover/);
 });

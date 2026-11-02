@@ -95,6 +95,8 @@ interface Props {
   compactResult?: CompactResultInfo | null;
   toolPreset?: "none" | "default" | "full";
   onToolPresetChange?: (preset: "none" | "default" | "full") => void;
+  /** Vibe mode runs on a reduced toolset; applying a preset would overwrite it. */
+  vibeEnabled?: boolean;
   thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   effectiveThinkingLevel?: string;
   onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => void;
@@ -195,6 +197,7 @@ const BUILTIN_SLASH_COMMANDS: LocalBuiltinSlashCommand[] = [
   { name: "name", descriptionKey: "chat.commandName", source: "builtin" },
   { name: "session", descriptionKey: "chat.commandSession", source: "builtin" },
   { name: "copy", descriptionKey: "chat.commandCopy", source: "builtin" },
+  { name: "vibe", descriptionKey: "chat.commandVibe", source: "builtin" },
 ];
 
 const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "custom", "mcp_prompt", "prompt", "file", "skill"];
@@ -521,7 +524,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, isAgentRunning, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   modelRoles, onRoleModelChange, modelSwitching, modelSwitchError, onDismissModelSwitchError,
-  onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
+  onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange, vibeEnabled,
   thinkingLevel, effectiveThinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
@@ -1617,7 +1620,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!thinkingLevelMap) return lvl;
     return thinkingLevelMap[lvl] ?? lvl;
   })();
-  const toolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
+  const toolPresetLocked = Boolean(vibeEnabled);
+  const toolPresetLabel = toolPresetLocked
+    ? t("chat.vibeLabel")
+    : Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
+
+  // Another client can turn vibe on while this menu is open; a locked trigger
+  // must not keep a menu that unlocking would reveal again.
+  useEffect(() => {
+    if (toolPresetLocked) setToolDropdownOpen(false);
+  }, [toolPresetLocked]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -2980,10 +2992,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {!isStreaming && onToolPresetChange && (
               <div ref={toolDropdownRef} style={{ position: "relative" }}>
                 <button
-                  onClick={() => !isStreaming && setToolDropdownOpen((v) => !v)}
-                  disabled={isStreaming}
-                   title={t("chat.changeToolPreset") + `: ${toolPresetLabel}`}
-                   aria-label={t("chat.changeToolPreset")}
+                  onClick={() => !toolPresetLocked && !isStreaming && setToolDropdownOpen((v) => !v)}
+                  disabled={isStreaming || toolPresetLocked}
+                   title={toolPresetLocked ? t("chat.vibeReadOnly") : `${t("chat.changeToolPreset")}: ${toolPresetLabel}`}
+                   aria-label={toolPresetLocked ? t("chat.vibeLabel") : t("chat.changeToolPreset")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                     padding: isMobile ? "0 6px" : "8px 12px",
@@ -2993,13 +3005,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     border: "none",
                     borderRadius: 9,
                     color: "var(--text-muted)",
-                    cursor: isStreaming ? "not-allowed" : "pointer",
+                    cursor: isStreaming || toolPresetLocked ? "not-allowed" : "pointer",
                     fontSize: 12,
-                    opacity: isStreaming ? 0.5 : 1,
+                    opacity: isStreaming || toolPresetLocked ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
                   onMouseEnter={(e) => {
-                    if (isStreaming) return;
+                    if (isStreaming || toolPresetLocked) return;
                     e.currentTarget.style.background = "var(--bg-hover)";
                     e.currentTarget.style.color = "var(--text)";
                   }}
@@ -3013,7 +3025,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </svg>
                   {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>}
                 </button>
-                {toolDropdownOpen && (
+                {toolDropdownOpen && !toolPresetLocked && (
                   <div style={{
                     position: "absolute", bottom: "calc(100% + 6px)", right: 0,
                     zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",

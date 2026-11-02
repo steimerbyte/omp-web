@@ -28,7 +28,7 @@ import {
   type ModelTarget,
 } from "@/lib/model-switch-queue";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
-import type { ContextUsage, GoalStatusInfo, SessionStatsInfo, SlashCommandInfo } from "@/lib/omp-types";
+import type { ContextUsage, GoalStatusInfo, SessionStatsInfo, SlashCommandInfo, VibeCommandResult, VibeStatusInfo } from "@/lib/omp-types";
 import type { ModelRoleAssignment } from "@/lib/api-types";
 
 export interface SessionData {
@@ -101,6 +101,7 @@ type AgentStateResponse = {
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   subagents?: SubagentSnapshot[];
   goal?: GoalStatusInfo | null;
+  vibe?: VibeStatusInfo | null;
 };
 
 interface GoalCommandResponse {
@@ -456,6 +457,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const completionScrollAllowedRef = useRef(true);
   const [autoFollowPaused, setAutoFollowPaused] = useState(false);
   const [goalStatus, setGoalStatus] = useState<GoalStatusInfo | null>(null);
+  const [vibeStatus, setVibeStatus] = useState<VibeStatusInfo | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const userScrollIntentUntilRef = useRef(0);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
@@ -576,6 +578,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
           if (liveState.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, liveState.subagents ?? []));
+          if (liveState.vibe !== undefined) setVibeStatus(liveState.vibe ?? null);
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
         }
@@ -985,14 +988,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), PROMPT_SETTLE_POLL_MS);
           return;
         }
-        if (data.running && (state?.subagents?.length ?? 0) > 0) {
+        // A pending background delegation counts as work: the follow-up turn
+        // arrives on this stream, so closing here would throw it away.
+        if (data.running) {
           eventStreamGraceTimerRef.current = setTimeout(
             () => void checkServerIdle(),
             CONTEXT_USAGE_REFRESH_MS,
           );
           return;
         }
-
 
         eventStreamGraceActiveRef.current = false;
         eventStreamGraceTimerRef.current = null;
@@ -1212,6 +1216,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
               if (d.state?.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, d.state?.subagents ?? []));
               if (d.state?.goal !== undefined) setGoalStatus(d.state.goal ?? null);
+              if (d.state?.vibe !== undefined) setVibeStatus(d.state.vibe ?? null);
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
@@ -1221,6 +1226,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       case "goal_status":
         setGoalStatus((event.status as GoalStatusInfo | null | undefined) ?? null);
+        break;
+      case "vibe_status":
+        setVibeStatus((event.status as VibeStatusInfo | null | undefined) ?? null);
         break;
       case "agent_settled": {
         const agentWasActive = sdkAgentActiveRef.current;
@@ -1400,21 +1408,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } | undefined;
         if (!payload?.progress) break;
         const progress = payload.progress;
-        const snapshot: SubagentSnapshot = {
-          id: progress.id,
-          index: payload.index ?? progress.index,
-          agent: payload.agent ?? progress.agent,
-          agentSource: payload.agentSource ?? "bundled",
-          description: progress.description,
-          status: progress.status,
-          task: payload.task ?? progress.task,
-          assignment: payload.assignment ?? progress.assignment,
-          sessionFile: payload.sessionFile,
-          parentToolCallId: payload.parentToolCallId,
-          lastUpdate: Date.now(),
-          progress,
-        };
-        setSubagents((previous) => mergeSubagentSnapshots(previous, [snapshot]));
+        setSubagents((previous) => {
+          // A restored/follow-up run emits progress without the owning tool
+          // call; keep the row in its batch instead of re-keying it as a solo.
+          const before = previous.find((subagent) => subagent.id === progress.id);
+          const snapshot: SubagentSnapshot = {
+            id: progress.id,
+            index: payload.index ?? progress.index,
+            agent: payload.agent ?? progress.agent,
+            agentSource: payload.agentSource ?? "bundled",
+            description: progress.description,
+            status: progress.status,
+            task: payload.task ?? progress.task,
+            assignment: payload.assignment ?? progress.assignment,
+            sessionFile: payload.sessionFile ?? before?.sessionFile,
+            parentToolCallId: payload.parentToolCallId ?? before?.parentToolCallId,
+            lastUpdate: Date.now(),
+            progress,
+          };
+          return mergeSubagentSnapshots(previous, [snapshot]);
+        });
         break;
       }
       case "queue_update":
@@ -1962,6 +1975,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return complete({ handled: true, message: result?.message ?? "Command completed" });
         }
 
+        case "vibe": {
+          if (!sid) return complete({ handled: true, error: "No active session" });
+          const result = await sendAgentCommand<VibeCommandResult>(sid, { type: "vibe", args });
+          setVibeStatus(result?.status ?? null);
+          // The mode swaps the active toolset, so the preset must follow it.
+          await loadTools(sid);
+          if (result?.error) return complete({ handled: true, error: result.error });
+          if (result?.prompt) {
+            if (result.message) addNotice({ type: "success", message: result.message });
+            return { handled: true, prompt: result.prompt };
+          }
+          return complete({ handled: true, message: result?.message ?? "Command completed" });
+        }
+
         case "handoff": {
           if (!sid) return complete({ handled: true, error: "No active session" });
           if (agentRunningRef.current || bashRunningRef.current) {
@@ -2181,6 +2208,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [setAutoFollow]);
 
+  // A switched session must not inherit the previous one's cards or mode: its
+  // subagent transcripts would 404.
+  const sessionScopeRef = useRef<string | null>(session?.id ?? null);
+  useEffect(() => {
+    const next = session?.id ?? null;
+    if (sessionScopeRef.current === next) return;
+    const previous = sessionScopeRef.current;
+    sessionScopeRef.current = next;
+    // omp assigns the first real id to a brand-new session; same scope.
+    if (previous === null && next !== null) return;
+    setSubagents([]);
+    setVibeStatus(null);
+  }, [session?.id]);
+
   // Load session on mount
   useEffect(() => {
     if (session) {
@@ -2188,6 +2229,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
           loadTools(session.id);
+          // On a reload the stream is the only path a pending background result
+          // can arrive on, so any running state needs it.
+          void connectEvents(session.id);
           if (
             agentState.state?.isStreaming
             || agentState.state?.isPromptRunning
@@ -2199,7 +2243,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatch({ type: "start" });
-            void connectEvents(session.id);
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
@@ -2208,9 +2251,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             bashRunningRef.current = true;
             setBashRunning(true);
             void waitForBashSettlement(session.id);
-          }
-          if ((agentState.state?.subagents?.length ?? 0) > 0) {
-            void connectEvents(session.id);
           }
         }
         const state = agentState?.state;
@@ -2227,6 +2267,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(state.queuedMessages));
           if (state.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, state.subagents ?? []));
           if (state.goal !== undefined) setGoalStatus(state.goal ?? null);
+          if (state.vibe !== undefined) setVibeStatus(state.vibe ?? null);
         }
       });
     }
@@ -2343,6 +2384,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNew,
     autoFollowPaused, resumeAutoFollow,
     goalStatus,
+    vibeStatus,
     // Refs
     sessionIdRef, eventSourceRef, messagesEndRef, scrollContainerRef,
     // Actions

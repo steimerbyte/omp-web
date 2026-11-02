@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { restoreLinkedomPrototypesOnExit } from "../lib/test-linkedom.mjs";
 import * as linkedom from "linkedom";
 import React from "react";
 import { createJiti } from "jiti";
@@ -18,6 +19,8 @@ import { createJiti } from "jiti";
 
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
 const win = dom.window;
+// linkedom teilt die Prototypen prozessweit; nach dieser Datei zurueckgeben.
+restoreLinkedomPrototypesOnExit(win);
 const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
 
 const computed = () => new Proxy({}, {

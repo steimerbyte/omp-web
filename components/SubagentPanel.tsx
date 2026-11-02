@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { AgentMessage, SubagentSnapshot, ToolResultMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import { normalizeToolCalls } from "@/lib/normalize";
+import { groupSubagentRows, isSubagentActive } from "@/lib/subagent-groups";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { MessageView } from "./MessageView";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { motion } from "motion/react";
 import { SPIN_TRANSITION } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
@@ -21,10 +23,6 @@ type SubagentTranscriptResult = {
   reset: boolean;
   entries: Array<{ id?: string; type?: string; message?: AgentMessage }>;
 };
-
-function isSubagentActive(subagent: SubagentSnapshot): boolean {
-  return subagent.status === "pending" || subagent.status === "running";
-}
 
 function formatSubagentDuration(durationMs = 0): string {
   const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
@@ -285,13 +283,16 @@ function SubagentRow({ subagent, selected, onSelect }: { subagent: SubagentSnaps
   );
 }
 
-export function SubagentPanel({ sessionId, cwd, subagents }: { sessionId: string | null; cwd?: string; subagents: SubagentSnapshot[] }) {
+export function SubagentPanel({ sessionId, cwd, subagents, collapsible = true }: { sessionId: string | null; cwd?: string; subagents: SubagentSnapshot[]; collapsible?: boolean }) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const running = subagents.filter(isSubagentActive);
-  const finished = subagents.filter((subagent) => !isSubagentActive(subagent));
+  const running = groupSubagentRows(subagents.filter(isSubagentActive));
+  const finished = groupSubagentRows(subagents.filter((subagent) => !isSubagentActive(subagent)));
   const selected = selectedId ? subagents.find((subagent) => subagent.id === selectedId) ?? null : null;
+  // A collapsed sheet would keep the close button and drop everything else,
+  // so only the desktop column may fold; the sheet always shows its list.
+  const isCollapsed = collapsible && collapsed;
 
   useEffect(() => {
     setSelectedId(null);
@@ -303,6 +304,20 @@ export function SubagentPanel({ sessionId, cwd, subagents }: { sessionId: string
   }, [selected, selectedId]);
 
   if (!sessionId || subagents.length === 0) return null;
+
+  const headerContent = (
+    <>
+      {collapsible && (
+        <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: isCollapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s" }}><polyline points="3 2 7 5 3 8" /></svg>
+      )}
+      <span style={{ fontSize: 10, fontWeight: 750, letterSpacing: "0.08em", textTransform: "uppercase" }}>{t("subagents.title")}</span>
+      <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 9.5, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: running.length > 0 ? "var(--accent)" : "var(--text-dim)" }}>{t("subagents.runningCount", { count: running.length })}</span>
+        <span style={{ color: "var(--text-dim)" }}>{t("subagents.finishedCount", { count: finished.length })}</span>
+      </span>
+    </>
+  );
+  const headerStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 7, width: "100%", minHeight: 42, padding: "0 11px", border: "none", borderBottom: isCollapsed ? "none" : "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: collapsible ? "pointer" : "default", textAlign: "left" };
 
   return (
     <aside
@@ -324,21 +339,15 @@ export function SubagentPanel({ sessionId, cwd, subagents }: { sessionId: string
         <SubagentDetail sessionId={sessionId} cwd={cwd} subagent={selected} onBack={() => setSelectedId(null)} />
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => setCollapsed((current) => !current)}
-            aria-expanded={!collapsed}
-            style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", minHeight: 42, padding: "0 11px", border: "none", borderBottom: collapsed ? "none" : "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer", textAlign: "left" }}
-          >
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: collapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s" }}><polyline points="3 2 7 5 3 8" /></svg>
-            <span style={{ fontSize: 10, fontWeight: 750, letterSpacing: "0.08em", textTransform: "uppercase" }}>{t("subagents.title")}</span>
-            <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 9.5, fontVariantNumeric: "tabular-nums" }}>
-              <span style={{ color: running.length > 0 ? "var(--accent)" : "var(--text-dim)" }}>{t("subagents.runningCount", { count: running.length })}</span>
-              <span style={{ color: "var(--text-dim)" }}>{t("subagents.finishedCount", { count: finished.length })}</span>
-            </span>
-          </button>
+          {collapsible ? (
+            <button type="button" onClick={() => setCollapsed((current) => !current)} aria-expanded={!collapsed} style={headerStyle}>
+              {headerContent}
+            </button>
+          ) : (
+            <div style={headerStyle}>{headerContent}</div>
+          )}
 
-          {!collapsed && (
+          {!isCollapsed && (
             <div style={{ minHeight: 0, overflowY: "auto", padding: "7px 6px 8px" }}>
               {running.length > 0 && (
                 <div role="list" aria-label={t("subagents.running")}>
@@ -357,5 +366,71 @@ export function SubagentPanel({ sessionId, cwd, subagents }: { sessionId: string
         </>
       )}
     </aside>
+  );
+}
+
+/**
+ * The phone counterpart of the sibling column: a count pill in the chat column
+ * that opens the same panel as a bottom sheet. `useIsMobile` and the media
+ * query in `app/globals.css` share the 640px breakpoint, so the pill and the
+ * hidden column never disagree.
+ */
+export function SubagentMobileToggle({ sessionId, cwd, subagents }: { sessionId: string | null; cwd?: string; subagents: SubagentSnapshot[] }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const running = subagents.filter(isSubagentActive);
+  const finished = subagents.length - running.length;
+  const label = running.length > 0
+    ? t("subagents.runningCount", { count: running.length })
+    : t("subagents.finishedCount", { count: finished });
+
+  if (!sessionId || subagents.length === 0) return null;
+
+  return (
+    <>
+      <button
+        ref={toggleRef}
+        type="button"
+        className="subagent-mobile-toggle"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        // The visible text is only a count; the panel's name makes it a target.
+        aria-label={`${t("subagents.title")}: ${label}`}
+        onClick={() => setOpen(true)}
+      >
+        {label}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="subagent-mobile-sheet"
+          // role=dialog, aria-labelledby and aria-hidden on the rest of the page, plus Escape, backdrop and focus trap: the primitive's.
+          onCloseAutoFocus={(event) => {
+            if (!toggleRef.current) return;
+            event.preventDefault();
+            toggleRef.current.focus();
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, padding: "2px 6px 2px 14px", borderBottom: "1px solid var(--border)" }}>
+            <DialogTitle style={{ flex: 1, minWidth: 0, fontSize: 10, fontWeight: 750, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+              {t("subagents.title")}
+            </DialogTitle>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              title={t("i18n.close")}
+              aria-label={t("i18n.close")}
+              style={{ display: "grid", placeItems: "center", width: 44, height: 44, padding: 0, border: "none", borderRadius: 8, background: "transparent", color: "var(--text-muted)", cursor: "pointer", flexShrink: 0 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                <path d="m4 4 8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+          <SubagentPanel sessionId={sessionId} cwd={cwd} subagents={subagents} collapsible={false} />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

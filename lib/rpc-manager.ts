@@ -39,7 +39,8 @@ import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { ensureTenantSkillsRegistration } from "./skills-manager";
 import type { SlashCommandInfo } from "./omp-types";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./omp-types";
-import { GoalModeController } from "./goal-mode";
+import { GoalModeController, parseGoalCommand } from "./goal-mode";
+import { VibeModeController, type VibeModeSession } from "./vibe-mode";
 import type {
   ExtensionAskDialogResult,
   ExtensionUiRequest,
@@ -242,11 +243,12 @@ function appendSlashCommand(
 
 /**
  * Browser-native builtins with no shared SDK handler; advertised with their
- * canonical registry metadata. `/goal` is a mode command omp implements as a
- * TUI-only handler, so it never reaches ACP discovery; omp-web drives the same
- * GoalRuntime itself (lib/goal-mode.ts) and advertises it here.
+ * canonical registry metadata. `/goal` and `/vibe` are mode commands omp
+ * implements as TUI-only handlers, so they never reach ACP discovery; omp-web
+ * drives the same runtimes itself (lib/goal-mode.ts, lib/vibe-mode.ts) and
+ * advertises them here.
  */
-export const BROWSER_NATIVE_SLASH_COMMANDS = ["fork", "goal"] as const;
+export const BROWSER_NATIVE_SLASH_COMMANDS = ["fork", "goal", "vibe"] as const;
 
 /**
  * Registry metadata that does not describe the browser handler. omp 18.10 gave
@@ -334,6 +336,8 @@ export class AgentSessionWrapper {
   // Keep a bounded per-session copy so state requests can still expose history.
   private readonly subagentHistory = new Map<string, SubagentSnapshot>();
   private goalModeController: GoalModeController | null = null;
+  private readonly vibeMode: VibeModeController;
+  private unsubscribeJobSettled: (() => void) | null = null;
   private _alive = true;
 
   constructor(
@@ -348,6 +352,19 @@ export class AgentSessionWrapper {
       notifyRunningChange();
     });
     this.subagents.setSubscriptionLevel("progress");
+    // Constructed here, not as a field initializer: `inner` is a parameter
+    // property and field initializers run before it is assigned.
+    this.vibeMode = new VibeModeController(this.inner as unknown as VibeModeSession, {
+      // Like goal mode: without a frame, another tab keeps a stale bar/picker.
+      onStatus: (status) => {
+        this.emit({ type: "vibe_status", status });
+        notifyRunningChange();
+      },
+      conflicts: () => this.planOrGoalConflict(),
+    });
+    this.unsubscribeJobSettled = this.inner.asyncJobManager?.onJobSettled(() => {
+      if (this.isAlive()) notifyRunningChange();
+    }) ?? null;
   }
 
   private rememberSubagentSnapshot(snapshot: SubagentSnapshot): void {
@@ -448,6 +465,10 @@ export class AgentSessionWrapper {
   }
 
   isRunning(): boolean {
+    // A background job (task or vibe worker) that outlives the turn still owes a
+    // follow-up turn; reporting idle here closed the browser's SSE stream, so its
+    // result never rendered. The job manager is per session, so no owner filter.
+    const jobs = this.inner.asyncJobManager;
     return this._alive && (
       this.promptRunning
       || this.handoffRunning
@@ -455,6 +476,8 @@ export class AgentSessionWrapper {
       || this.inner.isCompacting
       || this.inner.isBashRunning
       || this.subagents.getSubagents().length > 0
+      || (jobs?.getRunningJobs().length ?? 0) > 0
+      || jobs?.hasPendingDeliveries() === true
     );
   }
   bindToolUiContext(setter: (uiContext: ExtensionUiContextLike, hasUI: boolean) => void): void {
@@ -467,6 +490,12 @@ export class AgentSessionWrapper {
     void this.goalMode.restore().catch((error) => {
       console.error(
         "[omp-web] failed to restore goal mode:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+    void this.vibeMode.restore().catch((error) => {
+      console.error(
+        "[omp-web] failed to restore vibe mode:",
         error instanceof Error ? error.message : error,
       );
     });
@@ -575,7 +604,10 @@ export class AgentSessionWrapper {
       || type === "handoff"
       || type === "get_commands"
       || type === "execute_slash_command"
-      || type === "goal";
+      || type === "goal"
+      // Both modes snapshot and restore the active tool list, so they need the
+      // extension tools in place before they can record it.
+      || type === "vibe";
   }
 
   private async withFinalRunningNotification<T>(operation: () => Promise<T>): Promise<T> {
@@ -622,6 +654,20 @@ export class AgentSessionWrapper {
       });
     }
     return this.goalModeController;
+  }
+
+  /**
+   * Vibe mode is exclusive with the other two modes, as in omp's own command.
+   */
+  private planOrGoalConflict(): string | undefined {
+    if (this.inner.getPlanModeState?.()?.enabled) return "Exit plan mode first.";
+    // Match omp's own exclusivity: an active or paused goal blocks, a finished
+    // one does not; a paused goal reports enabled:false but still owns the run.
+    const goalState = this.inner.getGoalModeState?.();
+    if (goalState?.goal && (goalState.enabled || goalState.goal.status === "paused")) {
+      return "Exit goal mode first.";
+    }
+    return undefined;
   }
 
   /**
@@ -894,6 +940,7 @@ export class AgentSessionWrapper {
           extensionWidgets: this.getExtensionWidgets(),
           subagents: this.getSubagentSnapshots(),
           goal: this.goalMode.getStatus(),
+          vibe: this.vibeMode.getStatus(),
         };
       }
       case "get_subagents":
@@ -1099,7 +1146,18 @@ export class AgentSessionWrapper {
       }
 
       case "goal": {
-        return await this.goalMode.handleCommand((command.args as string | undefined) ?? "");
+        const goalArgs = (command.args as string | undefined) ?? "";
+        // A goal started on the vibe toolset would run a second autonomous loop.
+        const { sub, rest } = parseGoalCommand(goalArgs);
+        const entersGoal = sub === "set" || sub === "resume" || (sub === undefined && rest.length > 0);
+        if (entersGoal && this.vibeMode.getStatus()?.enabled) {
+          return { error: "Exit vibe mode first.", status: this.goalMode.getStatus() };
+        }
+        return await this.goalMode.handleCommand(goalArgs);
+      }
+
+      case "vibe": {
+        return await this.vibeMode.handleCommand((command.args as string | undefined) ?? "");
       }
 
       case "execute_slash_command": {
@@ -1133,6 +1191,11 @@ export class AgentSessionWrapper {
 
 
       case "set_tools": {
+        // A preset change would overwrite the reduced vibe toolset mid-mode; a
+        // pending entry is worse, its FIFO tool mutation would land after it.
+        if (this.vibeMode.getStatus()?.enabled || this.vibeMode.isPending()) {
+          return { error: "Exit vibe mode before changing the tool preset." };
+        }
         const toolNames = command.toolNames as string[];
         this.setForceEmptySystemPrompt(toolNames.length === 0);
         await this.inner.setActiveToolsByName(
@@ -1211,6 +1274,7 @@ export class AgentSessionWrapper {
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     this.goalModeController?.dispose();
+    this.unsubscribeJobSettled?.();
     this.subagents.dispose();
     this.subagentHistory.clear();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
@@ -2052,7 +2116,7 @@ export async function startRpcSession(
       // omp's own applier, so a prompt file goes through the same templates the
       // CLI renders it with instead of overwriting the whole system prompt.
       applyResolvedSystemPromptInputs(sessionOptions, systemPrompts.systemPrompt, systemPrompts.appendPrompt);
-      const { session: inner, eventBus, setToolUIContext } = await createAgentSession(sessionOptions);
+      const { session: inner, eventBus, subagentEventBus, setToolUIContext } = await createAgentSession(sessionOptions);
 
       const persistedPreferences = await persistExplicitStartupPreferences(
         settings,
@@ -2100,7 +2164,10 @@ export async function startRpcSession(
         await session.setActiveToolsByName(withExtensionTools(session, toolNames));
       }
 
-      const wrapper = new AgentSessionWrapper(session, eventBus);
+      // Nested subagents emit their lifecycle/progress frames on the root-scoped
+      // `subagentEventBus` (omp's own RPC mode subscribes it, rpc-mode.ts:1507);
+      // a registry bound to the session-local `eventBus` never sees a grandchild.
+      const wrapper = new AgentSessionWrapper(session, subagentEventBus ?? eventBus);
       wrapper.bindToolUiContext(
         setToolUIContext as unknown as (uiContext: ExtensionUiContextLike, hasUI: boolean) => void,
       );

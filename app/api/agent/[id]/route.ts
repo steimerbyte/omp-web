@@ -160,7 +160,8 @@ export async function GET(
     }
 
     const state = await session.send({ type: "get_state" });
-    return NextResponse.json({ running: true, state });
+    // `running` = "this session still owes work", not "a wrapper exists"; the browser keeps its SSE stream open while true.
+    return NextResponse.json({ running: session.isRunning(), state });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

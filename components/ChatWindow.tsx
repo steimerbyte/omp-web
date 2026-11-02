@@ -34,7 +34,7 @@ import { useSyncedDisplaySettings } from "@/hooks/useDisplaySettings";
 import { getDraft } from "@/lib/draft-store";
 import { formatTokenCount } from "@/lib/format-tokens";
 import { useDragDrop } from "@/hooks/useDragDrop";
-import type { GoalStatusInfo, SessionStatsInfo } from "@/lib/omp-types";
+import type { GoalStatusInfo, SessionStatsInfo, VibeStatusInfo } from "@/lib/omp-types";
 import {
   captureScrollDistance,
   getNextVisibleCount,
@@ -235,6 +235,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     isNew,
     autoFollowPaused, resumeAutoFollow,
     goalStatus,
+    vibeStatus,
     sessionIdRef, messagesEndRef, scrollContainerRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange, handleRoleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
@@ -429,6 +430,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       compactResult={compactResult}
       toolPreset={toolPreset}
       onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
+      vibeEnabled={Boolean(vibeStatus?.enabled)}
       thinkingLevel={thinkingLevel}
       effectiveThinkingLevel={effectiveThinkingLevel}
       onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
@@ -834,6 +836,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
             <GoalBar goal={goalStatus} t={t} />
+            <VibeBar vibe={vibeStatus} t={t} />
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>
@@ -883,6 +886,39 @@ function GoalBar({ goal, t }: { goal: GoalStatusInfo | null; t: (key: string, pa
         {paused ? t("chat.goalPaused") : goal.status}
       </span>
       <span style={{ flexShrink: 0, color: "var(--text-dim)" }}>{budget}</span>
+    </div>
+  );
+}
+
+/**
+ * Vibe mode replaces the session's toolset with read + the vibe controls, so
+ * the operator needs to see that it is on and how many workers it drives.
+ */
+function VibeBar({ vibe, t }: { vibe: VibeStatusInfo | null; t: (key: string, params?: Record<string, string | number>) => string }) {
+  if (!vibe?.enabled) return null;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginBottom: 8,
+        padding: "5px 10px",
+        border: "1px solid var(--border)",
+        borderRadius: 7,
+        background: "var(--bg-panel)",
+        color: "var(--text-muted)",
+        fontSize: 11,
+        fontFamily: "var(--font-mono)",
+      }}
+    >
+      <span style={{ color: "var(--accent)", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", flexShrink: 0 }}>
+        {t("chat.vibeLabel")}
+      </span>
+      <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
+        {vibe.workers === 1 ? t("chat.vibeWorkerOne") : t("chat.vibeWorkers", { count: vibe.workers })}
+      </span>
+      <span style={{ flexShrink: 0, color: "var(--text-dim)" }}>{t("chat.vibeReadOnly")}</span>
     </div>
   );
 }

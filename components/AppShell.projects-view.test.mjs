@@ -4,6 +4,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { mock } from "bun:test";
 import { parseHTML } from "linkedom";
+import { captureLinkedomPrototypes } from "../lib/test-linkedom.mjs";
 
 /**
  * The projects dashboard has to be *reachable*, and the only honest proof of
@@ -58,6 +59,12 @@ mock.module("next/navigation", () => ({
   useParams: () => ({}),
 }));
 
+/** One snapshot per file: `installDom` runs per test, and the prototype state
+ *  this file must put back is the one from before its first patch. linkedom
+ *  shares the prototypes process-wide. */
+let restorePrototypes = null;
+test.after(() => restorePrototypes?.());
+
 /**
  * A DOM small enough to mount, large enough to satisfy the panel library.
  *
@@ -69,6 +76,9 @@ function installDom(search) {
   const { window } = parseHTML(
     '<!doctype html><html><head></head><body><div id="root"></div></body></html>',
   );
+  // linkedom teilt die Prototypen prozessweit; nach dieser Datei zurueckgeben.
+  // Der Snapshot muss vor dem ersten Patch entstehen.
+  restorePrototypes ??= captureLinkedomPrototypes(window);
   const g = globalThis;
   // linkedom builds a fresh `navigator` on every read and ignores writes to
   // the property, so it is only reachable from behind a proxy.
@@ -139,12 +149,12 @@ function installDom(search) {
   };
   for (const property of ["offsetWidth", "clientWidth"]) {
     if (!Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, property)) {
-      Object.defineProperty(window.HTMLElement.prototype, property, { get: () => 1200 });
+      Object.defineProperty(window.HTMLElement.prototype, property, { configurable: true, get: () => 1200 });
     }
   }
   for (const property of ["offsetHeight", "clientHeight"]) {
     if (!Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, property)) {
-      Object.defineProperty(window.HTMLElement.prototype, property, { get: () => 800 });
+      Object.defineProperty(window.HTMLElement.prototype, property, { configurable: true, get: () => 800 });
     }
   }
 

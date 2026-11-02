@@ -33,6 +33,8 @@ const idRoute = await jiti.import("./[id]/route.ts");
  */
 const KNOWN = { provider: "buds-gateway", modelId: "qwen3.8-27b" };
 
+const previousRuntime = globalThis.__ompRuntimePromise;
+
 function installFakeRuntime() {
   globalThis.__ompRuntimePromise = Promise.resolve({
     agentDir: "/nonexistent/omp-web-test",
@@ -288,6 +290,9 @@ test("a task cwd inside the account home is stored", async () => {
 test.after(() => {
   scheduler.stopScheduler();
   rmSync(HOME_ROOT, { recursive: true, force: true });
+  // Der Ersatz ist prozessweit; ohne Rueckgabe erbt ihn die naechste Datei.
+  if (previousRuntime === undefined) delete globalThis.__ompRuntimePromise;
+  else globalThis.__ompRuntimePromise = previousRuntime;
 });
 
 // --- Jetzt ausfuehren ------------------------------------------------------------

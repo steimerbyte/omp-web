@@ -252,6 +252,22 @@ export interface AgentSessionLike {
     message: { customType: string; content: string; display?: boolean; attribution?: "user" | "agent" },
     options?: { streamingBehavior?: "steer" | "followUp" },
   ): Promise<void>;
+  hasBuiltInTool?(name: string): boolean;
+  getAgentId?(): string | undefined;
+
+  // Vibe mode. Same split as goal mode: omp drives these from the TUI only
+  // (see lib/vibe-mode.ts), and the worker registry lives in the SDK.
+  readonly asyncJobManager?: {
+    getRunningJobs(): unknown[];
+    hasPendingDeliveries(): boolean;
+    onJobSettled(listener: () => void): () => void;
+  };
+  activateVibeTools?(base: string[]): Promise<void>;
+  deactivateVibeTools?(next: string[]): Promise<void>;
+  getVibeModeState?(): { enabled: boolean } | undefined;
+  setVibeModeState?(state: { enabled: boolean } | undefined): void;
+  sendVibeModeContext?(options?: { deliverAs?: "steer" | "followUp" | "nextTurn" }): Promise<void>;
+  runModeExitTeardown?(teardown: () => Promise<void>): Promise<void>;
 }
 
 /** The subset of omp's `GoalRuntime` omp-web drives. */
@@ -290,4 +306,18 @@ export interface GoalStatusInfo {
   tokensUsed: number;
   tokenBudget?: number;
   timeUsedSeconds: number;
+}
+
+/** Vibe state as the browser sees it; `workers` counts live parent-owned sessions. */
+export interface VibeStatusInfo {
+  enabled: boolean;
+  workers: number;
+}
+
+export interface VibeCommandResult {
+  message?: string;
+  error?: string;
+  /** Prompt to submit as a user turn once the mode is on. */
+  prompt?: string;
+  status: VibeStatusInfo | null;
 }

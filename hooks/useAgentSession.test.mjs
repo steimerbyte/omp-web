@@ -84,6 +84,56 @@ test("keeps completed subagents in the session history", () => {
   assert.doesNotMatch(source, /payload\.status !== "started"\) \{\s*setSubagents\(\(previous\) => previous\.filter/);
 });
 
+test("keeps a nested grandchild snapshot and its status transitions", () => {
+  const mergeSource = source.slice(
+    source.indexOf("function mergeSubagentSnapshots"),
+    source.indexOf("type ExtensionUiDialogRequest"),
+  );
+
+  // Rows merge by id only. A grandchild has its own id, so it is kept even
+  // though its parentToolCallId differs from every sibling's.
+  assert.match(mergeSource, /new Map\(current\.map\(\(subagent\) => \[subagent\.id, subagent\]\)\)/);
+  assert.match(mergeSource, /byId\.set\(subagent\.id, subagent\)/);
+  assert.doesNotMatch(mergeSource, /parentToolCallId/);
+  // Every kept id is emitted; the cap is the only removal, and it runs after
+  // active rows were already sorted to the front.
+  assert.match(mergeSource, /\[\.\.\.byId\.values\(\)\]/);
+  assert.match(mergeSource, /\.slice\(0, MAX_SUBAGENT_HISTORY\)/);
+  // Terminal frames replace the live snapshot of the same id, at any depth,
+  // and keep the owning tool call for the parent batch.
+  const lifecycleSource = source.slice(
+    source.indexOf('case "subagent_lifecycle"'),
+    source.indexOf('case "subagent_progress"', source.indexOf('case "subagent_lifecycle"')),
+  );
+  assert.match(lifecycleSource, /const previous = current\.find\(\(subagent\) => subagent\.id === payload\.id\)/);
+  assert.match(lifecycleSource, /parentToolCallId: payload\.parentToolCallId \?\? previous\?\.parentToolCallId/);
+  assert.match(lifecycleSource, /return mergeSubagentSnapshots\(current, \[finished\]\)/);
+});
+
+test("keeps a row's batch owner when a progress frame omits it", () => {
+  const progressSource = source.slice(
+    source.indexOf('case "subagent_progress"'),
+    source.indexOf('case "queue_update"'),
+  );
+
+  // A restored/follow-up run emits progress without the owning tool call
+  // (task/restore.ts:89-100, workpool.ts:412). Without the fallback the row
+  // would leave its batch and group under its own id.
+  assert.match(progressSource, /const before = previous\.find\(\(subagent\) => subagent\.id === progress\.id\)/);
+  assert.match(progressSource, /sessionFile: payload\.sessionFile \?\? before\?\.sessionFile/);
+  assert.match(progressSource, /parentToolCallId: payload\.parentToolCallId \?\? before\?\.parentToolCallId/);
+  assert.match(progressSource, /return mergeSubagentSnapshots\(previous, \[snapshot\]\)/);
+});
+
+test("binds the subagent registry to the root-scoped subagent bus", async () => {
+  // A child session gets its own local `eventBus`; only the inherited
+  // root-scoped `subagentEventBus` carries a grandchild's lifecycle/progress
+  // frames (omp's own RPC mode subscribes the same slot, rpc-mode.ts:1507).
+  const rpcManagerSource = await readFile(new URL("../lib/rpc-manager.ts", import.meta.url), "utf8");
+  assert.match(rpcManagerSource, /const \{ session: inner, eventBus, subagentEventBus, setToolUIContext \} = await createAgentSession\(sessionOptions\)/);
+  assert.match(rpcManagerSource, /new AgentSessionWrapper\(session, subagentEventBus \?\? eventBus\)/);
+});
+
 test("routes blocking extension requests through deduplicated browser attention notifications", () => {
   const completionSource = appShellSource.slice(
     appShellSource.indexOf("  const handleAgentEnd = useCallback"),
@@ -252,4 +302,85 @@ test("renders the transcript with omp's hideThinkingBlock setting", () => {
   assert.match(chatWindowSource, /hasDisplayableProcessMessage\(messages\[processIdx\], displayOptions\)/);
   assert.match(chatWindowSource, /splitFinalAssistantBlocks\(finalAssistant, displayOptions\)/);
   assert.match(chatWindowSource, /findFinalAssistantIndex\(messages, userIdx, endIdx, displayOptions\)/);
+});
+
+test("/vibe is consumed locally and refreshes the toolset", () => {
+  const vibeCaseSource = source.slice(
+    source.indexOf('case "vibe":'),
+    source.indexOf('case "handoff":', source.indexOf('case "vibe":')),
+  );
+
+  assert.match(source, /case "vibe": \{/);
+  assert.match(vibeCaseSource, /const result = await sendAgentCommand<VibeCommandResult>\(sid, \{ type: "vibe", args \}\)/);
+  assert.match(vibeCaseSource, /setVibeStatus\(result\?\.status \?\? null\)/);
+  // The mode swaps the active toolset, so the preset must be re-read.
+  assert.match(vibeCaseSource, /await loadTools\(sid\)/);
+  assert.match(vibeCaseSource, /complete\(\{ handled: true, error: result\.error \}\)/);
+  // `/vibe <prompt>` submits the returned prompt as the next turn.
+  assert.match(vibeCaseSource, /return \{ handled: true, prompt: result\.prompt \}/);
+  // Never forwards the text as an LLM prompt through the SDK fallback.
+  assert.doesNotMatch(vibeCaseSource, /execute_slash_command/);
+});
+
+test("syncs the vibe status from every get_state response", () => {
+  assert.match(source, /vibe\?: VibeStatusInfo \| null;/);
+  assert.match(source, /const \[vibeStatus, setVibeStatus\] = useState<VibeStatusInfo \| null>\(null\)/);
+  // The live loadSession state handler, the agent_end fetch and the mount path.
+  assert.match(source, /if \(liveState\.vibe !== undefined\) setVibeStatus\(liveState\.vibe \?\? null\)/);
+  assert.match(source, /if \(d\.state\?\.vibe !== undefined\) setVibeStatus\(d\.state\.vibe \?\? null\)/);
+  assert.match(source, /if \(state\.vibe !== undefined\) setVibeStatus\(state\.vibe \?\? null\)/);
+  assert.match(source, /\n    vibeStatus,/);
+});
+
+test("clears per-session cards and vibe status on a session switch", () => {
+  const switchSource = source.slice(
+    source.indexOf("const sessionScopeRef"),
+    source.indexOf("// Load session on mount"),
+  );
+
+  assert.match(switchSource, /if \(sessionScopeRef\.current === next\) return;/);
+  assert.match(switchSource, /setSubagents\(\[\]\)/);
+  assert.match(switchSource, /setVibeStatus\(null\)/);
+  assert.match(switchSource, /\}, \[session\?\.id\]\)/);
+});
+
+test("keeps the event stream open while the server reports running", () => {
+  const graceSource = source.slice(
+    source.indexOf("const scheduleEventStreamClose"),
+    source.indexOf("const finishPromptWithoutStream"),
+  );
+  const runningSource = graceSource.slice(graceSource.indexOf("if (data.running && state?.isCompacting)"));
+
+  // Prompt, compaction and any other server-side work keep the stream open.
+  assert.match(runningSource, /if \(data\.running\) \{[\s\S]*?CONTEXT_USAGE_REFRESH_MS[\s\S]*?return;[\s\S]*?\}/);
+  assert.match(runningSource, /closeEvents\(\)/);
+  // A pending background delegation is "running", not a subagent count.
+  assert.doesNotMatch(graceSource, /subagents\?\.length/);
+});
+
+test("reconnects the mount-time stream for any running state", () => {
+  const mountSource = source.slice(
+    source.indexOf("// Load session on mount"),
+    source.indexOf("onSystemPromptChange?."),
+  );
+
+  assert.match(mountSource, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\);/);
+  // The reload reconnects on `running` alone, before the per-state branches.
+  assert.match(mountSource, /if \(agentState\?\.running\) \{[\s\S]*?void connectEvents\(session\.id\);[\s\S]*?agentState\.state\?\.isStreaming/);
+  assert.equal(mountSource.match(/connectEvents\(session\.id\)/g)?.length, 1);
+  // No second, subagent-only reconnect window.
+  assert.doesNotMatch(mountSource, /subagents\?\.length \?\? 0\) > 0/);
+});
+
+test("applies vibe_status frames from the event stream", () => {
+  const statusSource = source.slice(
+    source.indexOf('case "goal_status":'),
+    source.indexOf('case "agent_settled":'),
+  );
+
+  // Sits next to the goal frame and shares its undefined-means-cleared shape.
+  assert.match(statusSource, /case "vibe_status":\s*setVibeStatus\(\(event\.status as VibeStatusInfo \| null \| undefined\) \?\? null\);[\s\S]*?break;/);
+  assert.match(statusSource, /case "goal_status":\s*setGoalStatus\(\(event\.status as GoalStatusInfo \| null \| undefined\) \?\? null\);/);
+  // The event type is open (`type: string`), so no union needs the new name.
+  assert.match(source, /interface AgentEvent \{\s*type: string;/);
 });

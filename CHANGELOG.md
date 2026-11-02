@@ -5,6 +5,268 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.22.0
+
+Released 2026-11-02.
+
+Der Abschnitt stand bis hierher unter `Unreleased`; er steht jetzt hier, weil
+dieser Release ihn schneidet.
+
+### Vibe im Browser, und Delegationen, die ankommen
+
+**`/vibe` ist in omp eine TUI-Taste — im Browser ist es jetzt ein Befehl.**
+Der Eintrag in `src/slash-commands/builtin-modes.ts` trägt ausschließlich ein
+`handleTui`, und der ACP-Verteiler führt nur Befehle mit einem Text-Handler aus
+und antwortet für alles andere `false`. Ein `/vibe`, das der Browser als
+Chattext schickte, käme also als Prosa beim Modell an. omp-web schickt es
+darum als Befehl — `{ "type": "vibe", "args": … }` auf dem bestehenden
+`POST /api/agent/[id]`, `case "vibe"` in `lib/rpc-manager.ts` — und
+`lib/vibe-mode.ts` spielt den Übergang auf der **öffentlichen** Sitzungs-API
+des SDK nach: Eigentümer-Scope bilden und `activateScope`, `previousTools` aus
+`getEnabledToolNames()` merken, `["read"]` als Grundgerüst plus `todo`, wenn die
+Sitzung dieses Werkzeug hat, `activateVibeTools`, dann
+`setVibeModeState({ enabled: true })` und ein `mode_change`-Eintrag mit den
+alten Werkzeugen — der beim Wiederherstellen entfällt, weil die Datei ihn schon
+hat. Läuft beim Eintreten gerade ein Zug, bekommt er einen Steuerungskontext,
+damit er den geschrumpften Werkzeugsatz kennt statt ihn weiter zu benutzen. Die
+Arbeiter-Registry ist die des SDK: sie schreibt ihre Lebenszyklus-Einträge
+(`customType: "vibe-session-lifecycle"`) in dieselbe Sitzungsdatei, die auch das
+TUI schreibt.
+
+Der Befehl steht in der Palette, weil `BROWSER_NATIVE_SLASH_COMMANDS` in
+`lib/rpc-manager.ts` ihn neben `fork` und `goal` führt, `getAvailableSlashCommands`
+ihn zur gefundenen Liste hinzufügt und das vorhandene `get_commands` ihn
+ausliefert — die Client-Liste in `components/ChatInput.tsx` führt ihn
+zusätzlich, damit er schon vor der ersten Antwort des Servers angeboten wird.
+Damit landet ein getipptes `/vibe` beim Handler und nicht beim Modell.
+
+Verlassen läuft über `runModeExitTeardown`: ein laufender Zug wird abgebrochen,
+dann beendet `VibeSessionRegistry.global().killAll` die Arbeiter-Sitzungen und
+schreibt dabei selbst den Ausstieg in die Sitzungsdatei — `#persistModeExit`
+legt die Grabsteine der Arbeiter **und** `mode_change` mit `none` in einem
+einzigen `appendEntriesAtomically`-Block ab. Der Browser muss diesen Eintrag
+deshalb nicht selbst schreiben und schreibt ihn auch nicht: ein zweites `none`
+wäre ein doppelter Eintrag in jeder Datei. Der frühe Ausstieg von `killAll` bei
+null Arbeitern liest den Zweig und schreibt nichts, wenn dort schon `none`
+steht — auch so entsteht kein zweiter Eintrag. Danach stellt
+`deactivateVibeTools` die gemerkten Werkzeuge wieder her, und der Vibe-Zustand
+wird gelöscht. Die Arbeiter sterben mit dem Modus, weil niemand sie sonst
+beendet. Der Abbruch steht dabei **vor** dem Töten und nicht danach — er
+unterdrückt das Abarbeiten der Warteschlange, und ein dort wartender
+Steuerungstext hätte den Zug auf dem noch lebenden Vibe-Werkzeugsatz neu
+gestartet.
+
+Beim Öffnen einer Sitzung wird der Modus über den **aktiven Zweig** bestimmt,
+nicht über die letzte `mode_change`-Zeile der Datei: `buildSessionContext`
+läuft den Pfad bis zum aktuellen Blatt entlang und meldet `mode`/`modeData`
+vom letzten Eintrag darauf. Das ist wichtig, weil der Browser `navigate_tree`
+anbietet — eine Sitzung kann auf einem Zweig stehen, auf dem der Vibe-Modus aus
+ist, während ein späterer Geschwisterzweig ihn eingeschaltet hat, und ein
+flacher Scan von hinten würde ihn dort wiederbeleben. `restore()` nimmt daher
+den zweigaufgelösten Kontext, ruft `rehydrate` auf und stellt den Modus ohne
+einen zweiten Eintrag wieder her — die Datei sagt bereits, in welchem Modus die
+Sitzung war; den flachen Blick auf die Datei behält es nur als Rückfall für
+einen Manager, der keinen Kontext bauen kann. Ein `/vibe` während dieses
+Wiederherstellens wartet darauf, statt auf einem halbfertigen Zustand zu
+arbeiten.
+
+Zwei `/vibe` gleichzeitig — ein Doppelklick, ein zweiter Tab, ein `/vibe` mit
+Eingabe während des ersten Eintretens — laufen nicht beide los: das Eintreten
+hängt hinter einem einzigen laufenden Versprechen (wie `#vibeModeEntry` im TUI),
+damit der zweite Aufruf nicht den bereits geschrumpften Werkzeugsatz als
+„vorher" merkt; sonst würde der Ausstieg den Modus wiederherstellen statt ihn zu
+beenden. Die Plan-/Goal-Sperre gilt nur fürs **Eintreten**: `/vibe off` kommt
+immer heraus, weil im TUI die Prüfung auf den laufenden Modus vor der auf die
+Konflikte kommt, und ein Modus, aus dem man nicht herauskommt, wäre schlimmer
+als einer, in den man nicht hineinkommt.
+
+Solange der Modus an ist, zeigt der Chat über dem Eingabefeld eine VIBE-Leiste
+mit der Zahl der laufenden Arbeiter, und die Werkzeug-Voreinstellung ist
+gesperrt (`vibeEnabled` in `components/ChatInput.tsx`). Ein Wechsel der
+Voreinstellung würde mit `set_tools` den vollen Satz zurück über `read` und die
+Vibe-Werkzeuge legen; der Modus liefe dann mit einem Werkzeugsatz, den der
+Ausstieg nicht mehr zurücknehmen kann, weil die gemerkten Werkzeuge nicht mehr
+beschreiben, was läuft. Die Zahl wird nicht eigens abgefragt: `get_state` trägt
+`vibe: { enabled, workers } | null` neben `goal`, sodass ein Neuladen der Seite
+den Modus so vorfindet wie jeden anderen Sitzungszustand. `/vibe <prompt>`
+tritt zuerst ein und schickt die Eingabe danach, damit sie schon unter dem
+reduzierten Satz läuft wie der nächste Zug.
+
+Die fünf Vibe-Werkzeuge — `vibe_spawn`, `vibe_send`, `vibe_wait`, `vibe_kill`,
+`vibe_list` — bekommen in `components/MessageView.tsx` eine eigene Karte statt
+der allgemeinen JSON-Karte: ihre Ergebnisse tragen in `details.screens` den
+Zustand jedes Arbeiters, also Kennung, `fast` oder `good`, `running`/`starting`/
+`idle`/`dead`, Züge, Warteschlange und die erste Zeile der letzten Aktivität.
+In der Rohdarstellung müsste man heraussuchen, welcher Arbeiter steht; die
+Zustandsfarben sind Theme-Variablen, damit sie dem importierten Theme folgen.
+
+**Hintergrund-Delegationen gehen nicht mehr verloren.** `task` und die
+Vibe-Arbeiter kehren sofort zurück und liefern ihr Ergebnis Minuten später als
+Folgezug ab. Solange diese Lieferung aussteht, ist die Sitzung **nicht**
+untätig — der Browser schloss seinen SSE-Strom aber, sobald der Server „idle"
+meldete, und das Ergebnis landete in einem Strom, den niemand mehr las. Es
+erschien nie. `AgentSessionWrapper.isRunning()` in `lib/rpc-manager.ts` zählt
+jetzt den eigenen `AsyncJobManager` der Sitzung: `getRunningJobs()` **und**
+`hasPendingDeliveries()`, und meldet beim Eintreffen von `onJobSettled` neu.
+`GET /api/agent/[id]` meldet den Wert als `running` — „diese Sitzung schuldet
+noch Arbeit", nicht „es gibt einen Wrapper". Das ist die ganze Korrektur:
+`checkServerIdle` in `hooks/useAgentSession.ts` prüft nach, statt zu schließen,
+solange `running` gilt, und schließt den Strom erst, wenn es nicht mehr gilt.
+Der Folgezug kommt auf diesem Strom, ein Schließen beim ersten Ende der
+Modellantwort verwirft ihn. Beim Neuladen der Seite verbindet derselbe Hook den
+Strom für **jeden** laufenden Zustand (`if (agentState?.running)`) statt nur für
+einen laufenden Zug oder eine Subagenten-Karte — sonst ginge ein Ergebnis
+verloren, das genau während des Neuladens eintrifft. Der Manager wird
+pro Sitzung angelegt (`sdk.ts:2326`), und genau das macht die Zählung exakt: sie
+kann die Aufträge einer Nachbarsitzung nicht mitzählen, ein Eigentümerfilter
+wäre hier eine zweite, ungenauere Regel.
+
+**Verschachtelte Subagenten brauchen den Wurzel-Bus.** Ein Subagent kann selbst
+Subagenten starten, und das SDK schickt deren Lebenszyklus- und Fortschritts-
+Frames über den **wurzelgebundenen** `subagentEventBus`: `createAgentSession`
+legt ihn an (`sdk.ts:1786-1787`), der Executor veröffentlicht jeden Frame auf
+dem Sitzungs-Bus *und* auf diesem (`emitSubagentFrame` in
+`utils/event-bus.ts`), und oms eigener RPC-Modus hängt seinen Beobachter
+dort ein (`rpc-mode.ts:1507`). omp-web hatte seine `RpcSubagentRegistry` an den
+sitzungslokalen `eventBus` gebunden — ein Enkel erreichte den Browser nie: er
+lief, sein Elternteil wartete auf ihn, und das Panel zeigte nichts.
+`startRpcSession` baut den Wrapper jetzt mit `subagentEventBus ?? eventBus`, und
+Enkel stehen in der Liste und antworten auf `get_subagents` /
+`get_subagent_messages` unter ihrer eigenen Id. Der Rückfall ist kein zweiter
+Pfad: eine Sitzung ohne Wurzel-Bus verhält sich wie vorher. Die Momentaufnahme
+trägt `parentToolCallId`, aber **keine Tiefe**, und das Protokoll kann
+Verschachtelung nicht ausdrücken; das Panel gruppiert deshalb nur die Zeilen,
+die sich einen Eltern-Werkzeugaufruf teilen (`groupSubagentRows` aus
+`lib/subagent-groups.ts`), und erfindet keinen Baum — für eine Baumansicht
+müsste das Snapshot-Feld erst kommen.
+
+**Exklusiv mit dem Goal-Modus, und ein pausiertes Goal zählt mit.** `/goal`
+wird abgelehnt, solange Vibe an ist (`case "goal"`), und `/vibe on` wird
+abgelehnt, solange ein Goal läuft **oder pausiert** ist: `planOrGoalConflict`
+prüft `goalState.enabled || goalState.goal.status === "paused"`, weil ein
+pausiertes Goal `enabled: false` meldet und die Sitzung trotzdem besitzt — die
+TUI verwendet dasselbe Paar `goalModeEnabled || goalModePaused`
+(`interactive-mode.ts:3661-3684`). Ein abgeschlossenes oder verworfenes Goal
+blockiert nicht. Der Plan-Modus blockiert ebenfalls, aber der Browser hat
+keinen Befehl dafür: `/plan` fehlt in `BROWSER_NATIVE_SLASH_COMMANDS`, der
+Einstieg läuft über den Sitzungsmodus im SDK (`acp-agent.ts` hängt den
+Plan-Proposal-Handler ein), und `lib/rpc-manager.ts` stellt einen gespeicherten
+`plan`-Modus nur wieder her und räumt ihn beim Genehmigen ab. Der reduzierte
+Vibe-Werkzeugsatz erreicht diesen Weg nicht, die Sperre gilt also vorerst nur
+in eine Richtung.
+
+**Das Eintreten ist ein eigenes Zeitfenster.** Der Werkzeugsatz wird
+asynchron neu gebaut, und das SDK reiht jede Werkzeug-Mutation FIFO ein
+(`runToolRegistryMutation` in `session-tools.ts:836-848`). Ein `set_tools`, das
+*während* des Eintretens ankommt, würde eine `enabled`-Prüfung passieren, die
+noch falsch ist, und danach landen — und den vollen Satz über den reduzierten
+legen; der Modus liefe dann mit einem Werkzeugsatz, den sein Ausstieg nicht
+zurücknehmen kann. `VibeModeController.isPending()` ist deshalb vom ersten
+Moment vor dem `activateVibeTools`-Await bis zu dessen Ende wahr, und die Sperre
+greift auf `enabled || isPending()`. Dasselbe Versprechen ordnet die Befehle:
+`handleCommand` wartet auf `#entry`, bevor es überhaupt parst, damit ein
+`/vibe off` während eines langsamen Eintretens gegen den fertigen Zustand
+antwortet und nicht gegen den, den es aufheben sollte.
+
+**Ein `vibe_status`-Frame geht über den Sitzungs-Eventstrom**, wie
+`goal_status`: `onStatus` im Konstruktor des Controllers sendet ihn, damit ein
+im Leerlauf stehender Browser-Tab einen Moduswechsel aus einem anderen Tab
+mitbekommt statt eine Leiste zu behalten, die der Sitzung widerspricht.
+
+**Statistik im Browser statt als eigener Server.** Der `/stats`-Befehl des CLI
+startet einen eigenen HTTP-Server und öffnet einen Browser; omp-web tut beides
+nicht. `@oh-my-pi/omp-stats` ist eine Bibliothek (Daten in `~/.omp/stats.db`,
+Aggregation und Rollups), und `lib/stats.ts` liefert eine zwischengespeicherte
+Nutzlast daraus — `startServer()` wird nie gerufen, `closeDb()` nie, denn das
+Handle ist geteilt und langlebig. `GET /api/stats` ist **nur für Admins**
+(`requireAdmin()`), weil diese Datenbank prozessglobal ist und die Sitzungen
+aller Konten zusammenfasst: einem Tenant ausgeliefert wäre das die Arbeit des
+Betreibers. Die Spannen sind `STATS_RANGES` (`1h`, `24h`, `7d`, `30d`, `90d`,
+`all`, Vorgabe `24h`); eine unbekannte Spanne — auch `?range=` — antwortet mit
+400 und nennt die erlaubten. `@oh-my-pi/omp-stats` ist **keine direkte
+Abhängigkeit**, und das ist ein bewusstes Risiko: es wird über
+`@oh-my-pi/pi-coding-agent` aufgelöst, dieselbe Hausgewohnheit wie bei
+`@oh-my-pi/pi-catalog`. Ein Upstream-Sprung, der es fallen lässt, macht
+`lib/stats.ts` zur Import-Panne im Betrieb; die ehrliche Reparatur wäre ein
+direkter Eintrag in `package.json` — hinzugefügt wurde in diesem Änderungssatz
+nichts. Die Synchronisierung ist anfragegetrieben und läuft
+im Hintergrund — dieselbe Regel wie beim Projekte-Board: Single-Flight pro
+Spanne auf `globalThis`, ein TTL und ein `get()`, das nie auf IO wartet. Ein
+erster Aufruf darf `stats: null, syncing: true` antworten; eine gescheiterte
+Synchronisierung behält die letzten guten Zahlen und vermerkt `error` — ein
+Fehler ist eine Antwort, kein leeres Dashboard. `?refresh=1` stößt die
+Synchronisierung vor dem Lesen an, die Nutzlast meldet dann bereits `syncing`.
+Ein erzwungener Refresh startet eine Synchronisierung — außer der Cache ist
+jünger als `STATS_MIN_REFRESH_MS` (5 s). Der TTL entscheidet nur, ob ein
+*nicht* erzwungenes Lesen eine braucht. Die Untergrenze ist eine
+Ratenbegrenzung, keine TTL-Sperre — deshalb darf eine erzwungene Antwort
+`syncing: true` melden, während der Cache noch frisch ist, und deshalb
+synchronisiert ein festgehaltener Aktualisieren-Knopf alle 5 s statt die
+Datenbank abzulaufen. Die Seite ist
+`components/StatsView.tsx` + `hooks/useStats.ts` unter `?view=stats`, über
+`lib/initial-navigation.ts` gemerkt; ihr Knopf sitzt im Aktionsstapel der
+Seitenleiste **direkt über Settings** (gerendert von `sidebarContent` in
+`components/AppShell.tsx`, nicht von `SessionSidebar.tsx`) und wird einem
+Nicht-Admin über das vorhandene `isAdmin` aus `/api/whoami` gar nicht erst
+angeboten. Diagramme sind Inline-SVG mit den Theme-Variablen — keine
+Diagramm-Abhängigkeit, kein Iframe und auch kein Iframe-Rückfall. Die
+Abfrageregel ist eine Regel, in `hooks/useStats.ts` und nach dem Vorbild von
+`lib/project-size-poll.ts`: 2 s Abstand, 120 s Fenster, Ende sobald der Server
+`syncing: false` meldet. **Nicht abgedeckt** sind die Trace-, Frustrations- und
+Gain-Ansichten des CLI-Dashboards: sie bräuchten eigene Endpunkte, und
+gerendert werden nur Übersicht, Zeitreihe, Modelle, Projekte/Ordner und
+Werkzeuge.
+
+**Subagenten auf schmalen Bildschirmen.** Die Momentaufnahmen der Subagenten
+werden nach Id zusammengeführt und überlebten damit einen Sitzungswechsel. Dass
+das heute nicht auffällt, liegt an `components/AppShell.tsx`: es erhöht in
+seinen Wechselpfaden `sessionKey` (Sitzung wählen, Fork, neue Sitzung,
+Arbeitsverzeichnis ändern, Löschen, Wiederherstellen), `ChatWindow` wird also
+neu eingehängt und kommt mit frischem Zustand hoch. Das Zurücksetzen in
+`hooks/useAgentSession.ts` ist deshalb eine **Absicherung, keine Reparatur**: die
+Zusicherung liegt am Hook, damit ein späterer Umbau, der nicht mehr neu
+einhängt, nicht die Arbeiter von Sitzung A in Sitzung B zeigt. Auffallen würde
+das nicht leise, sondern als Fehler: das Panel fragt `get_subagent_messages`,
+`resolveSessionFile` wirft *Unknown subagent or session file unavailable*, und
+`POST /api/agent/[id]` übersetzt jeden Befehlsfehler in HTTP 500 — die einzige
+404 dieser Route ist „Session not found".
+
+Lebendig ist an der Absicherung der Fall, der kein Wechsel ist: eine neue
+Sitzung, deren `null`-Id durch die erste echte ersetzt wird, bleibt derselbe
+Bereich und darf ein gerade eingetretenes `/vibe` nicht wegwischen. Auf einem
+schmalen Bildschirm ist das Panel keine dritte Spalte mehr — dafür ist kein
+Platz —, sondern eine Schaltfläche über dem Chat, die die Arbeiterzahl nennt und
+das Panel als Blatt öffnet. Vorher war eine laufende Delegation dort unsichtbar.
+
+Betroffen sind `lib/vibe-mode.ts` (neu, mit `lib/vibe-mode.test.mjs`),
+`lib/rpc-manager.ts` (mit `lib/rpc-manager.test.mjs`), `lib/omp-types.ts`,
+`app/api/agent/[id]/route.ts` (der `running`-Wert), `hooks/useAgentSession.ts`,
+`components/ChatWindow.tsx` (VIBE-Leiste, mit
+`components/VibeBar.test.mjs`), `components/ChatInput.tsx` (Palette, gesperrte
+Voreinstellung), `components/MessageView.tsx`, `components/AppShell.tsx`,
+`components/SubagentPanel.tsx` (Umschalter, Zurücksetzen),
+`lib/subagent-groups.ts` (neu: `isSubagentActive`, `groupSubagentRows`),
+`app/globals.css`, `lib/i18n/messages/{en,de,zh-CN}.ts` — und für die Statistik
+`lib/stats.ts` (neu), `app/api/stats/route.ts` (neu, admin-only),
+`components/StatsView.tsx` (neu), `hooks/useStats.ts` (neu),
+`lib/initial-navigation.ts` und `components/AppShell.tsx` (Knopf im
+Aktionsstapel). Am SDK ändert sich nichts.
+
+**Nicht geprüft.** Dieser Änderungssatz ist in keinem Browser und auf keinem
+Telefon durchgeklickt worden. Das betrifft jeden der Punkte: Eintreten und
+Verlassen über die Palette, die VIBE-Leiste samt gesperrter Voreinstellung, den
+Umschalter für die Subagenten, das Erscheinen von Enkeln im Panel und die
+Frage, ob ein Delegationsergebnis nach dem Ende des Zuges noch ankommt — auch
+nach einem Neuladen der Seite. Die Absätze oben beschreiben, was der Code tun
+soll, nicht was beobachtet wurde. Nicht nachgestellt ist auch ein Neustart des
+Servers mit einer Sitzung im Vibe-Modus; dass sie ihren Werkzeugsatz
+wiederfindet, folgt aus dem zweigaufgelösten `mode`-Wert, gemessen ist es nicht.
+**Gegen eine echte Statistik-Datenbank wurde nichts gemessen**: weder die
+Antwortzeiten der Synchronisierung noch die Zahlen der Diagramme stammen aus
+einem Lauf — und wie breit der Umschalter auf einem Gerät tatsächlich sitzt,
+ist ebenfalls nicht gemessen: dafür bräuchte es ein Telefon oder einen
+Geräteviewport, und beides war nicht im Spiel.
+
 ### Features
 
 **Der Kalender.** Eine eigene Ansicht in omp-web, erreichbar über den Knopf

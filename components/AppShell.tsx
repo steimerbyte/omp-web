@@ -15,11 +15,12 @@ import {
 } from "react-resizable-panels";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
-import { SubagentPanel } from "./SubagentPanel";
+import { SubagentMobileToggle, SubagentPanel } from "./SubagentPanel";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 import { CalendarView } from "./CalendarView";
 import { ScheduledTasksView } from "./ScheduledTasksView";
 import { SkillsManagerView } from "./SkillsManagerView";
+import { StatsView } from "./StatsView";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
@@ -180,7 +181,7 @@ export function AppShell() {
   // Which of the three views is showing. Seeded from `?view=` so a reload or a
   // shared link lands where the sender was, and kept in the URL below so it
   // survives the next reload too.
-  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled" | "skills">(
+  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled" | "skills" | "stats">(
     () => initialNavigation.requestedView,
   );
   // The sidebar's *automatic* first cwd adoption is what would break a
@@ -202,7 +203,9 @@ export function AppShell() {
     initialNavigation.requestedCwd !== null
     || activeView === "projects"
     || activeView === "calendar"
-    || activeView === "skills";
+    || activeView === "scheduled"
+    || activeView === "skills"
+    || activeView === "stats";
   // Whether this account may create projects. Creating one widens the file
   // allow-list, which `AGENTS.md` keeps admin-gated, so the button is hidden
   // for a tenant rather than shown and then refused. Asked the same way
@@ -1092,7 +1095,10 @@ export function AppShell() {
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
-  const showSubagentPanel = !isMobile && selectedSession !== null && subagents.length > 0;
+  const hasSubagents = selectedSession !== null && subagents.length > 0;
+  // The column needs width beside the chat; a phone opens the same panel from
+  // the count pill instead (before this, running delegation was invisible there).
+  const showSubagentPanel = hasSubagents && !isMobile;
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
@@ -1127,6 +1133,7 @@ export function AppShell() {
   const showCalendar = activeView === "calendar";
   const showScheduledTasks = activeView === "scheduled";
   const showSkills = activeView === "skills";
+  const showStats = activeView === "stats";
 
   // Keep the view in the URL. `replaceState` rather than a router navigation
   // so switching views never re-runs the server component tree — the
@@ -1138,6 +1145,7 @@ export function AppShell() {
     else if (activeView === "calendar") url.searchParams.set("view", "calendar");
     else if (activeView === "scheduled") url.searchParams.set("view", "scheduled");
     else if (activeView === "skills") url.searchParams.set("view", "skills");
+    else if (activeView === "stats") url.searchParams.set("view", "stats");
     else url.searchParams.delete("view");
     window.history.replaceState(window.history.state, "", url.toString());
   }, [activeView]);
@@ -1235,6 +1243,43 @@ export function AppShell() {
       <div style={{ padding: "0 8px", flexShrink: 0 }}>
         <OmpUpdateIndicator />
       </div>
+      {/* Die Statistik-Seite gehört dem Betreiber: `GET /api/stats` antwortet
+          einem Tenant mit 403 (die Datenbank liegt im gemeinsamen omp-Baum).
+          Der Knopf wird deshalb nicht angeboten, statt angeboten und dann
+          abgelehnt zu werden — dieselbe Rolle, die `/api/whoami` oben schon
+          meldet. */}
+      {isAdmin && (
+        <div style={{ padding: "8px 8px 0", flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={() => setActiveView("stats")}
+            title={translate("stats.open")}
+            aria-label={translate("stats.open")}
+            aria-pressed={activeView === "stats"}
+            style={{
+              width: "100%", height: 34, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              background: activeView === "stats" ? "var(--bg-selected)" : "none",
+              border: `1px solid ${activeView === "stats" ? "var(--accent)" : "var(--border)"}`,
+              borderRadius: 9,
+              color: activeView === "stats" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", fontSize: 12,
+              fontFamily: "var(--font-mono)", transition: "background 0.12s, color 0.12s, border-color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; e.currentTarget.style.borderColor = "var(--text-dim)"; }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = activeView === "stats" ? "var(--bg-selected)" : "none";
+              e.currentTarget.style.color = activeView === "stats" ? "var(--text)" : "var(--text-muted)";
+              e.currentTarget.style.borderColor = activeView === "stats" ? "var(--accent)" : "var(--border)";
+            }}
+          >
+            {/* Eine Aktivitätslinie: der Puls dessen, was die Seite zählt. */}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="3 12 7 12 10 5 14 19 17 12 21 12" />
+            </svg>
+            {translate("stats.open")}
+          </button>
+        </div>
+      )}
       <div style={{ padding: "8px", flexShrink: 0 }}>
         <button
           onClick={() => setSettingsConfigOpen(true)}
@@ -2083,6 +2128,8 @@ export function AppShell() {
                 handleCwdChange(root);
               }}
             />
+          ) : showStats ? (
+            <StatsView />
           ) : showCalendar ? (
             <CalendarView />
           ) : showScheduledTasks ? (
@@ -2094,28 +2141,37 @@ export function AppShell() {
               onEditWithAi={handleSkillChat}
             />
           ) : showChat ? (
-            <ChatWindow
-              key={sessionKey}
-              session={selectedSession}
-              newSessionCwd={effectiveNewSessionCwd}
-              onAgentEnd={handleAgentEnd}
-              onAttentionNeeded={handleAttentionNeeded}
-              onSessionCreated={handleSessionCreated}
-              onSessionForked={handleSessionForked}
-              modelsRefreshKey={modelsRefreshKey}
-              chatInputRef={chatInputRef}
-              onBranchDataChange={handleBranchDataChange}
-              onSystemPromptChange={handleSystemPromptChange}
-              onSessionStatsChange={handleSessionStatsChange}
-              onSessionStatsPanelOpen={openSessionStatsPanel}
-              onContextUsageChange={handleContextUsageChange}
-              onSubagentsChange={setSubagents}
-              onOpenFile={handleOpenLinkedFile}
-              soundEnabled={soundEnabled}
-              onSoundToggle={onSoundToggle}
-              playDoneSound={playDoneSound}
-              unlockAudio={unlockAudio}
-            />
+            <>
+              {isMobile && hasSubagents && (
+                <SubagentMobileToggle
+                  sessionId={selectedSession?.id ?? null}
+                  cwd={selectedSession?.cwd ?? effectiveNewSessionCwd ?? undefined}
+                  subagents={subagents}
+                />
+              )}
+              <ChatWindow
+                key={sessionKey}
+                session={selectedSession}
+                newSessionCwd={effectiveNewSessionCwd}
+                onAgentEnd={handleAgentEnd}
+                onAttentionNeeded={handleAttentionNeeded}
+                onSessionCreated={handleSessionCreated}
+                onSessionForked={handleSessionForked}
+                modelsRefreshKey={modelsRefreshKey}
+                chatInputRef={chatInputRef}
+                onBranchDataChange={handleBranchDataChange}
+                onSystemPromptChange={handleSystemPromptChange}
+                onSessionStatsChange={handleSessionStatsChange}
+                onSessionStatsPanelOpen={openSessionStatsPanel}
+                onContextUsageChange={handleContextUsageChange}
+                onSubagentsChange={setSubagents}
+                onOpenFile={handleOpenLinkedFile}
+                soundEnabled={soundEnabled}
+                onSoundToggle={onSoundToggle}
+                playDoneSound={playDoneSound}
+                unlockAudio={unlockAudio}
+              />
+            </>
           ) : initialCwdStatus === "validating" ? (
             <div
               role="status"

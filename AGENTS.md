@@ -68,10 +68,11 @@ app/api/
   sessions/[id]/context/route.ts  GET ?leafId= — context for a specific leaf
   sessions/[id]/export/route.ts   GET exported HTML for a session
   agent/new/route.ts              POST { cwd, message, toolNames?, provider?, modelId? }
-  agent/[id]/route.ts             GET state | POST any command
+  agent/[id]/route.ts             GET state (`running` = isRunning()) | POST any command
   agent/[id]/events/route.ts      GET SSE stream
   agent/running/route.ts          GET currently-running session ids
   agent/running/events/route.ts   GET SSE stream of currently-running session ids
+  stats/route.ts                  GET stats payload, admin-only, range validation
   auth/all-providers/route.ts     GET API-key provider list
   auth/api-key/[provider]/route.ts GET/POST/DELETE provider API key status/storage
   auth/login/[provider]/route.ts  GET OAuth/device-code SSE | POST manual code
@@ -123,7 +124,10 @@ lib/
   session-reader.ts    session listing + path cache + buildSessionContext adapter
   session-system-prompt.ts  SYSTEM.md / APPEND_SYSTEM.md resolution per session cwd
   session-title.ts     thin wrapper over omp's own title generator
+  stats.ts             stats data service: cache + single-flight sync
+  subagent-groups.ts   pure panel grouping: isSubagentActive, groupSubagentRows
   tool-presets.ts      PRESET_NONE/DEFAULT/FULL + getPresetFromTools()
+  vibe-mode.ts         VibeModeController — `/vibe` on the SDK's public API
   calendar.ts          the calendar domain: event shape, German date rules, holidays
   calendar-store.ts    the per-account calendar file
   calendar-tool.ts     the calendar_read / calendar_write agent tools
@@ -137,7 +141,9 @@ components/
   SessionSidebar.tsx  session tree + FileExplorer
   ChatWindow.tsx      chat composition + completion sound wrapper
   ChatInput.tsx       input bar + model/role/thinking/tools/compact controls
-  MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
+  MessageView.tsx     renders one message; vibe_* results get a screen wall
+  SubagentPanel.tsx   live subagent workers of the current session
+  StatsView.tsx       stats page: KPIs, inline SVG, tables, 403/empty/error
   BranchNavigator.tsx in-session branch switcher
   ChatMinimap.tsx     scroll minimap alongside the message list
   MarkdownBody.tsx    markdown renderer
@@ -160,6 +166,7 @@ hooks/
   useDragDrop.ts      shared drag/drop state
   useIsMobile.ts      responsive breakpoint hook
   useProjectSizes.ts  React binding for the size poll
+  useStats.ts         stats fetch + bounded syncing poll + range state
   useTheme.ts         theme state
 ```
 
@@ -229,6 +236,229 @@ omp stores toolCall blocks as `{type:"toolCall", id, name, arguments}` but `Tool
 
 ### New session tool preset
 Tool names are passed at session creation (`POST /api/agent/new` → `toolNames[]`). For existing sessions, the active preset is inferred on mount via `get_tools` → `getPresetFromTools()`. When tools are fully disabled (`toolNames = []`), `rpc-manager.ts` passes `toolNames: []` with `restrictToolNames: true` and forces `agent.state.systemPrompt = []` after startup and reloads.
+
+### `/vibe` is TUI-only, so omp-web reproduces it (`lib/vibe-mode.ts`)
+
+`/vibe` has only `handleTui` in omp (`builtin-modes.ts`). The ACP dispatcher
+(`executeAcpBuiltinSlashCommand`) runs nothing but commands with a text-mode
+`handle` and answers `false` for the rest, so a `/vibe` sent as chat text would
+reach the model as plain prose. The browser therefore sends it as a command —
+`{ "type": "vibe", "args": "<rest>" }` on the existing `POST /api/agent/[id]`,
+`case "vibe"` in `lib/rpc-manager.ts` — and `VibeModeController` in
+`lib/vibe-mode.ts` reproduces the transition on the SDK's **public** session
+API. The worker registry is the SDK's own (`VibeSessionRegistry` from
+`@oh-my-pi/pi-coding-agent/vibe/runtime`), so the browser drives the same state
+the TUI does — and a restart re-attaches to workers through `rehydrate`, which
+reads the `vibe-session-lifecycle` custom entries the registry writes into the
+session file. The SDK is not patched and not forked.
+
+The palette entry needs two halves: `BUILTIN_SLASH_COMMANDS` in
+`components/ChatInput.tsx` offers `/vibe` even before the server advertises
+anything, and `BROWSER_NATIVE_SLASH_COMMANDS` in `lib/rpc-manager.ts` names the
+commands the browser answers itself (`fork`, `goal`, `vibe`), which
+`getAvailableSlashCommands` adds to the discovered list and the existing
+`get_commands` ships. A command offered by only one half is either invisible or
+forwarded to the model.
+
+`parseVibeCommand` splits `/vibe [on|off|status] [task]`: no argument toggles,
+and `on`/`start`/`enter`, `off`/`exit`/`stop` and `status` act. Anything else
+is the task that starts the mode — the lookup is a `hasOwnProperty` check, so a
+task beginning with `constructor` is still a task and not a command.
+
+The plan/goal conflict gate applies to **entry only**. `handleCommand` resolves
+`off` and a toggle that is currently on before it ever asks `conflicts()`, the
+same order as the TUI, where `handleVibeModeCommand` exits on
+`vibeModeEnabled` before it checks plan or goal: a mode that cannot be left is
+worse than one that cannot be entered. Entering is also refused when the live
+toolset is empty and no `mode_change` entry supplied a snapshot — there would be
+nothing to restore on exit.
+
+Entry is serialized behind one in-flight promise (`#entry`), the way the TUI
+stores `#vibeModeEntry`: a second `/vibe` (another tab, a double click, a
+`/vibe` with a prompt while the first is still awaiting `activateVibeTools`)
+awaits that promise instead of snapshotting a toolset that is already the
+reduced one. A second snapshot would make `previousTools` record `read` + the
+vibe tools, and the exit would restore a mode instead of leaving it. The entry
+also refuses before shrinking anything when the session cannot hold the flag
+(no `setVibeModeState`) — a session stuck read-only that shows no mode is worse
+than a refused command.
+
+Entering, in this order, mirroring the TUI's `#enterVibeMode`:
+
+1. `previousTools` — the restore snapshot: the `mode_change` entry's recorded
+   list when restoring, otherwise `session.getEnabledToolNames()`
+2. `registry.ownerScope(session)` + `activateScope(scope)`
+3. `base = ["read"]`, plus `"todo"` when the session has that builtin
+4. `await session.activateVibeTools(base)`
+5. `session.setVibeModeState({ enabled: true })`
+6. `sessionManager.appendModeChange("vibe", { previousTools })` — skipped on a
+   restore (`persist: false`)
+7. `sendVibeModeContext({ deliverAs: "steer" })` when the session is
+   streaming, so the running turn learns that its toolset just shrank
+
+Leaving runs the teardown through `runModeExitTeardown`: abort when streaming →
+`killAll` on the registry → `deactivateVibeTools(previousTools)` →
+`setVibeModeState(undefined)`. `runModeExitTeardown` raises the session's
+drain-suppression depth for the duration and schedules the idle drain only
+afterwards, so no queued turn runs while the toolset is being swapped. The
+abort is inside the teardown for the same reason one level down: without it a
+queued steer would restart on the still-live vibe toolset that the next step
+removes (`lib/vibe-mode.ts` says so next to the call; the TUI does the same).
+
+`killAll` persists the exit itself — `#persistModeExit` appends the worker
+tombstones **and** `mode_change("none")` in one `appendEntriesAtomically`
+block — so a leaving session says so whether a TUI or the browser drove it. Its
+zero-records early return reads the branch and skips the write when the last
+entry there already says `none`, so the exit is not recorded twice either. The
+browser therefore must not append its own `none`: it would duplicate the entry
+in every session file this mode ever touches.
+
+Restore resolves the mode from the **active branch**, not from the last
+`mode_change` line in the file: `SessionManager.buildSessionContext()` walks the
+path to the current leaf and reports `mode`/`modeData` from the last entry on it
+(`session-context.ts`), which is why `#modeContext()` prefers that and keeps the
+flat ledger only as a fallback for a manager without the method. A flat scan
+from the end of the ledger is wrong precisely because the browser ships
+`navigate_tree`: a session can sit on a branch where vibe mode is off while a
+later sibling branch turned it on, and the flat scan would resurrect the mode
+there. `restore()` then calls `rehydrate`, re-enters with `persist: false` (no
+second mode entry, the file already says what the session was in), memoizes its
+promise, and `handleCommand` awaits it first, so a `/vibe` typed during startup
+acts on the settled mode instead of a half-restored one.
+
+**Exclusivity with goal mode is symmetric, and a paused goal still counts.**
+`/goal` entry is refused while vibe is on (`case "goal"`), and `/vibe on` is
+refused while a goal is active **or paused**: `planOrGoalConflict` reports
+`goalState.enabled || goalState.goal.status === "paused"`, because a paused goal
+reports `enabled: false` but still owns the session — the TUI uses the same
+`goalModeEnabled || goalModePaused` pair (`interactive-mode.ts:3661-3684`). A
+finished or dropped goal does not block. Plan mode blocks too, but the browser
+has no entry command for it: `/plan` is not in `BROWSER_NATIVE_SLASH_COMMANDS`,
+entry happens through the session-mode path inside the SDK (`acp-agent.ts`
+installs the plan-proposal handler), and `lib/rpc-manager.ts` only *restores*
+a persisted `plan` mode and clears it on approval. The reduced vibe toolset
+cannot reach that path, so the conflict is one-directional for now.
+
+**The activation window is a second gate, not a detail.** The tool set is
+rebuilt asynchronously and the SDK serializes every tool mutation FIFO
+(`runToolRegistryMutation` in `session-tools.ts:836-848`). A `set_tools` that
+arrives *during* the entry would therefore pass an `enabled` check that is
+still false and then land after the activation, overwriting the reduced set
+with the full one — a mode that is on with a toolset its exit cannot restore.
+`VibeModeController.isPending()` is true from before the `activateVibeTools`
+await until it settles, and the gate refuses on `enabled || isPending()`. The
+same promise serializes commands: `handleCommand` awaits `#entry` before it
+parses anything, so a `/vibe off` typed during a slow entry is answered against
+the settled state instead of the one it was meant to undo.
+
+**A `vibe_status` frame goes out on the session event stream**, like
+`goal_status`: `onStatus` in the controller's constructor emits it, so an idle
+browser tab learns about a mode change made in another tab instead of keeping
+a bar that contradicts the session. Without the frame the bar would only be
+correct in the tab that pressed the button.
+
+### The VIBE bar locks the tool preset
+
+While the mode is on, `VibeBar` in `components/ChatWindow.tsx` shows the live
+worker count, and the tool-preset control is locked (`vibeEnabled` in
+`components/ChatInput.tsx`). The count is not polled separately: `get_state`
+carries `vibe: { enabled, workers } | null` next to `goal`, so a page refresh
+finds the mode the way it finds every other piece of session state.
+
+`VibeBar` is a readout, not a switch: it states the mode, the worker count and
+that the toolset is read-only with the presets locked. Entering, leaving and
+the task text all go through `/vibe`, so there is no second control that could
+disagree with the `mode_change` entry in the transcript.
+
+Applying a preset would `set_tools` the full set back over `read` + the vibe
+tools, and the mode would be on with its toolset gone — a state the exit
+cannot unwind, because `previousTools` no longer describes what runs. The lock
+is therefore on both sides: the control is disabled in the composer, and
+`case "set_tools"` in `lib/rpc-manager.ts` refuses with *Exit vibe mode before
+changing the tool preset* — a client that does not draw the disabled state
+must not be able to break the mode either. For the same reason the client's
+`case "vibe"` calls `loadTools()` after the command: the preset indicator
+follows the toolset the mode just swapped.
+
+`/vibe <prompt>` enters first and submits the prompt afterwards, so the prompt
+runs under the reduced set like the next turn would.
+
+### A background delegation is a running session
+
+`task` and the vibe workers return immediately and deliver their result as a
+follow-up turn minutes later. While that delivery is pending the session is
+**not** idle, yet the browser closes its SSE stream as soon as the server
+reports idle — the follow-up would then land in a stream nobody reads, and the
+result would never render. This is the trap: `running` used to mean "a wrapper
+exists", which is true for the whole idle timeout.
+
+`AgentSessionWrapper.isRunning()` in `lib/rpc-manager.ts` answers *"this session
+still owes work"* — prompt, handoff, streaming, compaction and bash, the live
+subagent registry, and the session's own `AsyncJobManager`:
+`getRunningJobs()` plus `hasPendingDeliveries()`. `onJobSettled` fires
+`notifyRunningChange()`, so the `/api/agent/running` snapshot drops the id only
+when the queue is really empty.
+
+`GET /api/agent/[id]` returns that value as `running`, and that is the whole
+fix: `checkServerIdle` in `hooks/useAgentSession.ts` closes the SSE stream only
+when `running` is false, so the follow-up turn of a finished delegation still
+arrives on the stream that was open when it started. The mount path in the same
+hook connects the stream for **any** running state (`if (agentState?.running)`
+in its mount effect), so a page refresh in the middle of a delegation
+reattaches; a narrower condition on the mount path loses exactly the case this
+is about, a pending delivery with no subagent and no streaming turn.
+
+The manager is per session — `sdk.ts:2326` creates one per
+`createAgentSession` — which is what makes the count exact: it cannot include
+a sibling session's jobs, so no owner filter is needed here.
+
+**Nested subagents need the root event bus.** A subagent can spawn subagents,
+and the SDK emits those nested lifecycle and progress frames on the
+**root-scoped** `subagentEventBus` — `createAgentSession` creates it
+(`sdk.ts:1786-1787`) and the executor publishes each frame to the session bus
+*and* that one (`emitSubagentFrame` in `utils/event-bus.ts`). omp's own
+RPC mode binds its observer there (`rpc-mode.ts:1507`), and omp-web bound its
+`RpcSubagentRegistry` to the session-local `eventBus` instead, so a grandchild
+never reached the browser: it ran, its parent waited for it, and the panel
+showed nothing.
+
+`startRpcSession` therefore constructs the wrapper with
+`subagentEventBus ?? eventBus`. Grandchildren appear in the roster and answer
+`get_subagents` / `get_subagent_messages` by their own id, because the registry
+is subscribed where they are published. The fallback is not a second code path:
+a session built without the root bus behaves exactly as before.
+
+The snapshot carries `parentToolCallId` but **no depth**
+(`RpcSubagentSnapshot` in `rpc-types.d.ts`), and the protocol cannot express
+nesting. The panel therefore groups the rows that share a parent tool call and
+never invents a tree: a batch reads as a batch, and a row's depth is not
+knowable from the frame. That rule is pure and lives in
+`lib/subagent-groups.ts` (`isSubagentActive`, `groupSubagentRows`) — the panel
+imports it, its test imports it directly, and it may only reorder, never drop a
+row. Any future tree view needs a depth field on the snapshot first.
+
+### Subagent state belongs to one session, and is reachable on a phone
+
+- `mergeSubagentSnapshots` merges by id, so the snapshots survive a session
+  switch by default. Today `components/AppShell.tsx` bumps `sessionKey` in its
+  switch paths (select, fork, new session, cwd change, delete, restore), so
+  `ChatWindow` remounts and its state is fresh anyway — which makes the
+  clearing branch in `hooks/useAgentSession.ts` a **guard, not a repair**: the
+  invariant lives at the hook so a future wiring that stops remounting cannot
+  show session A's workers inside session B. The failure it prevents is not
+  silent: the panel would ask `get_subagent_messages`,
+  `RpcSubagentRegistry.resolveSessionFile` would throw *Unknown subagent or
+  session file unavailable: <id>* (`rpc-subagents.ts`), and
+  `POST /api/agent/[id]` maps **any** command error to HTTP 500 — the route's
+  only 404 is "Session not found". The guard's live part is the promotion skip:
+  a `null` id replaced by the session's first real id is the same scope and
+  must not wipe a `/vibe` that was just entered.
+- On a narrow screen the panel is not a column — `showSubagentPanel` in
+  `components/AppShell.tsx` requires `!isMobile` — but `SubagentMobileToggle`
+  (in `components/SubagentPanel.tsx`) shows a count pill above the chat and
+  opens the same panel as a dialog sheet. A width check that only hides the
+  column makes running delegations invisible on a phone; the pill is the only
+  sign there that workers are running, so it names the count, not just "details".
 
 ### `enabledModels` scoping
 The `enabledModels` setting uses omp's `--models` syntax: globs against
@@ -364,9 +594,11 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 
 ### Running state polling + reconciliation
 - The sidebar polls `/api/agent/running` every 2.5 seconds while the tab is visible and pauses polling in background tabs. The session-list response remains the initial fallback.
+- `GET /api/agent/[id]` answers `running` with `session.isRunning()`, i.e. "this session still owes work" (see *A background delegation is a running session*). A pending background delivery counts as running, and the browser keeps its SSE stream open exactly as long as the field is true.
 - `useAgentSession` treats per-session SSE as primary for chat events and opens it before each prompt. `prompt_done` completes the current UI stage and notification immediately, but the idle SSE stays open for a 30-second grace window and is reused by the next prompt. `agent_start` cancels that close timer; `agent_settled` finishes extension-injected runs that have no wrapper-level `prompt_done` and starts a fresh grace window. Do not close on the first `agent_end`: retries, compaction, and extension-queued messages can continue the same logical prompt.
 - While a run is active, `useAgentSession` periodically calls `GET /api/agent/[id]` and also reconciles on `visibilitychange`/`online`. This fixes missed terminal events from background tabs or half-open connections.
 - Prompt runs use a monotonic run id; late SSE or slow reconciliation responses from an old run must be ignored so they cannot resurrect stale streaming bubbles.
+- `running` is not the same as "a prompt is streaming": a pending background delivery counts too. On mount the stream is connected for any `running` session, not only for a streaming or subagent-carrying one.
 
 ### Worktrees and project grouping
 - `lib/worktree.ts` resolves linked worktree top-levels back to the main repo `projectRoot`; `listAllSessions()` attaches that to each `SessionInfo` so all worktrees for one repo are grouped together in the sidebar.
@@ -501,13 +733,68 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - The UI is `components/ScheduledTasksView.tsx` + `hooks/useScheduledTasks.ts`,
   reached as `?view=scheduled`; its delete confirmation is a state inside the
   dialog, like the calendar's, because `window.confirm()` always returns false
-  in the desktop shell.
+  in the desktop shell. The view is listed in `skipInitialProjectSelection`, so
+  `?view=scheduled` survives the sidebar's automatic first cwd adoption: that
+  adoption counts as "go to the work" and would otherwise switch the view away
+  from the page the URL asked for.
 - **This re-opens the "background work is request-triggered" stance.** The
   projects dashboard measures only while somebody looks at it; a scheduled task
   by definition has nobody looking at it, so this feature is the one timer in
   the process. It is bounded by design — one timer, one wakeup per due slot, no
   queue and no catch-up — so the load it creates without a request is a session
   the user asked for in advance, not work on a TTL.
+
+### The stats dashboard is embedded, not proxied
+- **No second server, no second browser.** The CLI's `/stats` starts its own
+  HTTP server and opens a browser. omp-web does neither: `@oh-my-pi/omp-stats`
+  is a library (data in `~/.omp/stats.db`, aggregation and rollups), and
+  `lib/stats.ts` serves a cached payload from it. `startServer()` is never
+  called and `closeDb()` is never called — the handle is shared and
+  long-lived, and an import of the library stays lazy so merely importing a
+  route does not open a SQLite handle and its sync workers.
+- **`GET /api/stats` is admin-only, and that is a boundary, not a preference.**
+  `requireAdmin()` guards it because that database is process-global and
+  aggregates every account's sessions on this host — served to a tenant it
+  would be the operator's work, read back through someone else's page. The
+  ranges are `STATS_RANGES` (`1h`, `24h`, `7d`, `30d`, `90d`, `all`, default
+  `24h`); an unknown range, `?range=` included, answers **400** with the
+  allowed list instead of silently serving a different window.
+- **The sync is request-triggered and backgrounded**, the same rule as the
+  projects dashboard: single-flight per range on `globalThis` (a module-level
+  map is empty again after the dev server's hot reload, which would start a
+  second sync next to the first), a TTL (`STATS_TTL_MS`), and a `get()` that
+  never awaits IO. A first call may answer `stats: null, syncing: true`; a
+  failed sync **keeps the last good payload and records `error`** — an error is
+  an answer, not an empty dashboard. `?refresh=1` starts the sync before the
+  read, so the payload it returns already reports `syncing`. A forced refresh
+  starts a sync **unless the cache is younger than `STATS_MIN_REFRESH_MS`**
+  (5 s); the TTL decides only whether an *unforced* read needs one. The floor is
+  a rate limit, not a TTL guard — which is why a forced payload can report
+  `syncing: true` while the cache is still fresh, and why a held-down refresh
+  button syncs once every 5 s rather than walking the database.
+- **The page** is `components/StatsView.tsx` + `hooks/useStats.ts` at
+  `?view=stats`, persisted through `lib/initial-navigation.ts`. Its button lives
+  in the sidebar's bottom action stack **directly above Settings** — the stack
+  is rendered by the `sidebarContent` block inside `components/AppShell.tsx`,
+  not by `SessionSidebar.tsx` — and it is hidden for a non-admin, using the
+  `isAdmin` the shell already reads from `/api/whoami`: a button offered and
+  then refused is worse than no button. Charts are inline SVG with the theme's
+  CSS variables; there is no chart dependency and no iframe (nor an iframe
+  fallback), so the page follows an imported theme like the rest of the app.
+- **`@oh-my-pi/omp-stats` is not a direct dependency**, and that is a risk
+  taken knowingly: it resolves through `@oh-my-pi/pi-coding-agent`, the same
+  house habit as `@oh-my-pi/pi-catalog`. An upstream bump that drops it would
+  turn `lib/stats.ts` into an import failure at runtime, and the honest fix is a
+  direct entry in `package.json` — nothing was added there by this change set.
+- **The poll rule is one rule**, in `hooks/useStats.ts` and modelled on
+  `lib/project-size-poll.ts`: 2 s interval (`STATS_POLL_INTERVAL_MS`), a 120 s
+  window (`STATS_POLL_WINDOW_MS`), and it stops as soon as the server reports
+  `syncing: false`. A second, separately written poll would drift from the
+  first the moment one of them is tuned.
+- **What this first integration does not cover**: only overview, time series,
+  models, projects/folders and tools are rendered. The CLI dashboard's
+  trace, frustration and gain views need separate endpoints that are not
+  exposed here, so the page does not pretend to be the whole CLI dashboard.
 
 ### The update check compares against this repository's releases
 - This fork is published as a GitHub release in `steimerbyte/omp-web` (`docs/release.md`). The npm package `omp-web` belongs to the **upstream** line and is a different build; the publish workflow is disabled here.
@@ -844,6 +1131,7 @@ Location: `~/.omp/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 {"type":"message","id":"<8hex>","parentId":"<8hex>","message":{"role":"assistant","content":[...],...}}
 {"type":"message","id":"<8hex>","parentId":"<8hex>","message":{"role":"toolResult","toolCallId":"...","content":[...]}}
 {"type":"compaction","id":"<8hex>","parentId":"<8hex>","summary":"...","firstKeptEntryId":"<8hex>","tokensBefore":N}
+{"type":"mode_change","id":"<8hex>","parentId":"<8hex>","mode":"vibe","data":{"previousTools":["read","bash","edit"]}}
 {"type":"session_info","id":"...","parentId":"...","name":"user-defined name"}
 ```
 
@@ -858,6 +1146,28 @@ returns `null` for every real session.
 `model_change` carries a `provider/modelId` string plus the **role** it came
 from; `SessionContext.models` is a role → selector record, and `models.default`
 is what the UI shows as the session's model.
+
+`mode_change` is how a session records the mode it is in — `vibe` with
+`data.previousTools` on entry, `none` on exit (`plan` and `goal` use the same
+record). Nothing else in the file says "this session is in vibe mode", so a
+reader that skips the entry restores the wrong toolset. The entry is also the
+only place the pre-vibe tool names survive a restart.
+
+Read it **through the branch**, not by scanning the file from the end:
+`SessionManager.buildSessionContext()` reports `mode`/`modeData` from the last
+`mode_change` on the path to the active leaf, which is the only answer that
+survives `navigate_tree` — a sibling branch can hold a later entry than the
+branch the session is actually on. The browser does not need to write the exit
+either: the registry's own exit (`#persistModeExit`, inside `killAll`) appends
+the worker tombstones and the `none` atomically, and its zero-record path skips
+the write when the branch already ends in `none`.
+
+Vibe workers add their own records beside it: `{"type":"custom",
+"customType":"vibe-session-lifecycle"}`, written by the SDK's registry, one per
+spawn / turn / tombstone. `VibeSessionRegistry.rehydrate` reads them to decide
+which worker sessions can be resumed and which died with the mode, so a
+browser-started session and a TUI session resume the same way. Do not strip
+`custom` entries as noise when rewriting a file.
 
 ---
 

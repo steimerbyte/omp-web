@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { restoreLinkedomPrototypesOnExit } from "../lib/test-linkedom.mjs";
 import * as linkedom from "linkedom";
 
 /**
@@ -20,6 +21,8 @@ import * as linkedom from "linkedom";
  */
 
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
+// linkedom teilt die Prototypen prozessweit; nach dieser Datei zurueckgeben.
+restoreLinkedomPrototypesOnExit(dom.window);
 const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
 
 globalThis.window = new Proxy(dom.window, {
