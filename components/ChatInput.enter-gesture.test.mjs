@@ -57,12 +57,12 @@ const mountedRoots = [];
  * Ein aufgebautes Eingabefeld.
  *
  * `sent` sammelt, was der Handler nach aussen gibt: `onSend` im Leerlauf,
- * `onSteer`/`onFollowUp` waehrend eines Turns. Die Nummer im Text sagt, welcher
- * Anschlag gemeint war — so ist "zweimal gesendet" von "einmal gesendet"
- * unterscheidbar, ohne die Uhr zu befragen.
+ * `onSteer`/`onFollowUp`/`onPromptWithStreamingBehavior` waehrend eines Turns.
+ * Die Nummer im Text sagt, welcher Anschlag gemeint war — so ist "zweimal
+ * gesendet" von "einmal gesendet" unterscheidbar, ohne die Uhr zu befragen.
  */
 async function mountInput(props = {}) {
-  const sent = { sends: [], steers: [], follows: [] };
+  const sent = { sends: [], steers: [], follows: [], prompts: [] };
   const handle = React.createRef();
   const container = document.createElement("div");
   dom.document.body.appendChild(container);
@@ -75,6 +75,7 @@ async function mountInput(props = {}) {
       onAbort() {},
       onSteer: (message) => sent.steers.push(message),
       onFollowUp: (message) => sent.follows.push(message),
+      onPromptWithStreamingBehavior: (message, behavior) => sent.prompts.push({ message, behavior }),
       modelList: [],
       modelNames: {},
       ...props,
@@ -263,4 +264,55 @@ test("a third Enter does not steer a second time", async () => {
   await pressEnter(textarea);
   await pressEnter(textarea);
   assert.deepEqual(sent.steers, ["STEUERUNG drei"], "nur der erste Anschlag steuert");
+});
+
+test("a bare /vibe is a command with no loaded command list, not a prompt", async () => {
+  // Der Client kennt /vibe selbst; die Serverliste (get_commands) ist nur die
+  // Anzeige. Ein leeres, noch ladendes Ergebnis darf die Eingabe nicht in
+  // einen Prompt verwandeln. Der abschliessende Leerschlag haelt die Palette
+  // aus dem Weg, wie nach dem Vervollstaendigen eines Befehls.
+  const builtinCalls = [];
+  const { sent, textarea } = await mountInput({
+    draftKey: "enter-gesture-test",
+    slashCommands: [],
+    slashCommandsLoading: true,
+    onBuiltinCommand: async (message) => {
+      builtinCalls.push(message);
+      return { handled: true };
+    },
+  });
+  await type(textarea, "/vibe ");
+  await pressEnter(textarea);
+
+  assert.deepEqual(builtinCalls, ["/vibe"], "der eingebaute Handler antwortet ohne Serverliste");
+  assert.deepEqual(sent.sends, [], "der Befehl geht nicht als Prosa an das Modell");
+});
+
+test("a /vibe typed while a turn runs is not steered into the running turn", async () => {
+  // Das Fenster: waehrend eines Turns zeigt die Palette keine lokalen Befehle,
+  // und Enter geht an sendQueued statt an handleSend. Auch dort hat der
+  // Befehl Vorrang vor Steer/FollowUp.
+  const builtinCalls = [];
+  const { sent, textarea } = await mountInput({
+    isStreaming: true,
+    draftKey: "enter-gesture-test",
+    slashCommands: [],
+    slashCommandsLoading: true,
+    onBuiltinCommand: async (message) => {
+      builtinCalls.push(message);
+      return { handled: true, prompt: "VIBE Aufgabe" };
+    },
+  });
+  await type(textarea, "/vibe");
+  await pressEnter(textarea);
+  await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+
+  assert.deepEqual(builtinCalls, ["/vibe"], "der Befehl laeuft durch den eingebauten Handler");
+  assert.deepEqual(sent.steers, [], "nicht als Steer in den laufenden Turn");
+  assert.deepEqual(sent.follows, [], "auch nicht als FollowUp");
+  assert.deepEqual(
+    sent.prompts,
+    [{ message: "VIBE Aufgabe", behavior: "steer" }],
+    "nur der vom Befehl gelieferte Prompt wird waehrend des Turns abgeschickt",
+  );
 });

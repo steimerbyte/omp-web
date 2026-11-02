@@ -550,9 +550,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
       setContextUsage(d.contextUsage ?? null);
-      // Ein laufender Wechsel darf von einem parallelen Session-Laden nicht
-      // weggeraeumt werden; die Warteschlange ist die Quelle dieser Frage.
-      setCurrentModelOverride((current) => modelSwitchQueueRef.current.inFlight ? current : null);
+      // Kein Modell-Reset hier: `currentModelOverride` traegt nur das
+      // Live-Modell aus `get_state` oder einen bestaetigten Wechsel.
+      // `context.model` kommt aus der Sitzungsdatei und ist nach einem
+      // Rollenwechsel veraltet — weder ein Laden ohne Zustandsabruf noch die
+      // Datei-Haelfte eines Zustandsladens darf es darueberlegen. Der
+      // Zustandsabruf unten ersetzt den Wert, sobald er ihn kennt.
       setError(null);
       setThinkingLevel((d.context.configuredThinkingLevel ?? d.context.thinkingLevel ?? "off") as ThinkingLevelOption);
       setEffectiveThinkingLevel(d.context.thinkingLevel);
@@ -1993,7 +1996,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           await loadTools(sid);
           if (result?.error) return complete({ handled: true, error: result.error });
           // A brand-new session renders no VibeBar until it is promoted.
-          await loadSession(sid);
+          // The state fetch matters: the file's context meter/model lag the
+          // live session after a role switch, and `/vibe off` just returned.
+          await loadSession(sid, false, true);
           promoteNewSession();
           if (result?.prompt) {
             if (result.message) addNotice({ type: "success", message: result.message });
@@ -2045,7 +2050,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             type: "execute_slash_command",
             message: text,
           });
-          if (!result?.handled) return { handled: false };
+          if (!result?.handled) {
+            // Never hand unknown slash text to the model as prose: an
+            // unadvertised command is a user mistake, and silence made it
+            // look like the command ran.
+            return complete({ handled: true, error: `Unknown command: /${commandName}` });
+          }
           const output = result.output?.filter((line) => line.trim()).join("\n\n") ?? "";
           if (output) appendCommandOutput(output);
           if (result.prompt) return { handled: true, prompt: result.prompt };

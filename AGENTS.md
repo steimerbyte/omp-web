@@ -216,6 +216,15 @@ switch is in flight (`modelSwitchQueueRef.current.inFlight === null`): a switch
 the user just triggered is the optimistic value, and the poll must not overwrite
 it with the server's older answer.
 
+`currentModelOverride` is therefore the **only** carrier of the displayed
+model, and `loadSession` must never reset it — not on the file half, not on the
+state half. `get_state` is the one writer, guarded by that in-flight check; the
+other writer is the confirmed switch itself. Resetting from `context.model`
+looks harmless because both name a model, and it is exactly how `/vibe off`
+flashed the old default model after a role switch. The same reason is why
+`/vibe` loads with `includeState`: the context meter is served by the live
+session too, and a file-only load leaves it describing the old one.
+
 ### Fork must destroy the wrapper immediately
 `AgentSession.fork()` **mutates the wrapper's inner state in-place** — after fork, `inner.sessionId` is the *new* session's id. If the wrapper stays alive in the registry under the old id, the next request gets the already-forked state and subsequent forks produce a corrupt `parentSession` chain.
 
@@ -270,6 +279,19 @@ commands the browser answers itself (`fork`, `goal`, `vibe`), which
 `getAvailableSlashCommands` adds to the discovered list and the existing
 `get_commands` ships. A command offered by only one half is either invisible or
 forwarded to the model.
+
+**Both submit paths ask the handler, and `BUILTIN_SLASH_COMMANDS` is only a
+label.** `handleSend` and the streaming path (`sendQueued`, Enter during a
+turn) both call `runBuiltinCommand`; the streaming one is where a slash command
+used to slip past the handler and be sent as a steer prompt, so the command ran
+nowhere and the transcript gained a user message that read like a command. The
+gate is the `switch` in `handleBuiltinSlashCommand` (`hooks/useAgentSession.ts`),
+not the list — the list decides what the palette shows. Only the command's own
+returned `prompt` may be sent with the turn's streaming behavior; everything
+else is consumed. An unknown slash command must fail loudly
+(`Unknown command: /…`), because forwarding it as prose makes it look executed
+and leaves the user waiting for a mode that never turned on; the text stays in
+the input field so it can be fixed.
 
 `parseVibeCommand` splits `/vibe [on|off|status] [task]`: no argument toggles,
 and `on`/`start`/`enter`, `off`/`exit`/`stop` and `status` act. Anything else

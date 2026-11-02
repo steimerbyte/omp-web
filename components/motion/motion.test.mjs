@@ -358,7 +358,7 @@ test("Gradient und Animation gehoeren in dieselbe CSS-Regel", () => {
  * The helpers below composite the gradient across the element the way CSS does,
  * so the assertions are about the invariant rather than about this prose.
  * Modelled over the old 200% -> -200% travel with `repeat`, the minimum *peak*
- * alpha was 0.1915 against a 0.46 band, reached at P = -50% where the window
+ * alpha was 0.1913 against a 0.46 band, reached at P = -50% where the window
  * straddles a tile boundary. That is a dim position, not a cleared one — the
  * distinction the test is careful to preserve.
  */
@@ -438,7 +438,10 @@ function readWashKeyframes() {
     .map(([, percent, position]) => ({ percent: Number(percent), position: Number(position) }));
 }
 
-test("Ohne no-repeat rueckt die Nachbarkachel nach und fuellt, was das Band verlässt", () => {
+// The 30s deadline is a CPU-availability guard, not a correctness crutch: the
+// test's own work is ~30ms, but the 213-file run measured 6.2s wall while the
+// machine was 44x dilated, past the 5s default.
+test("Ohne no-repeat rueckt die Nachbarkachel nach und fuellt, was das Band verlässt", { timeout: 30_000 }, () => {
   // Two separate claims, kept apart on purpose.
   //
   // (1) Under `repeat` the old travel never became fully empty. `background-
@@ -453,11 +456,19 @@ test("Ohne no-repeat rueckt die Nachbarkachel nach und fuellt, was das Band verl
   // painted [20, 180], so that tile contributes nothing. What still paints the
   // element there is the *neighbour*. This is the distinction the fix rests on,
   // and it is why the fix is a `background-repeat` rather than a wider range.
+  // 201 positions over the 400pp travel (2pp steps) and 801 samples per
+  // position. The proof is the geometry above; this scan is the check, and the
+  // coarse grid keeps it at tens of milliseconds instead of seconds — the test
+  // timed out at the 5s default when the rest of the suite was running.
+  // Measured with this grid: min peak alpha 0.1913 (margin 0.0013 above the
+  // 0.19 bound, 0.0087 below the 0.20 bound), no clear position, no-repeat 0.
+  const POSITION_STEPS = 200;
+  const SAMPLE_COUNT = 801;
+  const positionAt = (i) => 200 - (400 * i) / POSITION_STEPS;
   const sample = (repeat) => {
     let worst = Infinity;
-    for (let i = 0; i <= 4000; i += 1) {
-      const position = 200 - (400 * i) / 4000;
-      worst = Math.min(worst, peakPaintedAlpha(position, { repeat }));
+    for (let i = 0; i <= POSITION_STEPS; i += 1) {
+      worst = Math.min(worst, peakPaintedAlpha(positionAt(i), { repeat, samples: SAMPLE_COUNT }));
     }
     return worst;
   };
@@ -472,9 +483,8 @@ test("Ohne no-repeat rueckt die Nachbarkachel nach und fuellt, was das Band verl
   // No single position under `repeat` reaches peak 0: the old wash had no rest
   // anywhere in it, which is what "circled forever" meant.
   let anyClear = false;
-  for (let i = 0; i <= 4000; i += 1) {
-    const position = 200 - (400 * i) / 4000;
-    if (peakPaintedAlpha(position, { repeat: true }) === 0) anyClear = true;
+  for (let i = 0; i <= POSITION_STEPS; i += 1) {
+    if (peakPaintedAlpha(positionAt(i), { repeat: true, samples: SAMPLE_COUNT }) === 0) anyClear = true;
   }
   assert.equal(anyClear, false, "unter repeat gab es im alten Lauf eine klare Position");
 

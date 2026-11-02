@@ -5,6 +5,27 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.22.2
+
+Released 2026-11-02.
+
+### Korrekturen
+
+- **Slash-Befehle erreichen das Modell nicht mehr als Prosa.** Lief ein Turn,
+  ging Enter an den Steer-/Follow-Up-Pfad, und dort wurde `/vibe` (oder
+  `/goal`, `/fork`) ungeprüft als Prompt mitgeschickt — der Befehl stand danach
+  als Nutzernachricht im Transkript, und der Modus blieb aus. Beide Absendewege
+  fragen jetzt denselben Handler (`runBuiltinCommand`); ein unbekannter Befehl
+  wird als Fehler gemeldet („Unknown command: /…") statt an das Modell zu
+  gehen, und der Text bleibt im Eingabefeld.
+
+- **Das Composer-Modell bleibt nach einem Befehl stehen.** Ein Datei-Laden der
+  Sitzung setzte die Anzeige auf `context.model` zurück, das nach einem
+  Rollenwechsel noch das alte Standardmodell nennt; `/vibe off` zeigte deshalb
+  kurz DeepSeek, obwohl die Sitzung mit Qwen lief. Der Live-Wert aus
+  `get_state` ist jetzt der einzige Schreiber, und `/vibe` lädt den Zustand
+  mit, sodass auch die Kontextanzeige dem laufenden Modell folgt.
+
 ## v0.22.1
 
 Released 2026-11-02.

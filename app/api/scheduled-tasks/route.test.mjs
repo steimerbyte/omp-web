@@ -15,10 +15,12 @@ const jiti = createJiti(import.meta.url, { root: process.cwd(), alias: { "@": pr
 const HOME_ROOT = mkdtempSync(join(tmpdir(), "omp-web-scheduled-api-home-"));
 process.env.OMP_WEB_HOME_ROOT = HOME_ROOT;
 
-// Der Zeitplaner wird hier nur gestartet, damit `rescheduleScheduler()` ein
-// No-op ist; ein Test, der einen echten Timer stellt, wuerde die Testdatei am
-// Beenden hindern.
+// Der Zeitplaner wird angehalten, damit `rescheduleScheduler()` in dieser Datei
+// ein No-op ist. `globalThis` ist prozessweit: eine andere Testdatei, die den
+// Planer gestartet haette, wuerde sonst waehrend dieser Tests einen Tick
+// stellen — und ein echter Timer haelt die Testdatei am Beenden.
 const scheduler = await jiti.import("@/lib/scheduler.ts");
+scheduler.stopScheduler();
 
 const route = await jiti.import("./route.ts");
 const idRoute = await jiti.import("./[id]/route.ts");
@@ -410,6 +412,36 @@ test("a failing start is a 500 and records the error", async () => {
     assert.equal(response.status, 500);
 
     const stored = (await (await route.GET(get("/api/scheduled-tasks", headers))).json()).tasks[0];
+    assert.equal(stored.lastRunStatus, "error");
+    assert.equal(stored.lastRunSessionId, undefined);
+  } finally {
+    runFailure = null;
+  }
+});
+
+test("a failing background start is recorded, not an unhandled rejection", async () => {
+  runCalls = 0;
+  runFailure = new Error("Model is not available in the enabled scope: buds-gateway/gibt-es-nicht");
+  const headers = createAccount("tick-fehler");
+  const identity = { username: headers["x-omp-user"], isAdmin: false };
+  try {
+    const task = await createTask(headers, { cron: "* * * * *" });
+    const nowMs = Date.now();
+    // Derselbe Startfehler wie oben, aber aus dem Durchlauf statt aus der Route:
+    // der Tick muss ihn schlucken und als Lauf-Fehler vermerken. Eine Rejection,
+    // die hier entkaeme, meldet bun als Unhandled error und macht den Test rot.
+    const started = await scheduler.runSchedulerTick(
+      { lastTickMs: nowMs - 60_000, nowMs },
+      fakeStarter,
+      [identity],
+    );
+    // Eine fallengelassene Rejection wird erst im naechsten Macrotask gemeldet.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(runCalls, 1);
+    assert.equal(started, 0);
+
+    const stored = (await (await route.GET(get("/api/scheduled-tasks", headers))).json()).tasks[0];
+    assert.equal(stored.id, task.id);
     assert.equal(stored.lastRunStatus, "error");
     assert.equal(stored.lastRunSessionId, undefined);
   } finally {

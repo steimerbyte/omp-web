@@ -466,7 +466,15 @@ async function tick(): Promise<void> {
     console.error("[scheduler] the tick failed:", error);
   } finally {
     state.ticking = false;
-    rescheduleScheduler();
+    try {
+      rescheduleScheduler();
+    } catch (error) {
+      // `tick` laeuft als `void tick()` im Timer: jeder Fehler, der hier
+      // entkaeme, waere eine unbehandelte Rejection. Der Zeitplaner steht dann
+      // ohne Timer still, bis eine Mutation ihn neu stellt — ein Log ist
+      // besser als ein Absturz am Prozessrand.
+      console.error("[scheduler] the next timer could not be armed:", error);
+    }
   }
 }
 

@@ -1006,28 +1006,40 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, []);
 
+  /**
+   * Slash text is a command, never prose. Both submit paths ask the same
+   * handler before sending: the client answers its own commands (vibe, goal,
+   * fork, compact, …) without the server's command list, and a turn that is
+   * still running must not downgrade them to a prompt. Returns true when the
+   * submission was consumed.
+   */
+  const runBuiltinCommand = useCallback(async (
+    msg: string,
+    sendPrompt: (prompt: string) => void,
+  ): Promise<boolean> => {
+    if (!msg.startsWith("/") || !onBuiltinCommand) return false;
+    const result = await onBuiltinCommand(msg);
+    if (!result.handled) return false;
+    if (!result.error) {
+      clearInput();
+      if (result.prompt) sendPrompt(result.prompt);
+    }
+    return true;
+  }, [clearInput, onBuiltinCommand]);
+
   const handleSend = useCallback(async () => {
     const msg = value.trim();
     const files = uploadedFiles;
     if (!msg && !attachedImages.length && !files.length) return;
     if (isStreaming) return;
     onAudioUnlock?.();
-    if (!attachedImages.length && !files.length && msg.startsWith("/") && onBuiltinCommand) {
-      const result = await onBuiltinCommand(msg);
-      if (result.handled) {
-        if (!result.error) {
-          clearInput();
-          if (result.prompt) onSend(result.prompt);
-        }
-        return;
-      }
-    }
+    if (!attachedImages.length && !files.length && await runBuiltinCommand(msg, onSend)) return;
     // Der Agent bekommt den Pfad als Text: die Datei liegt bereits im
     // Arbeitsordner, in dem er laeuft.
     const outgoing = appendUploadReferences(msg, files);
     clearInput();
     onSend(outgoing, attachedImages.length ? attachedImages : undefined);
-  }, [value, attachedImages, uploadedFiles, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, uploadedFiles, isStreaming, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -1270,27 +1282,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, []);
 
-  const sendQueued = useCallback((mode: "steer" | "followup") => {
+  const sendQueued = useCallback(async (mode: "steer" | "followup") => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
     if (attachedImages.length) return;
     onAudioUnlock?.();
+    const streamingBehavior = mode === "steer" ? "steer" : "followUp";
+    // A running turn is the window where a slash command used to reach the
+    // model as prose: Enter routes here instead of handleSend. Same handler,
+    // same rule — the command's own prompt is what may still be sent.
+    const sendPrompt = (prompt: string) => {
+      if (onPromptWithStreamingBehavior) onPromptWithStreamingBehavior(prompt, streamingBehavior);
+      else onSend(prompt);
+    };
+    if (await runBuiltinCommand(msg, sendPrompt)) return;
     // Auch hier die Referenzen: sonst ginge eine gesteuerte Nachricht ohne den
     // Anhang hinaus, obwohl der Chip einen verspricht.
     const outgoing = appendUploadReferences(msg, uploadedFiles);
-    const streamingBehavior = mode === "steer" ? "steer" : "followUp";
-    if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-      clearInput();
-      onPromptWithStreamingBehavior(outgoing, streamingBehavior, attachedImages.length ? attachedImages : undefined);
-      return;
-    }
     clearInput();
     if (mode === "steer" && onSteer) {
       onSteer(outgoing, attachedImages.length ? attachedImages : undefined);
     } else if (mode === "followup" && onFollowUp) {
       onFollowUp(outgoing, attachedImages.length ? attachedImages : undefined);
     }
-  }, [value, attachedImages, uploadedFiles, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, uploadedFiles, onSteer, onFollowUp, onSend, runBuiltinCommand, onPromptWithStreamingBehavior, clearInput, onAudioUnlock]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;

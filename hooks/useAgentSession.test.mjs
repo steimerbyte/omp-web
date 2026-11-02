@@ -317,8 +317,9 @@ test("/vibe is consumed locally and refreshes the toolset", () => {
   assert.match(vibeCaseSource, /await loadTools\(sid\)/);
   assert.match(vibeCaseSource, /complete\(\{ handled: true, error: result\.error \}\)/);
   // A brand-new session renders no VibeBar until it is promoted; the
-  // promotion has to come after the error check, not before it.
-  assert.match(vibeCaseSource, /await loadSession\(sid\);\s*promoteNewSession\(\);/);
+  // promotion has to come after the error check, not before it. The load
+  // includes state so the composer keeps the live model after `/vibe off`.
+  assert.match(vibeCaseSource, /await loadSession\(sid, false, true\);\s*promoteNewSession\(\);/);
   assert.ok(
     vibeCaseSource.indexOf("promoteNewSession()") > vibeCaseSource.indexOf("if (result?.error)"),
     "promote only after a successful command",
@@ -355,6 +356,39 @@ test("adopts the live model after a role switch unless a switch is in flight", (
   assert.match(source, /model\?: \{ id: string; provider: string \};/);
   assert.match(stateBlock, /if \(liveState\.model && modelSwitchQueueRef\.current\.inFlight === null\) \{/);
   assert.match(stateBlock, /setCurrentModelOverride\(\{ provider: liveState\.model\.provider, modelId: liveState\.model\.id \}\);/);
+});
+
+test("a file-only session load keeps the live model across a command", () => {
+  const loadSource = source.slice(
+    source.indexOf("const loadSession = useCallback"),
+    source.indexOf("const loadContext = useCallback"),
+  );
+
+  // `context.model` comes from the session file and lags a role switch, so
+  // nothing in the load may discard the live override before `get_state`
+  // answers. The state block is the only writer.
+  assert.doesNotMatch(loadSource, /setCurrentModelOverride\(\(current\)/);
+  assert.match(loadSource, /if \(liveState\.model && modelSwitchQueueRef\.current\.inFlight === null\) \{\s*setCurrentModelOverride\(\{ provider: liveState\.model\.provider, modelId: liveState\.model\.id \}\);\s*\}/);
+
+  // `/vibe off` must re-read the live state so the meter follows the live
+  // model instead of the file's context window.
+  const vibeCaseSource = source.slice(
+    source.indexOf('case "vibe":'),
+    source.indexOf('case "handoff":'),
+  );
+  assert.match(vibeCaseSource, /await loadSession\(sid, false, true\);/);
+});
+
+test("an unknown slash command fails loudly instead of becoming prose", () => {
+  const commandSource = source.slice(
+    source.indexOf("const handleBuiltinSlashCommand"),
+    source.indexOf("// Queued (undelivered) messages"),
+  );
+
+  // The server's ACP dispatcher answers `handled: false` for commands it does
+  // not know; forwarding that to the composer sent the raw text to the model.
+  assert.match(commandSource, /return complete\(\{ handled: true, error: `Unknown command: \/\$\{commandName\}` \}\);/);
+  assert.doesNotMatch(commandSource, /if \(!result\?\.handled\) return/);
 });
 
 test("syncs the vibe status from every get_state response", () => {
