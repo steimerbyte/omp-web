@@ -5,6 +5,37 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.22.1
+
+Released 2026-11-02.
+
+### Korrekturen
+
+- **`/vibe` in einer brandneuen, noch nicht angelegten Sitzung.** Der Befehl
+  legte die Sitzung serverseitig an, die Oberfläche blieb aber im Entwurf — die
+  Vibe-Leiste war unsichtbar, obwohl der Modus lief. Der Befehl holt die
+  Sitzung jetzt in die Ansicht (`loadSession` + `promoteNewSession`), wie
+  `/compact` es schon tat. Dasselbe gilt für `/goal`.
+
+- **Vibe-Leiste auf 390 px.** Die Arbeiterzahl wurde zu „0 work…" abgeschnitten,
+  weil der statische Hinweis den Platz beanspruchte. Die Zahl behält ihre
+  Breite, der Hinweis wird ellipsiert.
+
+- **Verzeichnis-Picker.** Beim Tippen eines Pfads blieb nur das letzte Zeichen
+  stehen, weil die Markierung nach jedem Zeichen die ganze Eingabe
+  überschrieb. Sie folgt jetzt der Navigation (`currentPath`) und nicht dem
+  Tippen.
+
+- **Mobiles Subagenten-Sheet.** Es war um die halbe Breite nach links
+  verschoben, weil die `-translate-x-1/2`-Klasse des Dialog-Primitives
+  überlebte. Das Sheet überschreibt beide Transforms und sitzt über die volle
+  Breite unten.
+
+- **Composer-Modell nach einem Rollenwechsel und Neuladen.** Die Anzeige fiel
+  auf `models.default` aus der Sitzungsdatei zurück, obwohl die Sitzung längst
+  mit dem Rollenmodell lief. Sie übernimmt jetzt das Live-Modell aus
+  `get_state` — außer während eines laufenden Wechsels.
+
 ## v0.22.0
 
 Released 2026-11-02.

@@ -148,12 +148,14 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
   // Deshalb wird sie nach jedem neuen Pfad erneut gesetzt — aber nur, solange
   // das Feld wirklich den Fokus traegt. Sonst wuerde ein spaeteres `navigateTo()`
   // (Klick auf einen Unterordner, Enter im Wegfeld) die Markierung eines
-  // Feldes ueberschreiben, in dem der Nutzer gerade schreibt.
+  // Feldes ueberschreiben, in dem der Nutzer gerade schreibt. Die Abhaengigkeit
+  // ist `currentPath`, nicht `pathInput`: sonst markiert der Effekt nach jedem
+  // getippten Zeichen die ganze Eingabe.
   useEffect(() => {
     const input = pathInputRef.current;
     if (!input || document.activeElement !== input) return;
     selectWholeInput(input);
-  }, [pathInput]);
+  }, [currentPath]);
 
   const handlePathSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

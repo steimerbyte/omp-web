@@ -375,6 +375,33 @@ test("Die Markierung ueberlebt den asynchron nachgelieferten Pfad", async () => 
   await act(async () => { root.unmount(); });
 });
 
+test("Tippen im Wegfeld markiert nicht die ganze Eingabe", async () => {
+  const { root } = await mount(React.createElement(pickerHarness()));
+  await settle();
+
+  const input = pathInput();
+  assert.equal(resolveActive(), input);
+
+  await act(async () => {
+    // Der native Setter, nicht `input.value = …`: der eigene Schreibzugriff
+    // aktualisiert Reacts Value-Tracker, und React verwirft das folgende
+    // `input`-Event als unveraendert.
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")?.set;
+    assert.ok(setter, "linkedom hat keinen value-Setter");
+    setter.call(input, "/home/user/project2");
+    input.dispatchEvent(new win.Event("input", { bubbles: true }));
+  });
+  await settle();
+
+  assert.equal(input.value, "/home/user/project2");
+  // Die Markierung folgt der Navigation, nicht dem Tippen: der Cursor bleibt
+  // hinter dem letzten Zeichen, statt die ganze Eingabe zu markieren.
+  assert.equal(input.selectionStart, input.value.length);
+  assert.equal(input.selectionEnd, input.value.length);
+
+  await act(async () => { root.unmount(); });
+});
+
 test("Ein leeres Wegfeld ergibt eine leere, gueltige Markierung", async () => {
   // `select()` und `setSelectionRange(0, value.length)` sind in Chromium
   // gleichwertig, auch leer — beide `0/0`. Der Unterschied liegt im Zeitpunkt:

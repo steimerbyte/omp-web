@@ -91,6 +91,7 @@ type AgentStateResponse = {
   systemPrompt?: string;
   thinkingLevel?: string;
   configuredThinkingLevel?: string;
+  model?: { id: string; provider: string };
   isStreaming?: boolean;
   isPromptRunning?: boolean;
   isBashRunning?: boolean;
@@ -573,6 +574,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.thinkingLevel !== undefined) {
             setThinkingLevel((liveState.configuredThinkingLevel ?? liveState.thinkingLevel) as ThinkingLevelOption);
             setEffectiveThinkingLevel(liveState.thinkingLevel);
+          }
+          // A role switch lands in the SDK's live model, not in the file's
+          // role-scoped model_change, so `context.model` can still name the
+          // old default; adopt the live model unless a switch is in flight.
+          if (liveState.model && modelSwitchQueueRef.current.inFlight === null) {
+            setCurrentModelOverride({ provider: liveState.model.provider, modelId: liveState.model.id });
           }
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
@@ -1961,6 +1968,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const result = await sendAgentCommand<GoalCommandResponse>(sid, { type: "goal", args });
           setGoalStatus(result?.status ?? null);
           if (result?.error) return complete({ handled: true, error: result.error });
+          // A brand-new session renders no GoalBar until it is promoted.
+          await loadSession(sid);
+          promoteNewSession();
           // `/goal show` output belongs in the transcript, not a toast that
           // disappears before it can be read.
           if (result?.message && result.message.includes("\n")) {
@@ -1982,6 +1992,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // The mode swaps the active toolset, so the preset must follow it.
           await loadTools(sid);
           if (result?.error) return complete({ handled: true, error: result.error });
+          // A brand-new session renders no VibeBar until it is promoted.
+          await loadSession(sid);
+          promoteNewSession();
           if (result?.prompt) {
             if (result.message) addNotice({ type: "success", message: result.message });
             return { handled: true, prompt: result.prompt };

@@ -49,6 +49,10 @@ test("reaches a running delegation from a phone", () => {
   // The sheet cannot fold: a collapsed sheet would keep only its close button.
   assert.match(source, /<SubagentPanel sessionId=\{sessionId\} cwd=\{cwd\} subagents=\{subagents\} collapsible=\{false\} \/>/);
   assert.match(stylesSource, /\.subagent-mobile-sheet\s*\{/);
+  // The sheet carries the dialog primitive's centering utilities; overriding
+  // them in the className (not only in the stylesheet) removes the -translate
+  // classes from the element altogether.
+  assert.match(source, /className="subagent-mobile-sheet translate-x-0 translate-y-0"/);
 });
 
 test("loads a selected subagent transcript after it finishes", () => {

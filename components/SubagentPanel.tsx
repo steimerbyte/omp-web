@@ -404,7 +404,7 @@ export function SubagentMobileToggle({ sessionId, cwd, subagents }: { sessionId:
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           showCloseButton={false}
-          className="subagent-mobile-sheet"
+          className="subagent-mobile-sheet translate-x-0 translate-y-0"
           // role=dialog, aria-labelledby and aria-hidden on the rest of the page, plus Escape, backdrop and focus trap: the primitive's.
           onCloseAutoFocus={(event) => {
             if (!toggleRef.current) return;

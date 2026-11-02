@@ -316,10 +316,45 @@ test("/vibe is consumed locally and refreshes the toolset", () => {
   // The mode swaps the active toolset, so the preset must be re-read.
   assert.match(vibeCaseSource, /await loadTools\(sid\)/);
   assert.match(vibeCaseSource, /complete\(\{ handled: true, error: result\.error \}\)/);
+  // A brand-new session renders no VibeBar until it is promoted; the
+  // promotion has to come after the error check, not before it.
+  assert.match(vibeCaseSource, /await loadSession\(sid\);\s*promoteNewSession\(\);/);
+  assert.ok(
+    vibeCaseSource.indexOf("promoteNewSession()") > vibeCaseSource.indexOf("if (result?.error)"),
+    "promote only after a successful command",
+  );
   // `/vibe <prompt>` submits the returned prompt as the next turn.
   assert.match(vibeCaseSource, /return \{ handled: true, prompt: result\.prompt \}/);
   // Never forwards the text as an LLM prompt through the SDK fallback.
   assert.doesNotMatch(vibeCaseSource, /execute_slash_command/);
+});
+
+test("/goal promotes a brand-new session after the command succeeded", () => {
+  const goalCaseSource = source.slice(
+    source.indexOf('case "goal":'),
+    source.indexOf('case "vibe":', source.indexOf('case "goal":')),
+  );
+
+  assert.match(goalCaseSource, /if \(result\?\.error\) return complete\(\{ handled: true, error: result\.error \}\);/);
+  // The GoalBar lives outside the empty-state branch, like the VibeBar.
+  assert.match(goalCaseSource, /await loadSession\(sid\);\s*promoteNewSession\(\);/);
+  assert.ok(
+    goalCaseSource.indexOf("promoteNewSession()") > goalCaseSource.indexOf("if (result?.error)"),
+    "promote only after a successful command",
+  );
+});
+
+test("adopts the live model after a role switch unless a switch is in flight", () => {
+  const stateBlock = source.slice(
+    source.indexOf("const liveState = agentState.state;"),
+    source.indexOf("} else if (!agentState.running)"),
+  );
+
+  // `get_state.model` is the SDK's live model; the file-based `context.model`
+  // still names `models.default` after a role switch.
+  assert.match(source, /model\?: \{ id: string; provider: string \};/);
+  assert.match(stateBlock, /if \(liveState\.model && modelSwitchQueueRef\.current\.inFlight === null\) \{/);
+  assert.match(stateBlock, /setCurrentModelOverride\(\{ provider: liveState\.model\.provider, modelId: liveState\.model\.id \}\);/);
 });
 
 test("syncs the vibe status from every get_state response", () => {

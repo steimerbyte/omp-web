@@ -205,6 +205,17 @@ records the role** so the transcript matches what `/model` writes in the TUI.
 An explicit model pick in the browser is persisted as `modelRoles.default`
 (`lib/startup-preferences.ts`), which is the same slot the TUI writes.
 
+**The displayed model is the live one, not the file's.** The composer prefers
+the session's live value (`state.model` from `get_state`) over the file-based
+`context.model`. The reader builds `context.model` from `models.default` in the
+session file, and the SDK stores a role-scoped `model_change` under its role
+without also moving it to `models.default` — so after a role switch and a
+reload the file-based value still names the model you left. The live value is
+adopted in `loadSession`'s `includeState` branch, and only while no model
+switch is in flight (`modelSwitchQueueRef.current.inFlight === null`): a switch
+the user just triggered is the optimistic value, and the poll must not overwrite
+it with the server's older answer.
+
 ### Fork must destroy the wrapper immediately
 `AgentSession.fork()` **mutates the wrapper's inner state in-place** — after fork, `inner.sessionId` is the *new* session's id. If the wrapper stays alive in the registry under the old id, the next request gets the already-forked state and subsequent forks produce a corrupt `parentSession` chain.
 
@@ -357,6 +368,19 @@ browser tab learns about a mode change made in another tab instead of keeping
 a bar that contradicts the session. Without the frame the bar would only be
 correct in the tab that pressed the button.
 
+**A brand-new session must be promoted, or the bar has no host.** When `/vibe`
+runs in a session that does not exist yet, the server creates it
+(`ensureNewSession()`) and the mode really is on — while `ChatWindow` renders
+neither `VibeBar` nor `GoalBar` inside its `isEmptyNew` branch, so there is no
+bar to show it. The client therefore brings the session into the view after a
+successful command, exactly like `/compact`: `await loadSession(sid)` then
+`promoteNewSession()`. Two details make this easy to get wrong. `loadSession(sid)`
+without `includeState` resolves to `null` **on success** (its `if (!includeState)
+return null` is the normal exit), so a truthiness guard around the call is dead
+code that reads as a failure check. And the promotion needs no guard of its own:
+the command's own `result?.error` check already returned, and `promoteNewSession`
+refuses unless `isNew` still holds.
+
 ### The VIBE bar locks the tool preset
 
 While the mode is on, `VibeBar` in `components/ChatWindow.tsx` shows the live
@@ -459,6 +483,13 @@ row. Any future tree view needs a depth field on the snapshot first.
   opens the same panel as a dialog sheet. A width check that only hides the
   column makes running delegations invisible on a phone; the pill is the only
   sign there that workers are running, so it names the count, not just "details".
+  The sheet passes `translate-x-0 translate-y-0` to the dialog primitive's
+  `DialogContent`, because the primitive's base classes carry
+  `-translate-x-1/2 -translate-y-1/2`: a sheet that overrides only the anchoring
+  (`left`/`bottom`) keeps the horizontal translate and lands half its width
+  off-screen. Before the fix the 390 px screenshot showed exactly that left
+  strip; after it, a Playwright/Chromium measurement at 96 % of the entrance
+  animation read x=8, width=375 — the centering of the 0.961 zoom, not a shift.
 
 ### `enabledModels` scoping
 The `enabledModels` setting uses omp's `--models` syntax: globs against

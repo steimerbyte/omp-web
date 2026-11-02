@@ -60,6 +60,13 @@ test("one worker is not rendered as \"1 workers\"", () => {
   }
 });
 
+test("the width fight on a phone goes to the live worker count", () => {
+  // The count is the live information: it keeps its width and still absorbs
+  // the free space on desktop, so only the static hint can ellipsize.
+  assert.match(vibeBar, /<span style=\{\{ flexGrow: 1, flexShrink: 0, whiteSpace: "nowrap", color: "var\(--text\)" \}\}>/);
+  assert.match(vibeBar, /<span style=\{\{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var\(--text-dim\)" \}\}>/);
+});
+
 test("the chat window renders the bar beside the goal bar and tells the composer", () => {
   const goal = windowSource.indexOf("<GoalBar goal={goalStatus} t={t} />");
   const vibe = windowSource.indexOf("<VibeBar vibe={vibeStatus} t={t} />", goal);

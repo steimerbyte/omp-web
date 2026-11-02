@@ -915,10 +915,10 @@ function VibeBar({ vibe, t }: { vibe: VibeStatusInfo | null; t: (key: string, pa
       <span style={{ color: "var(--accent)", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", flexShrink: 0 }}>
         {t("chat.vibeLabel")}
       </span>
-      <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
+      <span style={{ flexGrow: 1, flexShrink: 0, whiteSpace: "nowrap", color: "var(--text)" }}>
         {vibe.workers === 1 ? t("chat.vibeWorkerOne") : t("chat.vibeWorkers", { count: vibe.workers })}
       </span>
-      <span style={{ flexShrink: 0, color: "var(--text-dim)" }}>{t("chat.vibeReadOnly")}</span>
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)" }}>{t("chat.vibeReadOnly")}</span>
     </div>
   );
 }
