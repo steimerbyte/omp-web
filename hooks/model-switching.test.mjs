@@ -31,9 +31,26 @@ test("existing-session model changes are optimistic and serialized", () => {
 });
 
 test("session reloads cannot clear an in-flight optimistic model", () => {
+  // Frueher pinnte dieser Test die Zeile, die den Override beim Laden loeschte.
+  // Seit `get_state` der einzige Schreiber ist, gibt es diese Loeschung nicht
+  // mehr — der Pin sitzt jetzt auf der Invariante: genau ein Schreiber im
+  // Laden, hinter der In-Flight-Sperre, und er nennt nie einen Datei- oder
+  // Loeschwert.
+  assert.doesNotMatch(loadSessionSource, /setCurrentModelOverride\((null|\(current\)|data\?\.context\.model)/);
+  assert.equal(
+    loadSessionSource.split("setCurrentModelOverride(").length - 1,
+    1,
+    "ein Laden schreibt das Modell genau einmal",
+  );
+  const guard = "if (liveState.model && modelSwitchQueueRef.current.inFlight === null)";
+  const guardIndex = loadSessionSource.indexOf(guard);
+  const writeIndex = loadSessionSource.indexOf("setCurrentModelOverride(");
+  assert.ok(guardIndex >= 0, "der Schreiber steht hinter der In-Flight-Sperre");
+  assert.ok(guardIndex < writeIndex, "die Sperre steht vor dem Schreiber");
   assert.match(
     loadSessionSource,
-    /setCurrentModelOverride\(\(current\) => modelSwitchQueueRef\.current\.inFlight \? current : null\)/,
+    /setCurrentModelOverride\(\{ provider: liveState\.model\.provider, modelId: liveState\.model\.id \}\)/,
+    "der Schreiber uebernimmt das Live-Modell, nicht ein geratenes",
   );
 });
 
