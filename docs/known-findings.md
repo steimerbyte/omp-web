@@ -1,5 +1,7 @@
 # Bekannte Befunde, nicht behoben
 
+Die 20 Befunde des Audits vom 2026-11-03, einzeln mit Mechanismus und Fix, stehen in [security-vulnerabilities.md](security-vulnerabilities.md).
+
 Diese Datei sammelt Befunde aus dem Code-Scan vom 12.10.2026, die **bewusst nicht
 in dieser Runde** behoben werden. Jeder Eintrag nennt die Bedingung, unter der er
 sich aendert — ein Befund ohne Ausloeser wird zu einem Befund, den niemand mehr liest.
