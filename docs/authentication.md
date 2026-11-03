@@ -110,6 +110,21 @@ work around.
 Keep the username in mind when scripting: Basic Auth clients must send the
 configured name, not a hard-coded `omp`.
 
+## Who is an administrator
+
+The role comes from `OMP_WEB_ADMINS` when that variable is set, otherwise from
+the `isAdmin` field of the account in `omp-web-accounts.json`. A name that is
+not in that file — the single-user store, or an account created before the role
+field existed — falls back to the built-in names `pi`, `omp` and `steimerbyte`.
+
+The variable is authoritative whenever it is **set**, including when it is
+empty. `OMP_WEB_ADMINS=""` — or a value made only of separators — means no
+account is an administrator: the admin panel and every route guarded by
+`requireAdmin` answer 403, and nothing falls back to the name list. Only an
+absent variable uses the default list. A name that is in the list is an
+administrator even if the account file says `false`; a name that is not in it
+is not one even if the file says `true`.
+
 ## How the password is stored
 
 In `<agentDir>/omp-web-auth.json` — normally `~/.omp/agent/omp-web-auth.json` —
@@ -129,6 +144,20 @@ Verification is timing-safe. Because `proxy.ts` checks credentials on every
 request and scrypt is deliberately slow, successful verifications are cached in
 memory for five minutes, keyed by the digest that accepted them — changing or
 clearing the password invalidates the cache immediately.
+
+Every rejected check pays one scrypt as well, on top of the login route's fixed
+failure pause. A branch that would otherwise return before the real hash — an
+unknown or disabled name, an environment-mode password, a missing store — runs
+`payCredentialCost()` against a fixed dummy digest. Without it the two failure
+paths cost 0.10 ms and 36.06 ms, which told an unauthenticated caller whether a
+name exists. The dummy check always fails, so it never enters the successful
+verification cache.
+
+This is a CPU-cost trade-off, not a rate limit. Every rejected credential —
+including one sent on the unauthenticated Basic-auth path that `proxy.ts`
+checks on each request — spends about 36 ms of scrypt CPU, and omp-web does not
+throttle authentication attempts. The fix removes the timing oracle; it does not
+bound the work an attacker can request.
 
 If the credential file exists but cannot be parsed while the lock is on, omp-web
 answers `503` to everything rather than assuming it should unlock. Use
@@ -163,6 +192,13 @@ only as a digest. A new code can be minted at most once every 30 seconds.
 This means an unauthenticated caller who finds `/recover` on a scan can make the
 server print codes on a console they cannot see. That is the entire extent of
 what they gain.
+
+Both public credential routes — sign-in and recovery — read at most 4 KiB of
+request body and answer `413` before the credential store is consulted or a
+code can be minted. The streaming read counts the bytes that actually arrive,
+so a chunked request without `Content-Length` is bounded too. The proxy's
+104 MB clone limit is not this ceiling: Next ends that clone silently when it
+is exceeded, which would hand the route a truncated body instead of a refusal.
 
 ## What this does not protect
 

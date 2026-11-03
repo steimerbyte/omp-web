@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "fs";
-import { homedir } from "node:os";
-import { join, relative, resolve, sep } from "path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve, sep } from "path";
+import { getPluginsDir } from "@oh-my-pi/pi-utils";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 import type { ProjectTrustStatus } from "./api-types";
 
@@ -78,6 +79,80 @@ function trustFilePath(agentDir: string): string {
   return join(agentDir, TRUST_FILE);
 }
 
+/**
+ * The path a file actually reaches: symlinks in every existing component are
+ * resolved, and a tail that does not exist yet is appended to its real parent.
+ *
+ * `undefined` when a component exists but cannot be resolved (a dangling link):
+ * that is not "missing yet", it is a link, and following it would land wherever
+ * its target appears later.
+ */
+function realPath(candidate: string): string | undefined {
+  const absolute = resolve(candidate);
+  const tail: string[] = [];
+  let current = absolute;
+  for (;;) {
+    try {
+      return join(realpathSync(current), ...tail.reverse());
+    } catch {
+      try {
+        lstatSync(current);
+        return undefined;
+      } catch {
+        // Not there yet — decide on the nearest existing parent.
+      }
+      const parent = dirname(current);
+      if (parent === current) return absolute;
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** True when `candidate` is `root` or below it, exactly as spelled (no symlink resolution). */
+export function isSpelledInside(candidate: string, root: string): boolean {
+  const rel = relative(resolve(root), resolve(candidate));
+  if (rel === "") return true;
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith("../");
+}
+
+/**
+ * The project `cwd` belongs to: the nearest directory at or above it carrying
+ * `.git` or `.omp`, stopping below the process home and the temp roots.
+ *
+ * omp's own discovery walks up to the repository root (`getProjectPathCandidates`
+ * in `discovery/agents.ts`, `findRepoRoot` in `capability/fs.ts`), so a trust
+ * decision made at the session cwd alone leaves every parent resource ungated:
+ * a repo with `.agents/skills/evil/SKILL.md` at its root reported
+ * `requiresTrust: false` for a session in `repo/src`, and the skill loaded
+ * (OMP-010). Callers decide trust on this path, never on the cwd.
+ */
+export function resolveProjectRoot(cwd: string): string {
+  const start = canonicalProjectKey(cwd);
+  const ceilings = new Set([canonicalProjectKey(homedir()), canonicalProjectKey(tmpdir())]);
+  let dir = start;
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    // A home directory's `.omp/agent` is the account's own store, not a
+    // project marker; without this every session under a tenant home would
+    // anchor trust on that home.
+    if (existsSync(join(dir, ".omp")) && !existsSync(join(dir, ".omp", "agent"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir || ceilings.has(dir)) return start;
+    dir = parent;
+  }
+}
+
+function hasResourcesAt(root: string): boolean {
+  for (const dir of [...CODE_BEARING_PROJECT_DIRS, ...PROJECT_SKILL_DIRS]) {
+    if (existsSync(join(root, dir))) return true;
+  }
+  for (const file of [...MCP_MANIFEST_FILES, ...PROJECT_SETTINGS_FILES]) {
+    if (existsSync(join(root, file))) return true;
+  }
+  return false;
+}
+
 function canonicalProjectKey(cwd: string): string {
   const resolved = resolve(cwd);
   try {
@@ -106,45 +181,79 @@ function writeTrustedProjects(agentDir: string, trusted: Record<string, boolean>
 }
 
 /**
- * Whether `cwd` ships resources omp would import and execute on session start,
- * or a settings file whose keys would make it import them.
+ * Whether the project `cwd` belongs to ships resources omp would import and
+ * execute on session start, or a settings file whose keys would make it import
+ * them. Decided at the project root, never at the session cwd (`OMP-010`).
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
   if (!cwd) return false;
-  for (const dir of [...CODE_BEARING_PROJECT_DIRS, ...PROJECT_SKILL_DIRS]) {
-    if (existsSync(join(cwd, dir))) return true;
-  }
-  for (const file of [...MCP_MANIFEST_FILES, ...PROJECT_SETTINGS_FILES]) {
-    if (existsSync(join(cwd, file))) return true;
-  }
-  return false;
+  return hasResourcesAt(resolveProjectRoot(cwd));
 }
 
 export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTrustStatus {
-  const requiresTrust = Boolean(cwd) && hasTrustRequiringProjectResources(cwd);
+  const root = cwd ? resolveProjectRoot(cwd) : "";
+  const requiresTrust = root !== "" && hasResourcesAt(root);
   if (!requiresTrust) return { requiresTrust: false, trusted: true };
 
   return {
     requiresTrust: true,
-    trusted: readTrustedProjects(agentDir)[canonicalProjectKey(cwd)] === true,
+    trusted: readTrustedProjects(agentDir)[canonicalProjectKey(root)] === true,
   };
 }
 
 export function trustProject(cwd: string, agentDir: string): ProjectTrustStatus {
-  const status = getProjectTrustStatus(cwd, agentDir);
+  if (!cwd) return { requiresTrust: false, trusted: true };
+  const root = resolveProjectRoot(cwd);
+  const status = getProjectTrustStatus(root, agentDir);
   if (!status.requiresTrust) return status;
 
   const trusted = readTrustedProjects(agentDir);
-  trusted[canonicalProjectKey(cwd)] = true;
+  trusted[canonicalProjectKey(root)] = true;
   writeTrustedProjects(agentDir, trusted);
   return { requiresTrust: true, trusted: true };
 }
 
-/** True when `candidate` lives inside `root` (or is `root` itself). */
+/**
+ * True when `candidate` really lives inside `root` (or is `root` itself).
+ *
+ * Both sides are resolved through symlinks first: comparing the link text let
+ * `alice/proj/AGENTS.md -> bob/AGENTS.md` pass as a project file and put bob's
+ * instructions into alice's session (`OMP-007`). An unresolvable path (dangling
+ * link) is refused.
+ */
 export function isInsideProject(candidate: string, root: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate));
-  if (rel === "") return true;
-  return rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.startsWith("../");
+  const realCandidate = realPath(candidate);
+  const realRoot = realPath(root);
+  return realCandidate !== undefined && realRoot !== undefined && isSpelledInside(realCandidate, realRoot);
+}
+
+/**
+ * `join(base, ...segments)` with every symlink resolved, or `undefined` when it
+ * cannot be resolved (a dangling link).
+ *
+ * No containment: only the operator uses this. A process account may keep its
+ * `mcp.json` in a dotfiles repository and link it into the agent directory;
+ * refusing that would lock the owner out of his own store without protecting
+ * anything (an admin reads and writes anywhere anyway).
+ */
+export function resolvedPath(base: string, ...segments: string[]): string | undefined {
+  return realPath(join(base, ...segments));
+}
+
+/**
+ * `join(base, ...segments)` with every symlink resolved, or `undefined` when
+ * the result leaves `bound`.
+ *
+ * The last decision point for a path that is about to be read or written as
+ * project-/user-scope config: `<cwd>/.omp` as a link to the operator's agent
+ * directory made `GET /api/mcp` return his servers and `PUT` write his
+ * `mcp.json` (`OMP-005`). String comparison of the link is not a boundary.
+ */
+export function resolvedPathInside(base: string, bound: string, ...segments: string[]): string | undefined {
+  const real = realPath(join(base, ...segments));
+  const realBound = realPath(bound);
+  if (real === undefined || realBound === undefined) return undefined;
+  return isSpelledInside(real, realBound) ? real : undefined;
 }
 
 /**
@@ -195,11 +304,12 @@ export function trustedProjectSkills<T extends DiscoveredSkillFile>(
   agentDir: string,
   skills: readonly T[],
 ): T[] | undefined {
-  const status = getProjectTrustStatus(cwd, agentDir);
+  const root = resolveProjectRoot(cwd);
+  const status = getProjectTrustStatus(root, agentDir);
   if (!status.requiresTrust || status.trusted) return undefined;
 
   return skills.filter(
-    (skill) => skill._source?.level !== "project" && !isInsideProject(skill.filePath, cwd),
+    (skill) => skill._source?.level !== "project" && !isInsideProject(skill.filePath, root),
   );
 }
 
@@ -239,32 +349,45 @@ export interface DiscoveredProjectCode<TTool extends DiscoveredToolPath> {
  * root, so "not under the project" lets it through: measured, a config with
  * `extensions: [/tmp/outside-evil2/ext.ts]` ran that module
  * (`LOAD-LEVEL-SCAN.md` §3(i)). What survives instead is code from the roots omp
- * itself scans for this account — the agent directory and the process home
- * (`<agentDir>/extensions`, `<agentDir>/tools`, `~/.agents/…`, `~/.claude/…`,
- * `~/.omp/plugins`) — and nothing else. The consequence is deliberate: an
- * operator who configured an extension at `/opt/foo.ts` does not get it inside a
- * project they have not trusted, and gets it back the moment they trust it.
+ * itself scans for this account — see {@link userCodeRoots} — and nothing else.
+ * The process home is deliberately not one of them: it contains every project
+ * under it, so a repository at `~/work/repo` naming `../evil.ts` stayed inside
+ * "the home" and ran (`OMP-011`). The consequence is deliberate: an operator who
+ * configured an extension outside those roots does not get it inside a project
+ * they have not trusted, and gets it back the moment they trust it.
  */
 export function untrustedProjectSessionOptions<TTool extends DiscoveredToolPath>(
   cwd: string,
   agentDir: string,
   discovered: DiscoveredProjectCode<TTool>,
 ): UntrustedProjectSessionOptions<TTool> | undefined {
-  const status = getProjectTrustStatus(cwd, agentDir);
+  const projectRoot = resolveProjectRoot(cwd);
+  const status = getProjectTrustStatus(projectRoot, agentDir);
   if (!status.requiresTrust || status.trusted) return undefined;
 
-  const roots = [agentDir, homedir()];
+  // A root that sits inside the project is project code wearing a user path.
+  const roots = userCodeRoots(agentDir).filter((root) => !isInsideProject(root, projectRoot));
 
   return {
     preloadedExtensionPaths: discovered.extensionPaths.filter(
-      (path) => !isInsideProject(path, cwd) && roots.some((root) => isInsideProject(path, root)),
+      (path) => !isInsideProject(path, projectRoot) && roots.some((root) => isInsideProject(path, root)),
     ),
     preloadedCustomToolPaths: discovered.customToolPaths.filter(
       (tool) =>
         tool.source?.level !== "project" &&
-        !isInsideProject(tool.path, cwd) &&
+        !isInsideProject(tool.path, projectRoot) &&
         roots.some((root) => isInsideProject(tool.path, root)),
     ),
     enableMCP: false,
   };
+}
+
+/**
+ * Roots omp scans for code this account installed for itself: the agent
+ * directory (`extensions/`, `tools/`, `hooks/`), the foreign user stores it also
+ * reads, and the plugin tree. `homedir()` is not a root — it contains the
+ * projects themselves (`OMP-011`).
+ */
+export function userCodeRoots(agentDir: string): string[] {
+  return [agentDir, join(homedir(), ".claude"), join(homedir(), ".codex"), getPluginsDir()];
 }

@@ -4,7 +4,9 @@ import {
   consumeRecoveryCode,
   issueRecoveryCode,
 } from "@/bin/web-auth-store.js";
+import { RequestBodyTooLargeError, readJsonBodyWithinLimit } from "@/lib/request-body";
 import { hasJsonContentType } from "@/lib/request-security";
+import { CREDENTIAL_BODY_TOO_LARGE, MAX_CREDENTIAL_REQUEST_BODY_BYTES } from "@/lib/web-access-body";
 import { getWebAccessStatus } from "@/lib/web-auth";
 
 
@@ -45,8 +47,17 @@ export async function POST(req: Request) {
 
   let body: { action?: unknown; code?: unknown; password?: unknown };
   try {
-    body = await req.json() as { action?: unknown; code?: unknown; password?: unknown };
-  } catch {
+    body = await readJsonBodyWithinLimit(req, MAX_CREDENTIAL_REQUEST_BODY_BYTES) as {
+      action?: unknown;
+      code?: unknown;
+      password?: unknown;
+    };
+  } catch (error) {
+    // Reached without a credential: the cap answers before the store is asked
+    // and before a recovery code can be minted.
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json(CREDENTIAL_BODY_TOO_LARGE, { status: 413 });
+    }
     return NextResponse.json({ error: "Expected a JSON body" }, { status: 400 });
   }
 

@@ -1,4 +1,7 @@
-import { readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -28,7 +31,7 @@ export const GIT_ISOLATION_ARGS: readonly string[] = [
 ];
 
 /**
- * Treiber aus der `.git/config` des Repos, und warum sie abgeschaltet werden.
+ * Treiber aus **allen** Config-Quellen des Repos, und warum sie abgeschaltet werden.
  *
  * Hooks waren nur der erste Ausfuehrungsweg. Ein Repository, das ein Mandant
  * schreiben darf, kann sich seine eigenen Inhaltsfilter definieren:
@@ -41,49 +44,108 @@ export const GIT_ISOLATION_ARGS: readonly string[] = [
  * ```
  *
  * Gemessen (`git 2.56`): `git status --porcelain` fuehrt den `clean`-Filter aus,
- * `git diff` die `textconv`, und `--no-textconv` nimmt den zweiten weg. Die
- * Umgebung der Kinder ist dann schon sauber (`childEnv`), aber der Prozess
- * laeuft als Dienstbenutzer *ausserhalb* jeder Sandbox — er koennte die
- * Geheimnisdatei genauso lesen wie die Homes anderer Mandanten.
+ * `git diff` die `textconv`, und `--no-textconv` nimmt den zweiten weg. Ein
+ * leerer Wert schaltet einen Treiber ab (gemessen: `-c filter.demo.clean=`
+ * laesst `git status` korrekt und den Filter aus).
  *
- * Ein leerer Wert schaltet einen Treiber ab; gemessen: mit
- * `-c filter.demo.clean=` lief der Filter nicht mehr und `git status` blieb
- * korrekt. Der Preis ist ein Lesevorgang auf eine Datei, deren mtime den Cache
- * schluesselt.
+ * **Nur was ein Repository schreiben kann.** Der Treiber kann in der
+ * Repo-Config stehen (auch in der veralteten, unquoted Form `[filter.demo]`),
+ * in einer per `include.path`/`includeIf` **von dort** eingebundenen Datei oder
+ * in der `config.worktree` eines verlinkten Worktrees (dessen `.git` eine
+ * Datei ist). Genau diese Quellen werden abgeschaltet: `git config` laeuft
+ * dafuer mit `GIT_CONFIG_GLOBAL=/dev/null` und `GIT_CONFIG_NOSYSTEM=1`, also
+ * mit denselben Includes, aber ohne die globale/System-Config.
  *
- * `include.path` in der Repo-Config wird nicht aufgeloest — ein Filter, den das
- * Repo ueber einen Include einbindet, bleibt offen. Das ist die Grenze dieser
- * Loesung, keine Absicht.
+ * Globale Treiber bleiben absichtlich aktiv. `git-lfs` schreibt
+ * `filter.lfs.clean`/`smudge` in `~/.gitconfig`; wuerde man sie abschalten,
+ * meldete `git status` jede LFS-Datei als geaendert (der Vergleich laeuft dann
+ * gegen den rohen Arbeitsbaum-Inhalt statt gegen den Pointer) und `git diff`
+ * zeigte "Binary files differ". Ein Mandant kann die Operator-Config nicht
+ * schreiben, also gibt es dort nichts zu verteidigen — und ein Override waere
+ * kein Schutz, sondern ein kaputter Datei-Explorer.
+ *
+ * `--show-origin` waere der naheliegende Filter, ist aber nicht ausreichend:
+ * die Origin einer per `include` eingebundenen Datei nennt nicht, *wer* sie
+ * eingebunden hat, also liesse sich eine globale Include-Datei nicht von einer
+ * Repo-Include-Datei unterscheiden. Die env-scoped Abfrage liefert genau die
+ * Menge "Repo-Config + deren Includes + config.worktree".
+ *
+ * `git config` fuehrt dabei nichts aus (kein Hook, kein Filter, kein Index).
+ * Scheitert die Abfrage, wird der git-Aufruf **abgelehnt** statt ohne Overrides
+ * zu laufen: eine unbekannte Treiberliste ist genau der Zustand, in dem ein
+ * `clean`-Kommando des Mandanten mit der Dienstumgebung laufen wuerde. Der
+ * fruehere mtime-Cache ist entfallen: eine Include-Datei aendert die mtime der
+ * Repo-Config nicht, also haette er genau die neuen Quellen uebersehen.
+ *
+ * Treibernamen mit Zeichen ausserhalb von `[A-Za-z0-9_.-]` (gemessen: ein
+ * `=` im Namen laesst sich nicht als `-c`-Schluessel ausdruecken) wandern in
+ * eine kleine, inhaltsadressierte Include-Datei, in der die Sektion gequotet
+ * ist. Sie liegt in einem pro Prozess angelegten `mkdtemp`-Verzeichnis, damit
+ * niemand sie vorher unterschieben kann.
  */
-const DRIVER_SECTION_RE = /^\s*\[\s*(filter|diff)\s+"([^"]+)"\s*\]/i;
-const driverCache = new Map<string, { mtimeMs: number; args: string[] }>();
+const DRIVER_KEY_RE = /^(?:filter|diff)\.(.+)\.(?:clean|smudge|process|textconv|command)$/i;
+const SAFE_NAME_RE = /^[A-Za-z0-9_.-]+$/;
 
-export function gitDriverOverrides(cwd: string): string[] {
-  const config = join(cwd, ".git", "config");
-  let mtimeMs: number;
+function configuredDriverNames(cwd: string): Set<string> {
+  let output: string;
   try {
-    mtimeMs = statSync(config).mtimeMs;
-  } catch {
-    // Kein `.git/config` an diesem Pfad: entweder kein Repo (der Aufruf
-    // scheitert gleich mit git's eigener Meldung) oder ein Worktree, dessen
-    // `.git` eine Datei ist. Dann bleibt es bei den festen Argumenten.
-    return [];
+    output = execFileSync("git", ["-C", cwd, "config", "--list", "--name-only", "--includes", "-z"], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+      // Repo-Scope: Repo-Config, deren Includes und config.worktree. Globale
+      // und System-Treiber (git-lfs) bleiben fuer den Operator aktiv.
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+    });
+  } catch (error) {
+    throw new Error(
+      `Cannot enumerate the git content drivers of ${cwd}; refusing to run git without disabling them`,
+      { cause: error },
+    );
   }
-  const cached = driverCache.get(config);
-  if (cached && cached.mtimeMs === mtimeMs) return cached.args;
 
   const names = new Set<string>();
-  try {
-    for (const line of readFileSync(config, "utf8").split("\n")) {
-      const section = DRIVER_SECTION_RE.exec(line);
-      if (section) names.add(section[2]);
-    }
-  } catch {
-    return [];
+  for (const key of output.split("\0")) {
+    const match = DRIVER_KEY_RE.exec(key);
+    if (match) names.add(match[1]);
   }
+  return names;
+}
 
-  const args: string[] = [];
+let driverConfigDir: string | undefined;
+
+/** Die Treiber, deren Namen sich nicht als `-c`-Schluessel schreiben lassen. */
+function disableFileFor(names: readonly string[]): string {
+  const lines: string[] = [];
   for (const name of names) {
+    if (/[\0\r\n]/.test(name)) {
+      throw new Error("Cannot disable a git content driver whose name contains a line break");
+    }
+    const quoted = `"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    lines.push(
+      `[filter ${quoted}]`, "\tclean =", "\tsmudge =", "\tprocess =",
+      `[diff ${quoted}]`, "\tcommand =", "\ttextconv =",
+    );
+  }
+  const content = `${lines.join("\n")}\n`;
+  driverConfigDir ??= mkdtempSync(join(tmpdir(), "omp-git-drivers-"));
+  const file = join(driverConfigDir, `${createHash("sha256").update(content).digest("hex").slice(0, 16)}.cfg`);
+  try {
+    writeFileSync(file, content, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  return file;
+}
+
+export function gitDriverOverrides(cwd: string): string[] {
+  const args: string[] = [];
+  const unsafe: string[] = [];
+  for (const name of configuredDriverNames(cwd)) {
+    if (!SAFE_NAME_RE.test(name)) {
+      unsafe.push(name);
+      continue;
+    }
     args.push(
       "-c", `filter.${name}.clean=`,
       "-c", `filter.${name}.smudge=`,
@@ -92,7 +154,7 @@ export function gitDriverOverrides(cwd: string): string[] {
       "-c", `diff.${name}.textconv=`,
     );
   }
-  driverCache.set(config, { mtimeMs, args });
+  if (unsafe.length > 0) args.push("-c", `include.path=${disableFileFor(unsafe)}`);
   return args;
 }
 

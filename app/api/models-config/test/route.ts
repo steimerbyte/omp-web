@@ -4,7 +4,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { completeSimple, type AssistantMessage } from "@oh-my-pi/pi-ai";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent";
+import { commandConfigValuePath } from "@/lib/model-discovery-auth";
 import { getOmpRuntime } from "@/lib/omp-runtime";
+import { requireAdmin } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +32,10 @@ export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ ok: false, error: "Untrusted API request" }, { status: 403 });
   }
+  // The probe spends the process account's own credential; that is an operator
+  // action, not one a tenant may trigger against an endpoint it picked.
+  const denied = requireAdmin(req);
+  if (denied) return denied;
   if (!hasJsonContentType(req)) {
     return NextResponse.json(
       { ok: false, error: "Content-Type must be application/json" },
@@ -45,6 +51,15 @@ export async function POST(req: Request) {
     if (!providerName) return NextResponse.json({ ok: false, error: "providerName is required" }, { status: 400 });
     if (!isRecord(body.provider)) return NextResponse.json({ ok: false, error: "provider is required" }, { status: 400 });
     if (!isRecord(body.model)) return NextResponse.json({ ok: false, error: "model is required" }, { status: 400 });
+
+    const commandPath = commandConfigValuePath(body.provider, "provider")
+      ?? commandConfigValuePath(body.model, "model");
+    if (commandPath) {
+      return NextResponse.json(
+        { ok: false, error: `"${commandPath}" must not be a command value` },
+        { status: 400 },
+      );
+    }
 
     const modelId = typeof body.model.id === "string" ? body.model.id.trim() : "";
     if (!modelId) return NextResponse.json({ ok: false, error: "Model ID is required" }, { status: 400 });

@@ -5,6 +5,183 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.22.4
+
+Released 2026-11-03.
+
+Sicherheitsrelease. Er behebt die Befunde aus dem Audit vom 2026-11-03
+(OMP-001 bis OMP-020, Quellstand `15a24ff`) mit einer Ausnahme: OMP-008 war auf
+dem geprüften Pfad widerlegt und ist nicht Teil dieser Änderung. OMP-021 war
+bereits im Audit verworfen.
+
+### Modell-Proben
+
+- **Die Proberouten sind admin-only.** `POST /api/models-config/discover` und
+  `POST /api/models-config/test` nehmen einen Provider aus dem Request-Body,
+  holen den Schlüssel aber aus dem prozessweiten `AuthStorage` und schicken
+  ihn an die vom Aufrufer gewählte `baseUrl`. Ein Mandant konnte damit die
+  Anmeldedaten des Betreibers an einen fremden Host schicken und die Probe
+  dort gegen den Schlüssel laufen lassen. Beide Routen antworten einem
+  Nicht-Admin jetzt mit 403, bevor der Body gelesen wird.
+
+- **Ein `!`-Wert im Provider-Objekt wird abgelehnt.** Das SDK führt jeden
+  `!`-präfixierten Konfigurationswert über `/bin/sh -c` aus
+  (`resolve-config-value.ts`); das ist für handgeschriebene `models.yml`
+  gedacht, nicht für ein Objekt aus einem HTTP-Body. `commandConfigValuePath`
+  prüft jeden String im Provider- und Modellobjekt — nicht nur Kopfzeilen — und
+  antwortet mit 400 samt Pfad (`provider.headers.Authorization`).
+
+### Operator-Scope
+
+- **Die Slash-Brücke bindet den Aufrufer, nicht den Sitzungserzeuger.**
+  `send(command, callerIdentity)` bekommt die Identität bei **jedem** Dispatch
+  aus den Proxy-Headern, nie aus dem Body, und `execute_slash_command` prüft
+  daran die schreibenden Verben. `/mcp add|remove|rm` und `/ssh add|remove|rm`
+  werden nur abgelehnt, wenn der effektive Scope `user` ist — ohne `--scope`
+  gilt `project`, und den darf ein Mandant; ein unparsebarer Scope wird
+  fail-closed als `user` behandelt. Immer abgelehnt werden
+  `/mcp enable|disable|reauth`,
+  `/marketplace add|remove|rm|update|install|uninstall|upgrade` sowie
+  `/plugins|/plugin enable|disable`. Ein Mandant bekommt eine Antwort mit
+  Grund statt eines Eintrags in `mcp.json`, `ssh.json` oder der Registry; die
+  lesenden Verben (`/mcp list`, `/ssh list`, `/marketplace installed`) bleiben.
+
+- **`POST /api/plugins` ist admin-only.** Jede Aktion schreibt den
+  prozessweiten Plugin-Baum, und Install importiert die deklarierten
+  Extensions im Serverprozess. Der Guard steht vor jeder Aktion; `GET` bleibt
+  hinter der Root-Prüfung offen.
+
+- **Der Projekt-Scope von `/api/mcp` bleibt für Mandanten im Projekt.**
+  `<cwd>/.omp` als Symlink auf das Agent-Verzeichnis des Betreibers ließ `GET`
+  dessen Server anzeigen und `PUT` seine `mcp.json` überschreiben. Ein Mandant
+  löst beide Scopes über `resolvedPathInside` auf; was sein erlaubtes
+  Verzeichnis verlässt, ist `Access denied` statt eines stillen Fallbacks. Der
+  Admin löst Symlinks ohne Containment auf, damit ein dotfile-verwaltetes
+  `mcp.json` wieder funktioniert. Die Discovery verwirft weiterhin
+  projektgebundene Einträge, deren echter Pfad das Projekt verlässt.
+
+### Projekt-Trust und Loads
+
+- **Trust gilt für das Projekt, nicht für das Unterverzeichnis.** Die
+  Entscheidung fällt an `resolveProjectRoot(cwd)` — dem nächsten `.git`/`.omp`
+  ab dem Sitzungsverzeichnis aufwärts, bis unter das Home und die
+  Temp-Wurzeln. Eine Sitzung in `repo/src` erbt damit die Trust-Entscheidung
+  von `repo`; vorher meldete sie `requiresTrust: false` und lud
+  `.agents/skills/...` vom Repository-Root.
+
+- **Symlinks werden aufgelöst, bevor geladen wird.** `isInsideProject`
+  vergleicht echte Pfade; ein projektgebundenes Load mit Pfad — Regel oder
+  Context-Datei —, dessen Link aus dem Projekt zeigt, wird für **jede**
+  Identität verworfen, mit einem `info`-Diagnostic („… not loaded: a path
+  resolves outside the project through a symlink"), nicht stillschweigend.
+
+- **Die Code-Allowlist ist `userCodeRoots(agentDir)`, nicht das Home.**
+  Extensions und Custom Tools eines untrusted Projekts überleben nur, wenn ihr
+  echter Pfad unter dem Agent-Verzeichnis, `~/.claude`, `~/.codex` oder dem
+  Plugin-Baum liegt und nicht im Projekt selbst. `os.homedir()` enthält die
+  Projekte selbst; `../evil.ts` aus `~/work/repo` lief vorher mit.
+
+### Dateizugriff
+
+- **`omp-cwd-*` ist nur eine Wurzel, wenn es ein echtes Verzeichnis im Home
+  ist.** Ein Symlink mit diesem Namen machte sein Ziel (`/etc`) zur
+  Lesewurzel. Die Prüfung nutzt `lstat` und den realpath gegen das Home; ein
+  Link wird übersprungen.
+
+- **Lesen hängt am Descriptor, nicht am Pfad.** `openAuthorizedFile` öffnet den
+  bereits aufgelösten Pfad mit `O_RDONLY | O_NONBLOCK | O_NOFOLLOW`, prüft den
+  realpath erneut und verlangt, dass `stat` und `fstat` denselben Inode nennen.
+  `O_NONBLOCK` ist für reguläre Dateien wirkungslos, verhindert aber, dass ein
+  FIFO im Home den Prozess schon beim `open` blockiert, bevor `fstat` ihn
+  ablehnen kann (gemessen: ein Read-only-Open eines FIFO kehrte nie zurück).
+  Jeder Lesepfad (`read`, Stream, Download, Vorschau, Meta) liest diesen `fd`;
+  `PUT` schreibt die Temp-Datei neben das aufgelöste Ziel. Ein Pfad, der
+  zwischen Prüfung und Zugriff ausgetauscht wird, liefert keine Bytes mehr.
+
+- **SVG und andere aktive Typen werden als Download ausgeliefert.**
+  `?type=read` lieferte ein SVG inline aus, und ein `<script>` darin lief mit
+  der Sitzung des Betrachters. SVG, HTML, XHTML und XML kommen jetzt als
+  `attachment` mit `Content-Security-Policy: sandbox; default-src 'none'` und
+  `nosniff`; Rasterbilder und PDFs bleiben inline.
+
+- **Löschen entfernt den Link, nicht sein Ziel.** `DELETE /api/file-actions`
+  nimmt einen Symlink als Link (`unlink`), löst sonst den echten Pfad auf,
+  prüft ihn gegen die Schreibwurzeln und die geschützten Bäume und löscht erst
+  dann. `PUT` schreibt die Temp-Datei neben das aufgelöste Ziel, damit ein
+  Zwischensymlink den Schreibvorgang nicht zurück durch den Link schickt.
+
+### Git und Auth
+
+- **Nur die git-Treiber, die das Repository selbst schreiben kann.**
+  `git config --list --name-only --includes` läuft pro Aufruf mit
+  `GIT_CONFIG_NOSYSTEM=1` und `GIT_CONFIG_GLOBAL=/dev/null` und liefert damit
+  Repo-Config, deren `include.path`/`includeIf`-Dateien und
+  `config.worktree`; jeder dort definierte `filter.*.clean/smudge/process` und
+  `diff.*.command/textconv` wird neutralisiert. Globale und System-Treiber
+  bleiben absichtlich aktiv: ein neutralisierter, global installierter
+  git-lfs-Filter meldete jede LFS-Datei als geändert (gemessen). Schlägt die
+  Abfrage fehl, wird der git-Aufruf abgelehnt statt ohne Overrides zu laufen.
+  **Bekannte Grenze:** die Abfrage startet einen zusätzlichen
+  `git config`-Prozess je git-Aufruf und kann bis zum 5-s-Timeout blockieren.
+
+- **Ein gesetztes, leeres `OMP_WEB_ADMINS` heißt: keine Admins.** Bisher fiel
+  der leere Wert auf `pi, omp, steimerbyte` zurück. Jetzt entscheidet die
+  gesetzte Variable allein, auch leer; nur ihr Fehlen nimmt die Vorgabeliste.
+  Ein Host, der die Variable leer setzt, hat damit wirklich niemanden mit
+  Adminrechten.
+
+- **Jeder Fehlschlag zahlt eine scrypt-Prüfung.** Unbekannte Namen,
+  abgeschaltete Konten, Umgebungspasswörter und ein fehlender Store kehrten
+  vorher ohne Hash zurück (gemessen 0,10 ms gegen 36,06 ms bei einem bekannten
+  Namen mit falschem Passwort). `payCredentialCost()` prüft gegen einen festen
+  Dummy-Digest, sodass die Antwortzeit nicht mehr verrät, ob ein Name
+  existiert. **Bekannte Grenze:** damit kostet jede abgelehnte Prüfung etwa
+  36 ms CPU, auch auf dem unauthentifizierten Basic-Auth-Pfad, den `proxy.ts`
+  bei jeder Anfrage prüft; ein Auth-Rate-Limit hat omp-web weiterhin nicht.
+  Der Fix nimmt die Oracle-Antwort, nicht die CPU-Last.
+
+### Ressourcengrenzen
+
+- **Copy und DELETE laufen asynchron und mit Grenzen.** Ein synchroner
+  Baumdurchlauf blockierte den gemeinsamen Event-Loop: gemessen am 2026-11-03
+  auf dem Arbeitsrechner (12 Kerne, Last 5,19; 20 200 Einträge; 10-ms-Sonde)
+  413 ms Wandzeit und 413 ms maximale Loop-Lücke für Copy, 55 ms/55 ms für
+  Delete. Über die Route sind es jetzt 1184 ms Wandzeit bei 34,1 ms Lücke für
+  Copy (Leerlauf 6 ms) und 61 ms bei 4,3 ms für Delete (Leerlauf 1,4 ms).
+  `lib/file-actions-tree.ts` prüft vor dem ersten Schreibzugriff oder Löschen;
+  die Grenzen unterscheiden sich: **Copy** 50 000 Einträge, 64 Ebenen, 512 MiB
+  und 10 s, **DELETE** 64 Ebenen und 10 s, ohne Eintrags- und Byte-Deckel — ein
+  asynchrones `rm` blockiert den Loop nicht, und der Eintragsdeckel ist ein
+  Copy-Budget. Eine Ablehnung antwortet 413 bei Copy-Bytes und 422 bei
+  Einträgen (nur Copy), Tiefe und Zeit; FIFOs, Sockets und Geräte werden beim
+  Copy abgelehnt.
+
+### Request-Budgets
+
+- **Ein Lauf und ein Goal haben ein Budget.** `lib/session-run-budget.ts`
+  zählt einen `turn_start` je Modellanfrage. Pro Prompt-Lauf gelten 400
+  Anfragen und 45 Minuten; ein Steer teilt den laufenden Lauf, eine
+  `/goal`-Fortsetzung startet einen neuen Lauf, aber kein neues Goal-Budget.
+  Für die Goal-Lebensdauer läuft ein zweites Budget mit denselben Grenzen, das
+  Fortsetzungen nicht zurücksetzen; `/goal resume` startet ein frisches. Der
+  Browser bekommt genau eine `prompt_error`-Meldung — „Run stopped after … Send
+  a new message to continue." bzw. „Goal paused after … for this goal. Send
+  /goal resume to continue with a fresh budget." — und danach denselben
+  Abbruchpfad wie der Abort-Knopf.
+
+- **Der Prompt-Body wird auf den gelesenen Bytes begrenzt.**
+  `POST /api/agent/[id]` und `POST /api/agent/new` lesen höchstens 30 MiB; ein
+  chunked Request ohne `Content-Length` wird beim Überschreiten abgebrochen,
+  statt den ganzen Body zu puffern. Die Antwort bleibt die bekannte
+  `prompt_rejected`-Form mit 413. **Bekannte Grenze:** der Reader hält die
+  Chunks plus den geparsten Blob, also etwa die doppelte Body-Größe im
+  Speicher — bei 30 MiB rund 60 MiB pro gleichzeitigem Request.
+
+- **Login und Recovery lesen höchstens 4 KiB.** `POST /api/web-access/login`
+  und `POST /api/web-access/recovery` antworten 413, bevor der
+  Credential-Store oder ein Recovery-Code angefasst wird. Der 104-MB-Deckel des
+  Proxys ist das nicht: er schneidet den Klon still ab.
+
 ## v0.22.3
 
 Released 2026-11-02.

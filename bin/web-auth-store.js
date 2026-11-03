@@ -16,7 +16,8 @@
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } = require("node:crypto");
+const crypto = require("node:crypto");
+const { createHash, randomBytes, randomUUID, timingSafeEqual } = crypto;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } = require("node:fs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -476,16 +477,23 @@ function validateAccountName(username) {
  */
 function resolveAdminUsernames(env = process.env) {
   const raw = env.OMP_WEB_ADMINS;
-  if (typeof raw === "string" && raw.trim().length > 0) {
+  // Eine gesetzte Variable entscheidet allein, auch wenn sie leer ist. Nur ihr
+  // Fehlen faellt auf die Vorgabeliste zurueck: `""` (und reine Trennzeichen)
+  // heisst ausdruecklich "niemand ist Admin", nicht "nimm die Vorgabe".
+  if (typeof raw === "string") {
     return raw.split(",").map((name) => name.trim()).filter((name) => name.length > 0);
   }
   return DEFAULT_WEB_ADMIN_USERNAMES;
 }
 
-/** `true`, wenn der Operator die Admins beim Prozessstart festgenagelt hat. */
+/**
+ * `true`, wenn der Operator die Admins beim Prozessstart festgenagelt hat.
+ *
+ * Auch ein leerer Wert nagelt fest — auf null Admins. Deshalb entscheidet hier
+ * das Vorhandensein der Variable, nicht ihr Inhalt.
+ */
 function hasEnvironmentAdminList(env = process.env) {
-  const raw = env.OMP_WEB_ADMINS;
-  return typeof raw === "string" && raw.trim().length > 0;
+  return typeof env.OMP_WEB_ADMINS === "string";
 }
 
 /**
@@ -575,7 +583,10 @@ function readAdminRoles(env = process.env, options = {}) {
     return new Map();
   }
 
-  const grantKey = pinned ? resolveAdminUsernames(env).join("\u0001") : "";
+  // Unpinned braucht einen eigenen Schluessel: `""` ist auch die leere,
+  // ausdruecklich gesetzte Liste. Ohne den Unterschied liefert ein warmer Cache
+  // nach `OMP_WEB_ADMINS=""` weiter die Rollen von vorher (gemessen).
+  const grantKey = pinned ? resolveAdminUsernames(env).join("\u0001") : "\u0000unpinned";
   const cached = globalThis[ADMIN_ROLE_CACHE_KEY];
   if (cached && cached.file === file && cached.mtimeMs === mtimeMs && cached.grantKey === grantKey) {
     return cached.roles;
@@ -663,7 +674,7 @@ function isUsableDigest(digest) {
 function createDigest(secret, params = SCRYPT_PARAMS) {
   const resolved = { ...SCRYPT_PARAMS, ...params, algorithm: "scrypt" };
   const salt = randomBytes(16);
-  const hash = scryptSync(secret, salt, resolved.keyLength, scryptOptions(resolved));
+  const hash = crypto.scryptSync(secret, salt, resolved.keyLength, scryptOptions(resolved));
   return {
     ...resolved,
     salt: salt.toString("base64"),
@@ -678,7 +689,7 @@ function verifyDigest(secret, digest) {
     const salt = Buffer.from(digest.salt, "base64");
     const expected = Buffer.from(digest.hash, "base64");
     if (salt.length === 0 || expected.length !== digest.keyLength) return false;
-    const actual = scryptSync(secret, salt, digest.keyLength, scryptOptions(digest));
+    const actual = crypto.scryptSync(secret, salt, digest.keyLength, scryptOptions(digest));
     return timingSafeEqual(actual, expected);
   } catch {
     return false;

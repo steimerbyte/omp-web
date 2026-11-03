@@ -10,6 +10,7 @@ import {
   resolveWebAuthPolicy,
   verifyWebPassword,
   getWebAuthStatus,
+  type WebAuthDigest,
   type WebAuthPolicy,
   type WebAuthStoreOptions,
 } from "../bin/web-auth-store.js";
@@ -199,6 +200,36 @@ export const ADMIN_USERNAMES = resolveAdminUsernames();
 export { isAdminUsername };
 
 /**
+ * Ein fester Dummy-Digest, gegen den jeder Fehlschlag laeuft, der sonst **keine**
+ * scrypt-Rechnung bezahlt haette.
+ *
+ * Gemessen: bei unbekanntem Namen kostete `verifyCredential` 0,10 ms, bei
+ * bekanntem, falschem Passwort 36,06 ms — die scrypt-Verzweigung existiert nur
+ * fuer existierende Konten. Die 150-ms-Pause der Login-Route deckt diesen
+ * Unterschied nicht zu, also verraet die Antwortzeit, ob ein Name existiert.
+ *
+ * `DUMMY_SECRET` ist nicht das Geheimnis dieses Digests (das wurde verworfen):
+ * die Pruefung schlaegt deshalb immer fehl und wird nie im Verifikations-Cache
+ * abgelegt — dieser speichert ausschliesslich erfolgreiche Pruefungen. Bezahlt
+ * wird nur der Aufwand.
+ */
+const DUMMY_DIGEST: WebAuthDigest = {
+  algorithm: "scrypt",
+  salt: "XhTsouc9QYdqKQS6OsdvJg==",
+  hash: "hiN4WBT7l4OcJKvmQgfyarfoG1BftW0I8x6TEPblMaCRfxuuNiYtszx3iGVnBSwATEQUClNUFwj6f8H2SKraYA==",
+  cost: 16384,
+  blockSize: 8,
+  parallelization: 1,
+  keyLength: 64,
+};
+const DUMMY_SECRET = "omp-web-login-dummy-credential";
+
+/** Bezahlt genau eine scrypt-Pruefung, egal welcher Zweig zuvor abgekuerzt hat. */
+function payCredentialCost(): void {
+  verifyWebPassword(DUMMY_SECRET, { policy: { mode: "stored", digest: DUMMY_DIGEST, file: "" } });
+}
+
+/**
  * Pruefe Anmeldedaten und liefere die Identitaet dahinter.
  *
  * Zwei Quellen, in dieser Reihenfolge:
@@ -247,11 +278,29 @@ export function verifyCredential(
   }
 
   const legacy = getExpectedUsername(env);
-  if (!secretsEqual(username, legacy)) return null;
+  if (!secretsEqual(username, legacy)) {
+    // Unbekannter oder abgeschalteter Name: genau hier fehlte vorher die
+    // scrypt-Rechnung, an der ein existierender Name erkennbar war.
+    payCredentialCost();
+    return null;
+  }
 
   const policy = resolveWebAuthPolicy(resolved);
-  if (policy.mode !== "environment" && policy.mode !== "stored") return null;
-  if (!verifyWebPassword(password, { ...resolved, policy })) return null;
+  if (policy.mode === "stored") {
+    // Echter Digest: `verifyWebPassword` bezahlt die scrypt-Rechnung selbst.
+    if (!verifyWebPassword(password, { ...resolved, policy })) return null;
+  } else if (policy.mode === "environment") {
+    // Umgebungs-Passwoerter werden per Hash verglichen, nicht per scrypt; der
+    // Fehlschlag zahlt den Preis trotzdem, damit er sich nicht von einem
+    // unbekannten Namen unterscheidet.
+    if (!verifyWebPassword(password, { ...resolved, policy })) {
+      payCredentialCost();
+      return null;
+    }
+  } else {
+    payCredentialCost();
+    return null;
+  }
   return { username: legacy, isAdmin: isAdminUsername(legacy, env, resolved) };
 }
 

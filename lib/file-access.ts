@@ -1,8 +1,9 @@
-import { readdirSync } from "fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, realpathSync, statSync } from "fs";
+import type { Stats } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { getAdditionalAllowedRoots, getAllowedRootsCache, identityKey, normalizeSlashes } from "./allowed-roots";
-import { isExistingPathWithinRoots } from "./path-security";
+import { isExistingPathWithinRoots, isPathWithinRoots } from "./path-security";
 import { listAllSessions } from "./session-reader";
 import { getUserHome, type WebIdentity } from "./request-identity";
 export { allowFileRoot, normalizeSlashes } from "./allowed-roots";
@@ -58,10 +59,23 @@ export async function getAllowedFileRoots(identity: WebIdentity | null): Promise
   // then the path was in the allowlist. For an admin the two coincide.
   try {
     const ownHome = identity.isAdmin ? homedir() : getUserHome(identity);
+    const realHome = realpathSync(ownHome);
     for (const name of readdirSync(ownHome)) {
-      if (/^omp-cwd-\d{8}$/.test(name)) {
-        roots.add(normalizeSlashes(path.join(ownHome, name)));
+      if (!/^omp-cwd-\d{8}$/.test(name)) continue;
+      const candidate = path.join(ownHome, name);
+      // `lstatSync`, not `statSync`: a symlink is not a scratch directory.
+      // OMP-006 was exactly this — an `omp-cwd-*` link pointed outside the
+      // home, the link path entered this set as a root, and every later check
+      // is measured against this set (its symlinks are resolved too). So a
+      // root has to be a real directory that resolves inside the home; a link
+      // that leaves it grants the target and is refused here.
+      try {
+        if (!lstatSync(candidate).isDirectory()) continue;
+        if (!isPathWithinRoots(realpathSync(candidate), new Set([realHome]))) continue;
+      } catch {
+        continue;
       }
+      roots.add(normalizeSlashes(candidate));
     }
   } catch {
     // ignore if home is unreadable or does not exist
@@ -93,4 +107,129 @@ export function isFilePathAllowed(target: string, allowedRoots: Set<string>): bo
 /** Authorize an existing path after resolving symbolic links. */
 export function isExistingFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
   return isExistingPathWithinRoots(target, allowedRoots);
+}
+
+function resolveRealRoots(allowedRoots: Set<string>): Set<string> {
+  const resolved = new Set<string>();
+  for (const root of allowedRoots) {
+    try {
+      resolved.add(realpathSync(root));
+    } catch {
+      // A stale root (removed session, deleted worktree) names nothing to
+      // compare against; dropping it is what the old check did as well.
+    }
+  }
+  return resolved;
+}
+
+function isMissingPath(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+export type PathAuthorization =
+  | { ok: true; path: string }
+  | { ok: false; reason: "not-found" | "not-allowed" };
+
+/**
+ * Resolve `target` once and prove the resolved path is inside `allowedRoots`.
+ *
+ * Callers have to use the returned `path` for the actual operation. The
+ * authorization above this function is lexical (and, for the session bypass,
+ * optional); using the original path afterwards re-resolves every component,
+ * so a link exchanged in between names a different file than the one that was
+ * approved.
+ */
+export function resolveAuthorizedPath(target: string, allowedRoots: Set<string>): PathAuthorization {
+  let resolved: string;
+  try {
+    resolved = realpathSync(target);
+  } catch (error) {
+    return { ok: false, reason: isMissingPath(error) ? "not-found" : "not-allowed" };
+  }
+  if (!isPathWithinRoots(resolved, resolveRealRoots(allowedRoots))) {
+    return { ok: false, reason: "not-allowed" };
+  }
+  return { ok: true, path: resolved };
+}
+
+export interface OpenedAuthorizedFile {
+  /** Resolved path the descriptor was opened from. */
+  path: string;
+  fd: number;
+  stat: Stats;
+}
+
+export type OpenAuthorizedFileResult =
+  | { ok: true; file: OpenedAuthorizedFile }
+  | { ok: false; reason: "not-found" | "not-allowed" | "not-a-file" };
+
+/**
+ * Open `target` and bind the authorization to the descriptor.
+ *
+ * OMP-019: the check resolved the target and the read then used the original
+ * path. A second process sharing the home swapped a checked directory for a
+ * symlink to the outside between the two, and the read followed it — measured
+ * as a deterministic leak over 120 reads. A path string cannot be authorized
+ * *and* then read safely, because the name is re-resolved on every syscall.
+ *
+ * So the decision is taken on the object that is read: after the open the path
+ * is resolved again and must still be under the roots, and its device/inode
+ * must be the ones `fstat` reports for the descriptor. A swap at any point
+ * leaves either a path outside the roots or an inode mismatch, and the caller
+ * gets no bytes. `O_NOFOLLOW` refuses the case where the final component was
+ * replaced by a symlink after the resolution. Symlinks that stay inside the
+ * root keep working, because the first resolution follows them.
+ *
+ * `onBeforeOpen` is a test seam that runs between the two steps so the swap can
+ * be replayed deterministically; production callers pass nothing.
+ */
+export function openAuthorizedFile(
+  target: string,
+  allowedRoots: Set<string>,
+  onBeforeOpen?: () => void,
+): OpenAuthorizedFileResult {
+  const authorized = resolveAuthorizedPath(target, allowedRoots);
+  if (!authorized.ok) return authorized;
+
+  onBeforeOpen?.();
+
+  // O_NONBLOCK: open(2) on a FIFO with O_RDONLY blocks until a writer appears,
+  // before the fstat guard below can refuse it; the flag is a no-op for
+  // regular files.
+  const nonBlock = typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0;
+  const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+  let fd: number;
+  try {
+    fd = openSync(authorized.path, constants.O_RDONLY | nonBlock | noFollow);
+  } catch (error) {
+    return { ok: false, reason: isMissingPath(error) ? "not-found" : "not-allowed" };
+  }
+
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) {
+      closeSync(fd);
+      return { ok: false, reason: "not-a-file" };
+    }
+    const fresh = realpathSync(authorized.path);
+    if (!isPathWithinRoots(fresh, resolveRealRoots(allowedRoots))) {
+      closeSync(fd);
+      return { ok: false, reason: "not-allowed" };
+    }
+    const freshStat = statSync(fresh);
+    if (freshStat.dev !== stat.dev || freshStat.ino !== stat.ino) {
+      closeSync(fd);
+      return { ok: false, reason: "not-allowed" };
+    }
+    return { ok: true, file: { path: fresh, fd, stat } };
+  } catch (error) {
+    try { closeSync(fd); } catch { /* the descriptor is already gone */ }
+    return { ok: false, reason: isMissingPath(error) ? "not-found" : "not-allowed" };
+  }
+}
+
+/** Close a descriptor from `openAuthorizedFile`, unless a stream owns it now. */
+export function closeAuthorizedFile(file: OpenedAuthorizedFile): void {
+  try { closeSync(file.fd); } catch { /* already closed by a stream */ }
 }

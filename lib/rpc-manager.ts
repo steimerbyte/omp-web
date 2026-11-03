@@ -11,6 +11,8 @@ import {
 import { buildAvailableSlashCommands } from "@oh-my-pi/pi-coding-agent/slash-commands/available-commands";
 import { BUILTIN_SLASH_COMMAND_DEFS } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
 import { executeAcpBuiltinSlashCommand, type AcpBuiltinSlashCommandResult } from "@oh-my-pi/pi-coding-agent/slash-commands/acp-builtins";
+import { parseCommandArgs } from "@oh-my-pi/pi-coding-agent/utils/command-args";
+import { parseNamedScopeArgs, parseSlashCommand, parseSubcommand } from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/parse";
 import { cfgEnabledModels } from "@oh-my-pi/pi-coding-agent/config/model-settings";
 import { initializeExtensions } from "@oh-my-pi/pi-coding-agent/modes/runtime-init";
 import { readPlanFile } from "@oh-my-pi/pi-coding-agent/plan-mode/plan-files";
@@ -35,6 +37,7 @@ import { PRESET_FULL } from "./tool-presets";
 import { makePresentFilesTool } from "./present-files-tool";
 import { makeCalendarTools } from "./calendar-tool";
 import { makeSessionShellGuard } from "./session-shell-guard";
+import { SessionRunBudget, type RunBudgetExhaustion, type RunBudgetLimits } from "./session-run-budget";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { ensureTenantSkillsRegistration } from "./skills-manager";
 import type { SlashCommandInfo } from "./omp-types";
@@ -260,6 +263,75 @@ const BROWSER_NATIVE_DESCRIPTIONS: Partial<Record<(typeof BROWSER_NATIVE_SLASH_C
 };
 
 /**
+ * Slash subcommands that always write state the whole host shares, whatever
+ * their arguments say.
+ *
+ * `/mcp enable|disable` have no `--scope` at all: they edit the project entry
+ * when one exists and otherwise the user file, and the "disabled" list is
+ * always written to the user file (`helpers/mcp.ts:427-461`). `/mcp reauth`
+ * writes shared credentials (`helpers/mcp.ts:491`). The marketplace write
+ * verbs edit `~/.omp/marketplaces.json`, `~/.omp/plugins` or the installed
+ * registry (`helpers/marketplace-manager.ts:16-24`), and `/plugins
+ * enable|disable` edits the `PluginManager` lockfile (`manager.ts:182/194`).
+ */
+const ALWAYS_OPERATOR_SCOPE_SLASH_VERBS: Readonly<Record<string, readonly string[]>> = {
+  mcp: ["enable", "disable", "reauth"],
+  marketplace: ["add", "remove", "rm", "update", "install", "uninstall", "upgrade"],
+  plugins: ["enable", "disable"],
+  plugin: ["enable", "disable"],
+};
+
+/**
+ * Verbs whose target depends on `--scope`: both parsers default to `project`
+ * (`helpers/mcp.ts:125`, `helpers/ssh.ts:78`, `helpers/parse.ts:96`) and only
+ * `--scope user` leaves the session's own project.
+ */
+const SCOPE_DEPENDENT_SLASH_VERBS: Readonly<Record<string, readonly string[]>> = {
+  mcp: ["add", "remove", "rm"],
+  ssh: ["add", "remove", "rm"],
+};
+
+/**
+ * Effective scope of an `/mcp`/`/ssh` mutation, decided with the same parsers
+ * the builtins use.
+ *
+ * `add` runs `parseCommandArgs` (`utils/command-args.ts:2-42`); mcp's parser
+ * stops options at `--` (`helpers/mcp.ts:136`), so a `--scope user` behind the
+ * command separator is a command argument, not an option.
+ * `remove` runs `parseNamedScopeArgs` (`helpers/parse.ts:93-108`), whose
+ * default is `project` and whose syntax errors are refused here: an
+ * unparseable scope is treated as `user`, the fail-closed direction.
+ */
+function slashMutationScope(verb: string, rest: string): "user" | "project" {
+  if (verb !== "add") {
+    const parsed = parseNamedScopeArgs(rest, "");
+    return parsed.error || parsed.scope === "user" ? "user" : "project";
+  }
+  const tokens = parseCommandArgs(rest);
+  const separator = tokens.indexOf("--");
+  const options = separator === -1 ? tokens : tokens.slice(0, separator);
+  const index = options.findIndex((token) => token === "--scope" || token.startsWith("--scope="));
+  if (index === -1) return "project";
+  // `--scope=user` and a missing value are syntax the builtin rejects without
+  // writing; the gate refuses them instead of relying on that.
+  return options[index] === "--scope" && options[index + 1] === "project" ? "project" : "user";
+}
+
+/** `"/mcp add --scope user …"` → `"/mcp add"` when that call writes operator-scope state. */
+function operatorScopeSlashCommand(text: unknown): string | null {
+  if (typeof text !== "string") return null;
+  const parsed = parseSlashCommand(text);
+  if (!parsed) return null;
+  const name = parsed.name.toLowerCase();
+  const { verb, rest } = parseSubcommand(parsed.args);
+  if (ALWAYS_OPERATOR_SCOPE_SLASH_VERBS[name]?.includes(verb)) return `/${name} ${verb}`;
+  if (SCOPE_DEPENDENT_SLASH_VERBS[name]?.includes(verb) && slashMutationScope(verb, rest) === "user") {
+    return `/${name} ${verb} --scope user`;
+  }
+  return null;
+}
+
+/**
  * Keep the browser palette aligned with omp's own command registry and
  * discovery pipeline. Shared text/ACP builtins and every discovered
  * extension/custom/MCP/file/skill command come from the SDK discovery;
@@ -337,12 +409,22 @@ export class AgentSessionWrapper {
   private readonly subagentHistory = new Map<string, SubagentSnapshot>();
   private goalModeController: GoalModeController | null = null;
   private readonly vibeMode: VibeModeController;
+  private readonly runBudget: SessionRunBudget;
+  private readonly goalBudget: SessionRunBudget;
+  /** Non-null while a budget abort is unwinding; later exhaustions ride it. */
+  private budgetAbort: Promise<void> | null = null;
   private unsubscribeJobSettled: (() => void) | null = null;
   private _alive = true;
+  // The identity this session was started for. `send` takes the caller's
+  // identity per dispatch; this field is the fallback for internal dispatches
+  // and the creation-time binding.
+  private identity: WebIdentity | null = null;
 
   constructor(
     public readonly inner: AgentSessionLike,
     eventBus: ConstructorParameters<typeof RpcSubagentRegistry>[0],
+    /** Test seam; production uses `DEFAULT_RUN_BUDGET_LIMITS`. */
+    runBudgetLimits?: RunBudgetLimits,
   ) {
     this.subagents = new RpcSubagentRegistry(eventBus, (frame) => {
       const event = frame as unknown as AgentEvent;
@@ -362,9 +444,33 @@ export class AgentSessionWrapper {
       },
       conflicts: () => this.planOrGoalConflict(),
     });
+    this.runBudget = new SessionRunBudget(
+      (reason) => this.onRunBudgetExhausted("run", reason),
+      runBudgetLimits,
+    );
+    // A second budget bounds the goal's whole lifetime, not one continuation:
+    // every continuation begins a fresh run budget, so a goal loop could chain
+    // them forever. It deliberately reuses DEFAULT_RUN_BUDGET_LIMITS (400
+    // requests / 45 minutes): a goal that keeps making progress pauses after
+    // the same budget and `/goal resume` re-arms it, so continuations are never
+    // a way to reset the cap.
+    this.goalBudget = new SessionRunBudget(
+      (reason) => this.onRunBudgetExhausted("goal", reason),
+      runBudgetLimits,
+    );
     this.unsubscribeJobSettled = this.inner.asyncJobManager?.onJobSettled(() => {
       if (this.isAlive()) notifyRunningChange();
     }) ?? null;
+  }
+
+  /**
+   * Bind the account that started this session (see `startRpcSession`).
+   *
+   * `send` prefers the caller's identity when it is given one; this is the
+   * default for dispatches that carry no caller.
+   */
+  setIdentity(identity: WebIdentity | null): void {
+    this.identity = identity;
   }
 
   private rememberSubagentSnapshot(snapshot: SubagentSnapshot): void {
@@ -511,6 +617,21 @@ export class AgentSessionWrapper {
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       this.emit(event);
       if (RUNNING_STATE_EVENT_TYPES.has(event.type)) notifyRunningChange();
+      // One `turn_start` per model request: the agent loop pushes it directly
+      // before streaming a response (`agent-loop.ts:1444`, event type at
+      // `types.ts:1305`), once per iteration of the tool-call/steering loop.
+      // Subagent runs are separate sessions and never reach this stream.
+      // Counted after forwarding, so the browser sees the frame before the
+      // budget's `prompt_error`.
+      // shortcut: an in-turn provider re-sample does not emit a second
+      // turn_start, so retries are undercounted; the wall clock still bounds it.
+      if (event.type === "turn_start") {
+        // Goal first: when one frame crosses both caps, the goal bound is the
+        // one worth naming, and the abort handler reports only the first.
+        this.goalBudget.noteRequest();
+        this.runBudget.noteRequest();
+      }
+      if (event.type === "goal_updated") this.syncGoalBudget(event.state);
       void this.goalMode.handleSessionEvent(event).catch((error) => {
         console.error(
           "[omp-web] goal mode failed to handle a session event:",
@@ -676,6 +797,12 @@ export class AgentSessionWrapper {
    * browser must still see the session go busy, exactly as for a real prompt.
    */
   private async runGoalContinuation(prompt: string): Promise<void> {
+    // A restored goal can reach its first continuation without a `goal_updated`
+    // frame, so the lifetime budget is armed here as the fallback.
+    if (!this.goalBudget.active) this.goalBudget.begin();
+    // Each continuation is a new prompt run, so it gets a fresh run budget;
+    // the goal budget above keeps accumulating across them.
+    const run = this.runBudget.begin();
     this.promptRunning = true;
     notifyRunningChange();
     try {
@@ -692,11 +819,66 @@ export class AgentSessionWrapper {
       });
       throw error;
     } finally {
+      this.runBudget.end(run);
       this.promptRunning = false;
       this.resetIdleTimer();
       this.emit({ type: "prompt_done" });
       notifyRunningChange();
     }
+  }
+
+  /**
+   * Arm or end the goal-lifetime budget from the SDK's own goal state.
+   *
+   * Every `/goal set|resume` and the model's `goal` tool commit through a
+   * `goal_updated` frame carrying `state` (`goals/runtime.ts:178`), and pause,
+   * drop and complete flip `enabled` to false, so this one event covers entry
+   * and exit for both paths.
+   */
+  private syncGoalBudget(state: unknown): void {
+    const enabled = state !== null
+      && typeof state === "object"
+      && "enabled" in state
+      && state.enabled === true;
+    if (!enabled) {
+      this.goalBudget.end();
+      return;
+    }
+    if (!this.goalBudget.active) this.goalBudget.begin();
+  }
+
+  /**
+   * A run or goal budget ran out. Say so once, then unwind through the same
+   * path `case "abort"` uses: cancel a scheduled goal continuation and abort
+   * the session, which pauses an active goal inside the SDK. `prompt_error` is
+   * what the browser already renders as a visible notice
+   * (`hooks/useAgentSession.ts:1278`); a session `notice` frame has no renderer
+   * in this UI.
+   */
+  private onRunBudgetExhausted(scope: "run" | "goal", reason: RunBudgetExhaustion): void {
+    // Both budgets can trip on the same request frame; the abort is already
+    // on its way, so a second notice would only repeat it.
+    if (this.budgetAbort) return;
+    const limits = this.runBudget.limits;
+    const limit = reason === "requests"
+      ? `${limits.maxRequests} model requests`
+      : `${Math.max(1, Math.round(limits.maxWallClockMs / 60000))} minutes`;
+    const message = scope === "goal"
+      ? `Goal paused after ${limit} for this goal. Send /goal resume to continue with a fresh budget.`
+      : `Run stopped after ${limit}. Send a new message to continue.`;
+    this.emit({ type: "prompt_error", errorMessage: message });
+    this.goalMode.onAbort();
+    this.budgetAbort = this.withFinalRunningNotification(() => this.inner.abort());
+    void this.budgetAbort
+      .catch((error) => {
+        console.error(
+          "[omp-web] failed to abort a session whose run budget ran out:",
+          error instanceof Error ? error.message : error,
+        );
+      })
+      .finally(() => {
+        this.budgetAbort = null;
+      });
   }
 
   private syncPlanModeFromSession(): void {
@@ -853,7 +1035,21 @@ export class AgentSessionWrapper {
     this.onDestroyCallback = cb;
   }
 
-  async send(command: Record<string, unknown>): Promise<unknown> {
+  /**
+   * Dispatch one command.
+   *
+   * `callerIdentity` is the account that sent *this* request. A live wrapper can
+   * be addressed from any route allowed to reach it, so the identity must be
+   * bound per call — not only at session start — and as an argument rather than
+   * a field on the wrapper: two callers can interleave here, and a field would
+   * let the second call's identity decide the first call's slash gate. A
+   * missing identity stays `null`, which the gate treats as non-admin.
+   */
+  async send(
+    command: Record<string, unknown>,
+    callerIdentity?: WebIdentity | null,
+  ): Promise<unknown> {
+    const identity = callerIdentity === undefined ? this.identity : callerIdentity;
     this.resetIdleTimer();
     const type = command.type as string;
     if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
@@ -880,6 +1076,9 @@ export class AgentSessionWrapper {
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+        // A prompt with no run in flight starts one and gets a fresh budget; a
+        // steering prompt joins the active run and shares its budget.
+        const run = this.runBudget.active ? undefined : this.runBudget.begin();
         this.promptRunning = true;
         notifyRunningChange();
         this.inner.prompt(command.message as string, {
@@ -887,11 +1086,13 @@ export class AgentSessionWrapper {
           ...(streamingBehavior ? { streamingBehavior } : {}),
           userInitiated: true,
         }).then(() => {
+          if (run !== undefined) this.runBudget.end(run);
           this.promptRunning = false;
           this.resetIdleTimer();
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
           notifyRunningChange();
         }).catch((error) => {
+          if (run !== undefined) this.runBudget.end(run);
           this.promptRunning = false;
           this.resetIdleTimer();
           invalidateSessionListCache();
@@ -906,6 +1107,8 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
+        this.runBudget.end();
+        this.goalBudget.end();
         this.goalMode.onAbort();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
@@ -1161,6 +1364,21 @@ export class AgentSessionWrapper {
       }
 
       case "execute_slash_command": {
+        // A tenant session may read the operator's MCP/SSH/plugin store but
+        // not write it in user scope: the builtins resolve their paths from
+        // process state (`getAgentDir()`), so only the caller's identity stands
+        // between a tenant and the operator's files.
+        const operatorCommand = isAdminIdentity(identity)
+          ? null
+          : operatorScopeSlashCommand(command.message);
+        if (operatorCommand) {
+          return {
+            handled: true,
+            output: [
+              `Refused: ${operatorCommand} needs administrator access; it writes user-scope state shared by every account.`,
+            ],
+          };
+        }
         const output: string[] = [];
         const result: AcpBuiltinSlashCommandResult = await executeAcpBuiltinSlashCommand(command.message as string, {
           session: this.inner as never,
@@ -1270,6 +1488,8 @@ export class AgentSessionWrapper {
   destroy(): void {
     if (!this._alive) return;
     this._alive = false;
+    this.runBudget.end();
+    this.goalBudget.end();
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
@@ -2168,6 +2388,7 @@ export async function startRpcSession(
       // `subagentEventBus` (omp's own RPC mode subscribes it, rpc-mode.ts:1507);
       // a registry bound to the session-local `eventBus` never sees a grandchild.
       const wrapper = new AgentSessionWrapper(session, subagentEventBus ?? eventBus);
+      wrapper.setIdentity(identity);
       wrapper.bindToolUiContext(
         setToolUIContext as unknown as (uiContext: ExtensionUiContextLike, hasUI: boolean) => void,
       );

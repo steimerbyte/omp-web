@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -144,4 +144,37 @@ test("ein gescheiterter Schreibvorgang legt keine halbe Datei daneben", async ()
     ["notes.txt"],
     "eine abgebrochene Temp-Datei darf nicht im Projektverzeichnis bleiben",
   );
+});
+test("ein Speichern durch einen Link im Home schreibt das Ziel und laesst den Link", async () => {
+  const directory = join(HOME, "projects", "editor-symlink");
+  mkdirSync(directory, { recursive: true });
+  const target = join(directory, "target.txt");
+  writeFileSync(target, "ALT\n");
+  const link = join(directory, "link.txt");
+  symlinkSync(target, link);
+
+  const res = await saveRequest(link, "NEU\n");
+  const body = await res.json();
+
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(readFileSync(target, "utf8"), "NEU\n", "the resolved target is the file that was replaced");
+  assert.equal(lstatSync(link).isSymbolicLink(), true, "the link must not be replaced by a regular file");
+  assert.equal(readlinkSync(link), target, "the link still points at the same target");
+});
+
+test("ein Speichern durch einen Link nach draussen wird abgelehnt", async (t) => {
+  const outside = mkdtempSync(join(tmpdir(), "omp-web-put-outside-"));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const secret = join(outside, "secret.txt");
+  writeFileSync(secret, "OUTSIDE\n");
+  const directory = join(HOME, "projects", "editor-escape");
+  mkdirSync(directory, { recursive: true });
+  const link = join(directory, "escape.txt");
+  symlinkSync(secret, link);
+
+  const res = await saveRequest(link, "REPLACED\n");
+
+  assert.equal(res.status, 403);
+  assert.equal(readFileSync(secret, "utf8"), "OUTSIDE\n", "the outside file must be untouched");
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
 });

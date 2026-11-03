@@ -1,6 +1,6 @@
 # Inventur: Auth, Session, Rechte, Sicherheitsgrenzen
 
-Stand Commit `2699054`. Umfang: `proxy.ts`, `lib/web-auth.ts`, `lib/web-auth-session.ts`,
+Stand Commit `2699054`, Rollen-Nachtrag fuer v0.22.4. Umfang: `proxy.ts`, `lib/web-auth.ts`, `lib/web-auth-session.ts`,
 `lib/request-identity.ts`, `lib/request-security.ts`, `bin/web-auth-store.js` (Laufzeitlogik),
 `app/login/`, `app/recover/`, `app/api/web-access/**` sowie die angrenzenden Konsumenten der
 Identitaet (`lib/allowed-roots.ts`, `lib/write-access.ts`, `lib/file-access.ts`,
@@ -12,11 +12,10 @@ Konvention: **Kann** = was die Funktion tut. **Darf nicht** = was sie nicht tun 
 Begruendung. Bei Sicherheitsregeln ist die Begruendung Pflicht, nicht Kür — sie ist das, was
 beim nächsten Refactor wegoptimiert wird.
 
-> **In Aenderung.** `isAdminUsername()` (`bin/web-auth-store.js:350`) wird gerade erweitert:
-> die Admin-Rolle soll in der Kontendatei stehen und nicht mehr allein aus dem Namen
-> abgeleitet werden. Bis dieser Commit landet, ist `isAdmin === resolveAdminUsernames(env).includes(username)`.
-> Alle Eintraege, die das beruehren, sind als **in Aenderung** markiert. Die markierten
-> Aussagen stimmen fuer `2699054` und nicht mehr fuer den Stand danach.
+> **Rollen-Aenderung ist umgesetzt (v0.22.4).** `isAdminUsername()` liest die Rolle aus
+> der Kontendatei (Feld `isAdmin`, pro mtime gecacht), ein gesetztes `OMP_WEB_ADMINS` hat
+> Vorrang, und ein gesetzter leerer Wert heisst weiterhin **keine** Admins. Die frueheren
+> „in Aenderung"-Markierungen sind durch den Stand des Codes ersetzt.
 
 ---
 
@@ -126,10 +125,11 @@ beim nächsten Refactor wegoptimiert wird.
   einen Default-Benutzer und **keinen** Fallback auf Admin. Ein fehlender Header kam entweder
   aus einem Client, der `proxy.ts` umgangen hat, oder aus einer Route ausserhalb des Matchers —
   in beiden Faellen 403.
-- **Darf nicht** (in Aenderung): `isAdmin` wird heute genauso gelesen wie der Name, also
-  `headers.get(REQUEST_ADMIN_HEADER) === "1"`. Die Quelle dafuer ist `isAdminUsername()` in
-  `bin/web-auth-store.js:350`; siehe Admin-Liste unten. Beide Header bleiben unveraenderlich
- loeschbar in `proxy.ts` — die Aenderung betrifft nur, **woher** der Admin-Status kommt.
+- **Darf nicht**: `isAdmin` direkt aus einem Client-Header ableiten. Der Wert kommt aus
+  `headers.get(REQUEST_ADMIN_HEADER) === "1"`, und `proxy.ts` setzt ihn aus
+  `isAdminUsername()`; die Rolle stammt aus `OMP_WEB_ADMINS` (falls gesetzt) bzw. aus dem
+  `isAdmin`-Feld der Kontendatei (siehe Admin-Liste unten). Beide Header bleiben unbedingt
+  loeschbar in `proxy.ts`.
 - **Ort**: `lib/request-identity.ts:40-50`
 
 ### `requireAdmin(request)`
@@ -238,14 +238,17 @@ beim nächsten Refactor wegoptimiert wird.
   ungueltige UTF-8-Sequenz (`fatal: true`) ergeben `null`.
 - **Darf nicht**: `verifyCredential` darf **nicht** unterscheiden, warum es gescheitert ist.
   Falscher Name, falsches Passwort und abgeschaltetes Konto ergeben alle `null`, und jede andere
-  Antwort ist eine Oracle-Frage an einen Angreifer (`lib/web-auth.ts:224-227`).
+  Antwort ist eine Oracle-Frage an einen Angreifer (`lib/web-auth.ts:224-227`). Jeder Reject-Pfad
+  zahlt zusaetzlich eine scrypt-Pruefung gegen einen festen Dummy-Digest
+  (`payCredentialCost()`); ohne sie antwortete ein unbekannter Name in 0,10 ms und ein bekannter
+  Name mit falschem Passwort in 36,06 ms.
 - **Darf nicht**: Den Legacy-Pfad (Einzelbenutzer-Store `omp-web-auth.json` bzw.
   `OMP_WEB_PASSWORD`) nicht entfernen, nur weil es Mehrbenutzer gibt. Der Name ist fest, er kommt
   aus `getExpectedUsername()`, und er ist Admin, falls er in der Admin-Liste steht — sonst waere
   die bestehende Installation nach dem Update komplett handlungsunfaehig.
-- **Darf nicht** (in Aenderung): `verifyCredential` ruft in beiden Zweigen `isAdminUsername()` auf
-  (`lib/web-auth.ts:216`, `:225`). Der Admin-Status dieser Identitaet verschiebt sich mit der
-  geplanten Aenderung von der Namensliste in die Kontendatei; die Aufrufstelle bleibt dieselbe.
+- **Darf nicht**: `verifyCredential` ruft in beiden Zweigen `isAdminUsername()` auf, damit der
+  Admin-Status aus derselben Quelle kommt wie im `proxy.ts`. Diese Aufrufstelle bleibt bestehen;
+  geaendert hat sich nur die Quelle (Kontendatei bzw. `OMP_WEB_ADMINS`).
 - **Darf nicht**: `OMP_WEB_AUTH_USERNAME` (Modul-Ladzeit-Konstante, `lib/web-auth.ts:88`) **nicht**
   fuer Laufzeitpruefungen verwenden. `proxy.ts` und `lib/web-auth-session.ts` rufen
   `getExpectedUsername()`; nur so greift eine Aenderung im Settings-Panel sofort. Der Cache auf
@@ -398,10 +401,19 @@ beim nächsten Refactor wegoptimiert wird.
 - **Darf nicht**: Die Fehlermeldung **nicht** veraendern. `REJECTED` (`:26`) ist fuer **jeden**
   Fehlschlag dieselbe: falsches Passwort, fehlender Store, Lock aus. Was der Angreifer daraus
   lernen will, hilft niemandem, der sich beim Passwort vertippt hat. Dazu kommt
-  `FAILURE_DELAY_MS = 150` (`:34`), ungefaehr die Kosten einer scrypt-Verifikation, damit ein
-  falsches Passwort, ein fehlender Store und ein richtiges Passwort **ueber das Draht nicht
-  unterscheidbar** sind. Jede Verzoegerung, die nur den Fehlerfall trifft, ist selbst eine
-  Oracle-Antwort.
+  `FAILURE_DELAY_MS = 150` (`:34`) als feste Pause, und jeder Reject-Pfad zahlt zusaetzlich eine
+  scrypt-Pruefung (`payCredentialCost()` gegen einen Dummy-Digest) — auch dann, wenn der Zweig
+  vorher ohne Hash zurueckkehren wuerde. Ohne den Dummy kostete ein unbekannter Name 0,10 ms und
+  ein bekannter Name mit falschem Passwort 36,06 ms; mit ihm sind falsches Passwort, fehlender
+  Store und richtiges Passwort **ueber das Draht nicht unterscheidbar**. Jede Verzoegerung, die
+  nur den Fehlerfall trifft, ist selbst eine Oracle-Antwort. **Bekannte Grenze:** damit kostet
+  jede Ablehnung rund 36 ms CPU, auch auf dem unauthentifizierten Basic-Auth-Pfad, den
+  `proxy.ts` bei jeder Anfrage prueft; ein Auth-Rate-Limit gibt es nicht. Der Fix nimmt die
+  Oracle-Antwort, nicht die CPU-Last.
+- **Darf nicht**: Den Body unbeschraenkt lesen. `readJsonBodyWithinLimit()` mit
+  `MAX_CREDENTIAL_REQUEST_BODY_BYTES` = 4 KiB antwortet 413, bevor der Credential-Store gefragt
+  wird; `Content-Length` wird vorab geprueft, chunked Requests werden an den tatsaechlich
+  gelesenen Bytes begrenzt.
 - **Darf nicht**: `isApiRequestAllowed()` (`:48`) **nicht** entfernen, obwohl `proxy.ts` dieselbe
   Pruefung schon gemacht hat. Die Route ist per Matcher geschuetzt, aber der Guard ist billig und
   die Datei ist dadurch lesbar ohne den Proxy gelesen zu haben. Analog: `hasJsonContentType()`
@@ -494,10 +506,15 @@ beim nächsten Refactor wegoptimiert wird.
   die Route zur Selbstbedienung: ein Portscanner, der sie findet, laesst sich selbst zum Besitzer
   des Passworts machen. Der Konsolen-Print **ist** der Authentifizierungsschritt.
 - **Darf nicht**: Die Pfadpruefungen `managedByEnvironment` (`:53`), `unreadable` (`:62`) und
-  `!stored` (`:68`) **nicht** entfernen oder in eine Reihenfolge bringen, die vorher `req.json()`
-  liest. Eine Credential-Datei, die nicht parsebar ist, kann auch keinen Recovery-Code halten — und
-  einen zu minten wuerde bedeuten, die Datei neu zu schreiben, also einen Server **entsperren**,
-  dessen Passwort niemand verifizieren kann. Das braucht eine Shell auf der Maschine.
+  `!stored` (`:68`) **nicht** entfernen. Der Body wird zwar zuerst gelesen (er traegt `action`),
+  aber nur bis 4 KiB; danach entscheidet der Status. Eine Credential-Datei, die nicht parsebar
+  ist, kann auch keinen Recovery-Code halten — und einen zu minten wuerde bedeuten, die Datei neu
+  zu schreiben, also einen Server **entsperren**, dessen Passwort niemand verifizieren kann. Das
+  braucht eine Shell auf der Maschine.
+- **Darf nicht**: Den Body unbeschraenkt lesen. `readJsonBodyWithinLimit()` mit
+  `MAX_CREDENTIAL_REQUEST_BODY_BYTES` = 4 KiB antwortet 413, **bevor** `getWebAccessStatus()`
+  gefragt oder ein Code gepraegt wird; chunked Requests werden an den tatsaechlich gelesenen Bytes
+  begrenzt.
 - **Darf nicht**: Bei `action: "complete"` das Passwort **vor** der Codepruefung validieren
   (`bin/web-auth-store.js:1055-1058`). Sonst ist die Validierungsantwort eine Oracle-Frage: „Ihr
   Code war richtig, das Passwort ist zu kurz".
@@ -618,29 +635,29 @@ beim nächsten Refactor wegoptimiert wird.
 - **Ort**: `bin/web-auth-store.js:502-521`, `bin/web-auth-store.js:524-556` (`getWebAuthStatus`)
 
 ### Admin-Liste (`isAdminUsername`, `resolveAdminUsernames`)
-- **Kann** (Stand `2699054`, **in Aenderung**): `isAdminUsername(username)` ist
-  `resolveAdminUsernames(env).includes(username)` (`bin/web-auth-store.js:350-353`). Die Liste
-  kommt aus `OMP_WEB_ADMINS` (kommagetrennt) und ueberschreibt die Vorgabe
-  `["pi","omp","steimerbyte"]` (`:88`, `:342-348`). **In Aenderung:** die Rolle soll in der
-  Kontendatei stehen; diese Namenskonvention faellt dann als Quelle der Admin-Bestimmung weg.
+- **Kann**: `isAdminUsername(username, env)` liest die Rollen-Map (`readAdminRoles`, pro mtime
+  und Env-Inhalt gecacht). Ist `OMP_WEB_ADMINS` **gesetzt**, baut sie sich allein aus der
+  kommagetrennten Liste (`resolveAdminUsernames`) — sie ersetzt die Datei und die Vorgabe. Ist
+  die Variable **nicht** gesetzt, entscheidet das `isAdmin`-Feld des Kontos; ein fehlendes Feld
+  (Altkonto) und ein Name ohne Kontodatensatz (Einzelbenutzer-Store) fallen auf
+  `["pi","omp","steimerbyte"]` zurueck. Ein explizites `false` stuft herab.
 - **Darf nicht**: `OMP_WEB_ADMINS` mit einer Wildcard-Syntax erweitern, die einen normalen
   Konto-Namen treffen koennte. Der Name muss exakt in der Liste stehen; ein Praefix-Match macht
   aus `bob_admin` einen Admin.
 - **Darf nicht**: Leerer Wert als „alle" lesen. Leer heisst „es gibt **keine** Admins"
-  (`:344`) — mit leerem `OMP_WEB_ADMINS` ist das gesamte Admin-Panel gesperrt (Kontenverwaltung,
-  globale Skills, Passwort-Store).
-- **Darf nicht**: `isAdmin` **beim Schreiben** in die Kontendatei legen. `normalizeAccountEntry`
-  (`:680-693`) rechnet `isAdmin` bei jedem Lesen neu aus und **nie** aus der Datei: die Datei
-  koennte von einem aelteren Stand stammen oder manipuliert sein, und die Admin-Frage gehoert der
-  Installation, nicht dem Datensatz. Ein geschriebenes `isAdmin: true` fuer einen Nicht-Admin wird
-  stillschweigend zu `false`. **In Aenderung:** diese Regel wandert mit der geplanten
-  Rollen-Aenderung mit — sie ist der Grund, warum die Datei heute keine Autoritaet ueber Admin ist.
+  — mit leerem, aber gesetztem `OMP_WEB_ADMINS` ist das gesamte Admin-Panel gesperrt
+  (Kontenverwaltung, globale Skills, Passwort-Store).
+- **Darf nicht**: `isAdmin` aus einem Request-Body in die Kontendatei schreiben. Der Wert ist
+  Vertrauensmaterial neben dem scrypt-Digest und wird nur ueber die Admin-Route bzw.
+  `setWebAccountRole` gesetzt; `normalizeAccountEntry` leitet ihn ueber `accountIsAdmin` ab, nicht
+  aus einer zweiten Dateilesung. Unter gesetztem `OMP_WEB_ADMINS` gewinnt die Umgebung auch gegen
+  ein `true` in der Datei.
 - **Darf nicht**: Eine eigene Admin-Liste in `lib/web-auth.ts` pflegen. `isAdminUsername` ist dort
   ein bewusster Re-Export der Store-Funktion, keine Kopie: die Liste gehoert der Installation, und
   ein zweiter Ort, an dem sie gepflegt wird, ist ein Ort, an dem sie veraltet.
-- **Ort**: `bin/web-auth-store.js:88` (Vorgabe), `:342-348` (`resolveAdminUsernames`),
-  `:350-353` (`isAdminUsername`), `:680-693` (`normalizeAccountEntry`); Re-Export in
-  `lib/web-auth.ts:169`, `:174-180`
+- **Ort**: `bin/web-auth-store.js` (`DEFAULT_WEB_ADMIN_USERNAMES`, `resolveAdminUsernames`,
+  `readAdminRoles`, `accountIsAdmin`, `isAdminUsername`, `normalizeAccountEntry`); Re-Export in
+  `lib/web-auth.ts`
 
 ### Sicherheitsrelevante Umgebungsvariablen
 - **Kann / wirkt**: `OMP_WEB_PASSWORD` — Klartextpasswort. Schlaegt die gespeicherte Anmeldedatin
@@ -648,8 +665,9 @@ beim nächsten Refactor wegoptimiert wird.
   Recovery-Pfad (`:53`). Ist sie gesetzt, ist das Schreiben im Store ein 409.
 - **Kann / wirkt**: `OMP_WEB_ADMINS` — kommagetrennte Admin-Liste, **ueberschreibt** die Vorgabe
   `["pi","omp","steimerbyte"]`. Leerer Wert bedeutet „es gibt **keine** Admins" und **nicht**
-  „alle" (`:342-348`). Wer `OMP_WEB_ADMINS=""` setzt, sperrt damit das gesamte Admin-Panel.
-  **In Aenderung** — siehe Admin-Liste oben.
+  „alle". Wer `OMP_WEB_ADMINS=""` setzt, sperrt damit das gesamte Admin-Panel.
+  Ist die Variable nicht gesetzt, entscheidet das `isAdmin`-Feld der Kontendatei; siehe
+  Admin-Liste oben.
 - **Kann / wirkt**: `OMP_WEB_AUTH_FILE` — ueberschreibt den Ort von `omp-web-auth.json`
   vollstaendig (`:128-132`). Alles XDG-Maessige wird ueber diese Variable adressiert.
 - **Kann / wirkt**: `OMP_WEB_ACCOUNTS_FILE` — dasselbe fuer `omp-web-accounts.json` (`:156-160`).
@@ -666,8 +684,9 @@ beim nächsten Refactor wegoptimiert wird.
   zwischen zwei Aufrufen in einem lang laufenden Prozess aendern kann.
 - **Darf nicht**: Keine dieser Variablen als Input eines Clients behandeln. Sie kommen alle aus der
   Prozessumgebung des Betreibers, nicht aus einem Request.
-- **Ort**: `bin/web-auth-store.js:128-132`, `:156-160`, `:170-173`, `:342-348`, `:491-494`,
-  `:506-507`; `lib/allowed-roots.ts:56-61`, `:94-99`; `lib/request-security.ts:39-44`
+- **Ort**: `bin/web-auth-store.js` (`resolveWebAuthFile`, `resolveWebAccountsFile`,
+  `resolveAdminUsernames`, `hasEnvironmentAdminList`, `resolveWebAuthPolicy`);
+  `lib/allowed-roots.ts`; `lib/request-security.ts`
 
 ### `validateAccountName` vs. `validateUsername`
 - **Kann**: `validateAccountName` (`:321-333`) ist bewusst strenger:

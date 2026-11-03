@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -194,6 +194,108 @@ test("ein Mandant kann in einem cwd seiner Roots auf project schreiben", async (
   assert.equal(res.status, 200, `erwartet 200, bekam ${res.status}: ${await res.text()}`);
   assert.ok(existsSync(join(projectCwd, ".omp", "mcp.json")), "die Projektkonfiguration fehlt");
   assert.equal(existsSync(join(tenantDir("alice"), "mcp.json")), false, "es wurde in den User-Scope geschrieben");
+
+  // Der legitime Projektpfad bleibt lesbar — die Containment-Pruefung darf
+  // nicht jede Projektkonfiguration abschneiden.
+  const read = await mcpRoute.GET(request(`/api/mcp?cwd=${encodeURIComponent(projectCwd)}`));
+  assert.equal(read.status, 200, `erwartet 200, bekam ${read.status}`);
+  const body = await read.json();
+  assert.deepEqual((body.project?.servers ?? []).map((entry) => entry.name), ["probe"]);
+});
+
+test("ein .omp-Symlink macht aus dem Projekt keinen fremden MCP-Store", async () => {
+  // OMP-005: `<cwd>/.omp` als Link auf `/home/pi/.omp/agent` liess `GET` die
+  // Server des Betreibers anzeigen und `PUT` seine `mcp.json` schreiben. Beide
+  // Wege muessen den *echten* Pfad pruefen, nicht den Linktext.
+  const projectCwd = join(tenantDir("alice"), "symlink-projekt");
+  const victimDir = join(HOME_ROOT, "victim");
+  const victimPath = seedMcpFile(join(victimDir, "mcp.json"), "victim");
+  const before = readFileSync(victimPath, "utf8");
+  mkdirSync(projectCwd, { recursive: true });
+  rmSync(join(projectCwd, ".omp"), { recursive: true, force: true });
+  symlinkSync(victimDir, join(projectCwd, ".omp"), "dir");
+  const { allowFileRoot } = await jiti.import("@/lib/file-access");
+  allowFileRoot(projectCwd, { username: "alice", isAdmin: false });
+
+  const read = await mcpRoute.GET(request(`/api/mcp?cwd=${encodeURIComponent(projectCwd)}`));
+  assert.equal(read.status, 403, `erwartet 403, bekam ${read.status}`);
+  assert.equal((await read.text()).includes("victim"), false, "der fremde Server wurde gelesen");
+
+  const write = await mcpRoute.PUT(request(`/api/mcp?cwd=${encodeURIComponent(projectCwd)}`, {
+    method: "PUT",
+    body: { scope: "project", servers: [SERVER] },
+  }));
+  assert.equal(write.status, 400, `erwartet 400, bekam ${write.status}`);
+  assert.equal(readFileSync(victimPath, "utf8"), before, "der Symlink hat in einen fremden Store geschrieben");
+  assert.equal(existsSync(join(victimDir, "mcp.json")), true);
+});
+
+test("ein Admin darf seine mcp.json aus dem Agent-Verzeichnis heraus verlinken", async (t) => {
+  // Der Admin ist das Prozesskonto: ein `mcp.json`, das in ein
+  // Dotfiles-Repository zeigt, ist ein normaler Aufbau und darf weder am Lesen
+  // noch am Schreiben gehindert werden. Aufgeloest wird trotzdem, damit genau
+  // die Zieldatei gelesen und geschrieben wird.
+  const agentDir = await processAgentDir();
+  const linkPath = join(agentDir, "mcp.json");
+  const dotfiles = join(HOME_ROOT, "dotfiles");
+  mkdirSync(dotfiles, { recursive: true });
+  const target = seedMcpFile(join(dotfiles, "mcp.json"), "dotfile");
+
+  // Den echten Bestand des Prozesskontos sichern und am Ende zuruecklegen.
+  const previous = existsSync(linkPath)
+    ? lstatSync(linkPath).isSymbolicLink()
+      ? { link: readlinkSync(linkPath) }
+      : { content: readFileSync(linkPath) }
+    : null;
+  t.after(() => {
+    rmSync(linkPath, { force: true });
+    if (previous?.link !== undefined) symlinkSync(previous.link, linkPath);
+    else if (previous?.content !== undefined) writeFileSync(linkPath, previous.content);
+    rmSync(dotfiles, { recursive: true, force: true });
+  });
+  rmSync(linkPath, { force: true });
+  mkdirSync(agentDir, { recursive: true });
+  symlinkSync(target, linkPath, "file");
+
+  const read = await mcpRoute.GET(request("/api/mcp", { headers: ADMIN }));
+  assert.equal(read.status, 200, `erwartet 200, bekam ${read.status}`);
+  const body = await read.json();
+  assert.deepEqual((body.user?.servers ?? []).map((entry) => entry.name), ["dotfile"]);
+
+  const written = await mcpRoute.PUT(request("/api/mcp", {
+    method: "PUT",
+    headers: ADMIN,
+    body: { scope: "user", servers: [SERVER] },
+  }));
+  assert.equal(written.status, 200, `erwartet 200, bekam ${written.status}: ${await written.text()}`);
+  // Geschrieben wurde durch den Link in das Ziel, nicht daneben.
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(target, "utf8")).mcpServers), ["probe"]);
+  assert.equal(readFileSync(linkPath, "utf8"), readFileSync(target, "utf8"));
+});
+
+test("ein Mandant bekommt am selben Aufbau weiterhin 403 und das Ziel bleibt unberuehrt", async () => {
+  const victim = seedMcpFile(join(HOME_ROOT, "victim-tenant", "mcp.json"), "victim");
+  const before = readFileSync(victim, "utf8");
+  mkdirSync(tenantDir("bob"), { recursive: true });
+  const linkPath = join(tenantDir("bob"), "mcp.json");
+  rmSync(linkPath, { force: true });
+  symlinkSync(victim, linkPath, "file");
+
+  try {
+    const read = await mcpRoute.GET(request("/api/mcp", { headers: OTHER_TENANT }));
+    assert.equal(read.status, 403, `erwartet 403, bekam ${read.status}`);
+    assert.equal((await read.text()).includes("victim"), false);
+
+    const write = await mcpRoute.PUT(request("/api/mcp", {
+      method: "PUT",
+      headers: OTHER_TENANT,
+      body: { scope: "user", servers: [SERVER] },
+    }));
+    assert.equal(write.status, 403, `erwartet 403, bekam ${write.status}`);
+    assert.equal(readFileSync(victim, "utf8"), before, "der Mandanten-Symlink hat in einen fremden Store geschrieben");
+  } finally {
+    rmSync(linkPath, { force: true });
+  }
 });
 
 test("ein fremder cwd bleibt auch fuer den Admin-Scope unerreichbar", async () => {

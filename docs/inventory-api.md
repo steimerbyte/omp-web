@@ -56,24 +56,25 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   Pfadsegment taugt, ist kein Name, sondern ein Fehlversuch.
 - **Ort**: `lib/request-identity.ts:38-53`
 
-### Woher die Admin-Rolle kommt (ändert sich gerade)
+### Woher die Admin-Rolle kommt
 
-- **Kann**: Heute entscheidet **allein der Name**:
-  `isAdminUsername(username)` → `resolveAdminUsernames(env).includes(username)`
-  (`bin/web-auth-store.js:350`, Vorgabeliste `["pi", "omp", "steimerbyte"]` in
-  `bin/web-auth-store.js:88`, überschreibbar über `OMP_WEB_ADMINS`). Der Wert
-  wird bei **jedem Aufruf neu berechnet**, nicht aus dem Kontodatensatz
-  gelesen — `WebAccount.isAdmin` steht im Typ, wird aber nie gelesen
-  (`bin/web-auth-store.d.ts:104-106`).
-- **Darf nicht**: Für `features.md` darf daraus **nicht** abgeleitet werden,
-  Admin sei dauerhaft eine Namenskonvention. Die Rollenquelle **ändert sich**:
-  es kommt ein Rollenfeld in die Kontendatei. Die Aussage „admin-only" bleibt
-  für alle Routen richtig, aber die Begründung „weil der Name in der Admin-Liste
-  steht" ist dann falsch. `features.md` soll deshalb schreiben: *die Admin-Rolle
-  kommt aus der Kontenverwaltung, nicht aus einer Namenskonvention* — und
-  nicht, *welcher* Name gerade Admin ist.
-- **Ort**: `bin/web-auth-store.js:342-353`, `bin/web-auth-store.js:88`,
-  `lib/web-auth.ts:169-178`, `proxy.ts:142`
+- **Kann**: Drei Quellen, in dieser Reihenfolge: ist `OMP_WEB_ADMINS` **gesetzt**,
+  entscheidet allein die kommagetrennte Liste; ist sie nicht gesetzt, liest
+  `accountIsAdmin(entry, env)` das `isAdmin`-Feld des Kontos aus
+  `omp-web-accounts.json`; fehlt das Feld (Konto aus der Zeit vor der Rolle),
+  fällt der Name auf `["pi","omp","steimerbyte"]` zurück. Ein Name ohne
+  Kontodatensatz — der Einzelbenutzer-Store aus `omp-web-auth.json` — nimmt
+  denselben Rückfall. Die Rollen werden beim Lesen über die mtime der
+  Kontendatei und den Inhalt von `OMP_WEB_ADMINS` gecacht, nicht in der Sitzung.
+- **Darf nicht**: `OMP_WEB_ADMINS=""` als „nicht gesetzt" lesen. Ein gesetzter,
+  leerer Wert heißt **keine Admins**: das Admin-Panel und jede
+  `requireAdmin`-Route bleiben gesperrt. Nur ein fehlendes Environment nimmt
+  die Kontendatei bzw. die Vorgabeliste — der Fix zu OMP-018.
+- **Darf nicht**: Für `features.md` daraus eine dauerhafte Namenskonvention
+  ableiten. Die Rolle gehört der Kontenverwaltung; welcher Name gerade Admin
+  ist, ist eine Installationseigenschaft und keine API-Zusage.
+- **Ort**: `bin/web-auth-store.js` (`accountIsAdmin`, `readAdminRoles`,
+  `isAdminUsername`), `lib/web-auth.ts`, `proxy.ts`
 
 ---
 
@@ -127,8 +128,8 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
      das Passwort im Terminal-Scrollback des Admins und danach in irgendeinem Log.
   2. **Kein `body.isAdmin`.** Admin kommt aus dem Header, den `proxy.ts` nach
      dem Prüfen der Anmeldedaten gesetzt hat. Ein `body.isAdmin` wäre eine
-     Schaltfläche, die jeder selbst umlegt. (Siehe auch oben: die Rollenquelle
-     verschiebt sich in die Kontendatei — sie kommt aber **weiterhin** von
+     Schaltfläche, die jeder selbst umlegt. (Siehe auch oben: die Rolle kommt
+     aus der Kontendatei bzw. `OMP_WEB_ADMINS`, aber **weiterhin** über
      `proxy.ts` und nicht aus dem Request.)
   3. **Kein Self-Service, keine Registrierungsroute.** Es gibt genau einen Weg,
      auf dem ein Konto entsteht, und der läuft durch diese Datei. Wer sich
@@ -157,7 +158,17 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   Latenz für falsches Passwort / fehlenden Store / deaktivierten Lock. Grund: was
   davon zutrifft, ist genau das, was ein Angreifer lernen will, und keinem
   hilft es, der ein Passwort getippt hat. Jeder Fehlerpfad kostet
-  `FAILURE_DELAY_MS` = 150 ms, ungefähr eine scrypt-Verifikation.
+  `FAILURE_DELAY_MS` = 150 ms **plus** genau eine scrypt-Prüfung. Auf Pfaden,
+  die sonst vor dem Hash zurückkehren würden — unbekannter oder deaktivierter
+  Name, Umgebungspasswort, fehlender Store —, prüft `payCredentialCost()` gegen
+  einen festen Dummy-Digest, damit die Antwortzeit nicht verrät, ob der Name
+  existiert (gemessen 0,10 ms gegen 36,06 ms ohne). Bekannte Grenze: jede
+  Ablehnung kostet damit rund 36 ms CPU, auch auf dem unauthentifizierten
+  Basic-Auth-Pfad, und ein Auth-Rate-Limit gibt es nicht — der Fix nimmt die
+  Oracle-Antwort, nicht die CPU-Last.
+  Der Body ist auf 4 KiB begrenzt (`MAX_CREDENTIAL_REQUEST_BODY_BYTES`); ein
+  größerer Request — auch chunked ohne `Content-Length` — antwortet 413, bevor
+  der Store gefragt wird.
   Ebenso: der Basic-Auth-Pfad kann **nicht** abgemeldet werden. Das ist
   dokumentiert und kein Fehler — curl, Reverse Proxy und bestehende Clients
   senden `Authorization`, und die Sitzung ersetzt diesen Weg nicht.
@@ -180,6 +191,10 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   Passwort niemand verifizieren kann; dafür braucht es eine Shell auf der Maschine.
   Die Route läuft trotzdem durch `withIdentity(..., null)`, damit ein
   clientgeliefertes `x-omp-admin: 1` hier nichts ist.
+- **Darf nicht**: Den Body unbeschränkt lesen. Login und Recovery teilen sich
+  `MAX_CREDENTIAL_REQUEST_BODY_BYTES` = 4 KiB; ein größerer Request — auch
+  chunked ohne `Content-Length` — antwortet 413, **bevor** `getWebAccessStatus()`
+  oder ein Recovery-Code angefasst wird.
 - **Ort**: `app/api/web-access/recovery/route.ts:40-114`, `proxy.ts:120-127`
 
 ### Wer bin ich — `GET` `/api/whoami`
@@ -326,7 +341,14 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   **lesen** darf. Grund: eine laufende Session **schreibt** dort — Session-Dateien,
   History, Tools. Being allowed to read a directory is therefore not enough to be
   allowed to work in one. Deshalb prüft die Route zusätzlich `isWritePathAllowed`.
-- **Ort**: `app/api/agent/new/route.ts:23-70`
+- **Darf nicht**: Den Prompt-Body unbeschränkt puffern. Dieselbe Grenze wie bei
+  `/api/agent/[id]`: `readJsonBodyWithinLimit()` liest höchstens 30 MiB
+  (`MAX_AGENT_REQUEST_BODY_BYTES`), zählt die tatsächlich ankommenden Bytes
+  (chunked ohne `Content-Length` inklusive) und bricht beim Überschreiten ab.
+  Die Antwort ist die bekannte `prompt_rejected`-Form mit 413. Bekannte Grenze:
+  Chunks plus geparster Blob liegen etwa doppelt so groß im Speicher wie der
+  Body (bei 30 MiB rund 60 MiB pro Request).
+- **Ort**: `app/api/agent/new/route.ts:29-163`, `lib/request-body.ts`
 
 ### Kommando an eine Session — `POST` / `GET` `/api/agent/[id]`
 
@@ -335,13 +357,19 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   wird sie aus der Plattendatei gestartet. Fehlgeschlagene Prompts kommen in der
   Form `prompt_rejected` mit `accepted: false`, damit der Client sie von einem
   Serverfehler unterscheiden kann.
-- **Identität**: **keine**. Weder `getRequestIdentity` noch `getAllowedFileRoots`.
+- **Identität**: `requireSessionAccess(req, id)` vor jedem Kommando und jedem Lesen;
+  `POST` liest zusätzlich `getRequestIdentity` und reicht sie an `startRpcSession`
+  (Kalender-Tools, Owner) sowie an jedes `session.send(body, identity)` weiter —
+  die Slash-Gate-Prüfung entscheidet damit pro Aufrufer, nicht pro Sitzungserzeuger.
+  `getAllowedFileRoots` wird hier nicht benutzt.
 - **Darf nicht**: (a) Prompts an fremde Sessions — dieselbe IDOR-Familie, hier über
-  `resolveSessionPath(id)`. (b) Die 30-MB-Body-Grenze nicht entfernen: `proxy.ts`
-  würde sonst mit einem nackten 413 ohne Erklärung antworten, den der Client nicht
-  von einem abgelehnten Prompt unterscheiden kann. Die Route prüft darum zuerst
-  `Content-Length` und antwortet in der Form, die der Client kennt.
-- **Ort**: `app/api/agent/[id]/route.ts:22-90`
+  `resolveSessionPath(id)`. (b) Die 30-MB-Body-Grenze nicht entfernen und nicht
+  durch die Proxy-Klon-Grenze ersetzen: `proxyClientMaxBodySize` beendet den Klon
+  still, ohne Ablehnung; die Route muss selbst antworten. `readJsonBodyWithinLimit()`
+  prüft ein glaubwürdiges `Content-Length` vorab und zählt sonst die tatsächlich
+  gelesenen Bytes (chunked inklusive), bricht beim Überschreiten ab und antwortet
+  mit 413 in der `prompt_rejected`-Form, die der Client kennt.
+- **Ort**: `app/api/agent/[id]/route.ts:22-121`, `lib/request-body.ts`
 
 ### Agent-Events — `GET` `/api/agent/[id]/events`
 
@@ -349,7 +377,8 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   alle 30 s einen Heartbeat und räumt beim Disconnect auf. Gefiltert:
   `turn_start`, `turn_end` und `tool_execution_update` werden nicht gesendet; bei
   `agent_end` kommt nur der Typ.
-- **Identität**: **keine**. `isApiRequestAllowed` ist gesetzt.
+- **Identität**: `requireSessionAccess(req, id)` und `isApiRequestAllowed`;
+  `getRequestIdentity` liefert die Identität für die beim Start gebundene Session.
 - **Darf nicht**: (a) Keine Ströme fremder Sessions (IDOR-Familie). (b)
   `assistantMessageEvent` darf nicht mitgesendet werden — das ist ein Token, das
   der Client nicht braucht.
@@ -361,10 +390,11 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   **referenziert**. `?download=1` streamt die Datei ohne Puffern als Attachment;
   inline gibt es ein Größenlimit (`MAX_INLINE_BASH_OUTPUT_BYTES`), sonst 413 mit
   Größe und Limit.
-- **Identität**: keine eigene — die Bindung an die Session ersetzt sie für
-  diesen Pfad.
+- **Identität**: `getRequestIdentity` → 403, und die Referenzprüfung läuft mit
+  dieser Identität: `isBashOutputPathReferencedBySession(resolved, id, identity)`
+  bindet das Log an *dieses* Konto, nicht an „irgendeine Session des Hosts".
 - **Darf nicht**: Den Pfad **nicht** durchreichen. `resolveBashOutputPath(path, tmpdir())`
-  plus `isBashOutputPathReferencedBySession(resolved, id)` sind die Absicherung:
+  plus `isBashOutputPathReferencedBySession(resolved, id, identity)` sind die Absicherung:
   ein beliebiges `path=`-Argument darf keine beliebige Datei des Prozesses lesen.
   Zusätzlich `openRegularFileNoFollow` — ein Symlink im Temp-Verzeichnis darf nicht
   als Datei geöffnet werden.
@@ -395,8 +425,12 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 - **Kann**: `type` ∈ `list` | `read` | `download` | `meta` | `preview` | `watch`.
   Bilder, Audio und Dokumente werden mit Range-Support gestreamt, Text mit
   256-KB-Grenze (`TEXT_PREVIEW_MAX_BYTES`), Bilder mit 10-MB-Grenze
-  (`IMAGE_PREVIEW_MAX_BYTES`). Directory-Listings überspringen `node_modules`,
-  `.git`, `.next`, `dist`, `build`, `__pycache__`, `.turbo`, `.cache`,
+  (`IMAGE_PREVIEW_MAX_BYTES`). **Aktive Dokumente sind die Ausnahme:** SVG, HTML,
+  XHTML und XML werden als `attachment` mit
+  `Content-Security-Policy: sandbox; default-src 'none'` und `nosniff`
+  ausgeliefert, damit ein `<script>` im SVG nicht mit der Sitzung des Betrachters
+  läuft; Rasterbilder und PDFs bleiben inline. Directory-Listings überspringen
+  `node_modules`, `.git`, `.next`, `dist`, `build`, `__pycache__`, `.turbo`, `.cache`,
   `coverage`, `.pytest_cache`, `.mypy_cache`, `target`, `vendor`, `.DS_Store` und
   `*.pyc`.
 - **Identität**: `getRequestIdentity` → 403 `Access denied`, aufgelöst **einmal**
@@ -408,15 +442,23 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   gelesen werden, die von dieser Session als strukturiertes Werkzeug-Pfadfeld
   referenziert wird, auch wenn sie lexikalisch außerhalb der Root-Menge liegt. Sie
   gilt nur für Nicht-`list`-Typen. Das ist **keine** Ausnahme von der
-  Mandantengrenze: `isExistingFilePathAllowed` nach `realpath` läuft seit `9c974b4`
-  für jeden Pfad, auch über den Durchlass, sodass ein Pfad außerhalb der Roots der
-  *anrufenden* Identität auch mit korrekter Sessionreferenz abgelehnt wird. Der
-  Durchlass existiert für den Fall, dass eine Root selbst über einen Symlink
-  erreicht wird und ein Werkzeug in `details.resolvedPath` den aufgelösten Pfad
-  meldet — siehe `docs/inventory-tools.md`, Abschnitt GET /api/files, Punkt (c).
+  Mandantengrenze: `resolveAuthorizedPath` nach `realpath` läuft für jeden Pfad,
+  auch über den Durchlass, sodass ein Pfad außerhalb der Roots der *anrufenden*
+  Identität auch mit korrekter Sessionreferenz abgelehnt wird. Der Durchlass
+  existiert für den Fall, dass eine Root selbst über einen Symlink erreicht wird
+  und ein Werkzeug in `details.resolvedPath` den aufgelösten Pfad meldet — siehe
+  `docs/inventory-tools.md`, Abschnitt GET /api/files, Punkt (c).
   Er darf **nicht** auf `list` ausgedehnt werden, und die Referenz ist an einen
   Katalog benannter Pfadfelder gebunden, nicht an Fließtext.
-- **Ort**: `app/api/files/[...path]/route.ts:432-523`, `lib/file-access.ts:38-90`
+  Gelesen wird anschließend der **Descriptor** aus `openAuthorizedFile()`: der
+  Pfad wird nach dem Öffnen erneut aufgelöst, gegen dieselben Roots geprüft und
+  sein `dev`/`ino` gegen `fstat(fd)` gehalten. Geöffnet wird mit
+  `O_RDONLY | O_NONBLOCK | O_NOFOLLOW`; `O_NONBLOCK` ist für reguläre Dateien
+  wirkungslos, verhindert aber, dass ein FIFO im Home den Prozess beim `open`
+  blockiert, bevor `fstat` ihn ablehnen kann. Ein zwischen Prüfung und Zugriff
+  ausgetauschter Pfad liefert keine Bytes.
+- **Ort**: `app/api/files/[...path]/route.ts:432-523`, `lib/file-access.ts`
+  (`resolveAuthorizedPath`, `openAuthorizedFile`)
 
 ### Datei hochladen — `POST` `/api/files/**`
 
@@ -509,24 +551,41 @@ Fehlerpfad.
 ### Dateien verschieben, kopieren, löschen — `POST` / `DELETE` `/api/file-actions/**`
 
 - **Kann**: `POST` mit `type` = `mkdir` | `rename` | `move` | `copy`;
-  `DELETE` löscht Datei oder Verzeichnis rekursiv. Kopiegrenze 512 MB.
+  `DELETE` löscht Datei oder Verzeichnis rekursiv. Beide Baumoperationen sind
+  asynchron, aber nicht identisch begrenzt (`lib/file-actions-tree.ts`): Copy
+  50 000 Einträge, 64 Ebenen, 512 MiB und 10 s; DELETE 64 Ebenen und 10 s,
+  **ohne** Eintrags- und Byte-Deckel (asynchrones `rm` blockiert den Loop
+  nicht; der Eintragsdeckel ist ein Copy-Budget). `inspectTree` prüft das
+  **vor** dem ersten Schreibzugriff oder Löschen; ein Verstoß antwortet 413
+  (Bytes, nur Copy) oder 422 (Einträge nur Copy, Tiefe, Zeit). Gemessen: der
+  synchrone Vorgänger blockierte den Event-Loop 413 ms (Copy) bzw. 55 ms
+  (Delete); über die Route sind es 34,1 ms bzw. 4,3 ms maximale Loop-Lücke bei
+  1184 ms bzw. 61 ms Wandzeit (2026-11-03, 12 Kerne, Last 5,19, 20 200
+  Einträge, 10-ms-Sonde).
 - **Identität**: `getRequestIdentity` → 403 `Access denied`, **einmal vor der
   ersten Pfadauswertung** aufgerufen. Beide Handler reichen nur diesen Wert an
   `isWritePathAllowed` / `authorizeTransfer`.
 - **Darf nicht**: (a) Bei `move` und `copy` darf das `destination` aus dem Body
   die Autorisierung nicht beeinflussen — beide Enden müssen `authorizeTransfer`
   bestehen. Genau deshalb wird die Identität zentral aufgelöst: Quellpfad und
-  Ziel dürfen nicht bestimmen, **wer** autorisiert wird. (b) `copyTree` folgt
-  **keinen** Symlinks; ein Link im Quellbaum wird als Link kopiert, damit ein
-  Link nach draußen keinen fremden Inhalt durch die Kopie zieht. (c) Kein
-  Kopieren oder Move in sich selbst (`isSameOrBelow`) — das rekursiert bis zur
-  vollen Platte, und der Größenwächter würde erst danach überhaupt etwas merken.
+  Ziel dürfen nicht bestimmen, **wer** autorisiert wird. (b) `copyTree` in
+  `lib/file-actions-tree.ts` folgt **keinen** Symlinks; ein Link im Quellbaum
+  wird als Link kopiert, damit ein Link nach draußen keinen fremden Inhalt durch
+  die Kopie zieht. (c) Kein Kopieren oder Move in sich selbst (`isSameOrBelow`)
+  — das rekursiert bis zur vollen Platte, und der Größenwächter würde erst
+  danach überhaupt etwas merken.
   (d) Kein Cross-Device-Move mit Copy-und-Löschen-Fallback — das hinterlässt bei
   Prozessabbruch einen halb verschobenen Baum; `EXDEV` wird als 409 **gemeldet**
   statt versucht. (e) Kein Löschen eines Dateisystem-Wurzelverzeichnisses, auch
   wenn es in die Schreibmenge geraten wäre. (f) `name` muss ein einzelnes
   Pfadsegment sein (`.` und `..` abgelehnt); `destination` muss absolut sein.
-- **Ort**: `app/api/file-actions/[...path]/route.ts:104-263`, `lib/write-access.ts`
+  (g) Einen Symlink nicht verfolgen: `DELETE` entfernt ihn per `lstat`/`unlink`
+  als Link; alles andere wird über `realpath` gegen die Schreibwurzeln und die
+  geschützten Bäume geprüft und erst dann per `fs.promises.rm` entfernt. Der
+  aufgelöste Pfad ist der, der verschwindet; ein Parent-Directory-Swap zwischen
+  Auflösung und `rm` bleibt offen, weil Node kein fd-relatives `rm` hat.
+- **Ort**: `app/api/file-actions/[...path]/route.ts`, `lib/file-actions-tree.ts`,
+  `lib/write-access.ts`
 
 ### Dateiindex — `GET` `/api/file-index`
 
@@ -797,18 +856,29 @@ Fehlerpfad.
 
 ### Modell-Discovery und Modelltest — `POST` `/api/models-config/discover`, `POST` `/api/models-config/test`
 
-- **Kann**: `discover` fragt die konfigurierte Endpoint-URL mit dem passenden
-  Auth-Header — anthropic: `x-api-key` **plus** `anthropic-version: 2023-06-01`,
-  google: `x-goog-api-key`, sonst `Authorization: Bearer`; Timeout 20 s. `test`
-  macht einen echten `completeSimple`-Aufruf gegen das gewählte Modell.
-- **Identität**: nur `isApiRequestAllowed`. Keine eigene Identitätsprüfung.
+- **Kann**: `discover` fragt die **im Body übergebene** `provider.baseUrl` mit
+  dem passenden Auth-Header — anthropic: `x-api-key` **plus**
+  `anthropic-version: 2023-06-01`, google: `x-goog-api-key`, sonst
+  `Authorization: Bearer`; Timeout 20 s. `test` macht einen echten
+  `completeSimple`-Aufruf gegen das gewählte Modell und dieselbe vom Aufrufer
+  gelieferte Konfiguration.
+- **Identität**: `requireAdmin` nach `isApiRequestAllowed` → ein Nicht-Admin
+  bekommt 403, **bevor** der Body gelesen wird. Der Schlüssel kommt aus dem
+  prozessweiten `AuthStorage` (nur über den Provider-Namen), und beide Routen
+  schicken ihn an die vom Aufrufer gewählte `baseUrl`; deshalb ist das eine
+  Operator-Aktion und keine Mandanten-Funktion (OMP-002).
 - **Darf nicht**: (a) Der `apiKey` darf nie in der Antwort zurückkommen. (b) Ein
   Header darf nur gesetzt werden, **wenn er nicht schon vorhanden** ist — sonst
   überschreibt ein vom Client mitgeschickter Header die Absicherung. (c) Das ist
   kein Verwaltungs-Interface, sondern das einzige Werkzeug, das einen fremden
   Provider-Endpunkt mit dem gespeicherten Key anspricht; es gehört deshalb nicht
-  neben `/api/models-config` als „gehört dazu".
-- **Ort**: `app/api/models-config/discover/route.ts:19-45`, `app/api/models-config/test/route.ts:29-45`
+  neben `/api/models-config` als „gehört dazu". (d) Keinen `!`-präfixierten
+  String aus dem Body ausführen: `commandConfigValuePath` prüft das Provider-
+  und beim Test auch das Modellobjekt rekursiv und antwortet 400 mit dem Pfad;
+  das SDK würde `!`-Werte über `/bin/sh -c` ausführen. `resolveModelDiscoveryAuth`
+  prüft das Provider-Objekt erneut.
+- **Ort**: `app/api/models-config/discover/route.ts`, `app/api/models-config/test/route.ts`,
+  `lib/model-discovery-auth.ts` (`commandConfigValuePath`, `resolveModelDiscoveryAuth`)
 
 ### MCP-Server — `GET` / `PATCH` / `PUT` `/api/mcp`
 
@@ -818,7 +888,10 @@ Fehlerpfad.
 - **Identität**: Alle drei Handler beginnen mit `requireIdentity` → 403, **vor**
   jeder Pfadableitung. `configPath(identity, scope, cwd)` löst den User-Scope über
   `resolveTenantAgentDir` auf: Admin = globales Prozessverzeichnis (Prozess =
-  Admin), Nicht-Admin = `$HOME/$name/.omp/agent`. `validatedCwd` prüft den `cwd`
+  Admin), Nicht-Admin = `$HOME/$name/.omp/agent`. Für einen **Mandanten** prüfen
+  beide Scopes mit `resolvedPathInside` gegen sein erlaubtes Verzeichnis; beim
+  **Admin** löst `resolvedPath` den Symlink ohne Containment auf, damit ein
+  dotfile-verwaltetes `mcp.json` funktioniert. `validatedCwd` prüft den `cwd`
   aus dem Query gegen `getAllowedFileRoots(identity)` und wirft `Access denied` →
   403. Servernamen müssen auf `^[a-zA-Z0-9_.:-]{1,100}$` passen, Namen müssen
   eindeutig sein.
@@ -837,7 +910,13 @@ Fehlerpfad.
   `scope: "project"` ohne `cwd` ist ein Fehler. (d) **`loadCapability` filtert
   den User-Scope für Nicht-Admins** — es löst `~` über `os.homedir()` des
   Prozesses auf und würde die globale `mcp.json` sonst als *entdeckt*
-  zurückgeben, unabhängig von `configPath`.
+  zurückgeben, unabhängig von `configPath`. Derselbe Filter verwirft den
+  Projekt-Scope, dessen echter Pfad nicht im Projekt bleibt (OMP-005): die
+  Discovery prüft `isInsideProject`. Für einen Mandanten prüft zusätzlich
+  `configPath` `<cwd>/.omp/mcp.json` über `resolvedPathInside` gegen die
+  Projektwurzel; ein `<cwd>/.omp`-Symlink auf einen fremden Store liefert ihm
+  weder lesbare Server noch ein schreibbares Ziel. Der Admin darf den Symlink
+  auflösen (siehe oben), die Discovery-Grenze bleibt trotzdem bestehen.
 - **Ort**: `app/api/mcp/route.ts:15-85` (Begründung), `:160-177` (`configPath`),
   `:217-267` (Discovery-Filter), `:304-343` (Guards), `:345-447` (Handler)
 
@@ -846,8 +925,12 @@ Fehlerpfad.
 - **Kann**: `GET` liefert Pakete, Gesamtzahlen und Diagnosen, gruppiert nach
   Extensions, Skills, Prompts und Themes. `POST` mit `action` ∈ `install` |
   `remove` | `update` | `disable` | `enable`.
-- **Identität**: Roots aus `getAllowedFileRoots(getRequestIdentity(...))` gegen
-  `body.cwd`, 403 bei `null`.
+- **Identität**: `POST` beginnt mit `requireAdmin` → 403 für Nicht-Admins, bevor
+  `cwd` oder eine Aktion ausgewertet wird; der Plugin-Baum, die Registries und
+  das Lockfile sind prozessweit, und Install importiert die deklarierten
+  Extensions im Serverprozess. Erst danach gelten die Roots aus
+  `getAllowedFileRoots(getRequestIdentity(...))` gegen `body.cwd`, 403 bei
+  `null`. `GET` bleibt bei der Root-Prüfung.
 - **Darf nicht**: (a) Tools und Hooks nicht als eigene Zähler ausweisen — beides ist
   Code, den die Session lädt, und steht deshalb unter `extensions`; Kommando-Dateien
   stehen unter `prompts`, weil sie alle `/`-aufrufbarer Text sind. (b)

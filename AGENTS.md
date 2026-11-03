@@ -106,6 +106,7 @@ lib/
   agent-client.ts      typed fetch helper for /api/agent commands
   draft-store.ts       local draft persistence helpers
   file-access.ts       allowed file roots for /api/files and worktrees
+  file-actions-tree.ts bounded async tree inspect/copy for /api/file-actions
   file-paths.ts        client/server path encoding helpers
   markdown.ts          shared markdown helpers
   model-roles.ts       omp's model roles, read/written for the browser
@@ -121,6 +122,7 @@ lib/
   projects-sizes.ts    the background size measurement and its in-flight lock
   projects-store.ts    the per-account registry file
   rpc-manager.ts       AgentSessionWrapper + registry + startRpcSession
+  session-run-budget.ts per-run request and wall-clock budget
   session-reader.ts    session listing + path cache + buildSessionContext adapter
   session-system-prompt.ts  SYSTEM.md / APPEND_SYSTEM.md resolution per session cwd
   session-title.ts     thin wrapper over omp's own title generator
@@ -178,6 +180,35 @@ hooks/
 - One `AgentSessionWrapper` per session id, keyed in `globalThis.__ompSessions`
 - `globalThis` survives Next.js hot-reload; plain module-level Map does not
 - Idle timeout: 10 minutes. Concurrent `startRpcSession()` calls share a single start Promise (`globalThis.__ompStartLocks`)
+- `send(command, callerIdentity)` takes the **caller's** identity per dispatch;
+  `/api/agent/[id]` passes it from the proxy headers (never the body). A live
+  wrapper can be addressed by any account `requireSessionAccess` admits, so the
+  identity must not be a field: two interleaved calls would let the second
+  call's identity decide the first one's gate. `execute_slash_command` gates on
+  that caller. `/mcp add|remove|rm` and `/ssh add|remove|rm` are refused only
+  when the effective scope is `user` — the default and `--scope project` are
+  allowed for a tenant, and an unparseable scope is treated as `user`
+  (fail-closed). `/mcp enable|disable|reauth`, the writing `/marketplace` verbs
+  and `/plugin(s) enable|disable` are always refused for a tenant. Read-only
+  verbs stay. The builtins still resolve `getAgentDir()` from process state,
+  which is why the gate exists.
+- Each prompt run has a budget (`lib/session-run-budget.ts`): 400 model requests,
+  counted from `turn_start`, and 45 minutes wall clock. On exhaustion the wrapper
+  emits one `prompt_error` and aborts through the browser's `abort` path. A steer
+  shares the active run; a `/goal` continuation starts a fresh run budget but
+  shares a second **goal-lifetime** budget (same limits) that continuations do
+  not reset. `/goal resume` starts a fresh goal budget. The notices differ:
+  `Run stopped after …` vs. `Goal paused after … for this goal. Send /goal resume
+  to continue with a fresh budget.` An in-turn provider re-sample does not emit
+  a second `turn_start`, so retries are undercounted; the wall clock still
+  bounds them. Do not count requests anywhere else, or the numbers drift.
+- `POST /api/agent/[id]` and `POST /api/agent/new` read their body through
+  `readJsonBodyWithinLimit()` (30 MiB of bytes **actually read**, chunked
+  included) and answer the existing `prompt_rejected` 413. The proxy's
+  `proxyClientMaxBodySize` is not that limit: Next ends the cloned body silently,
+  so a route that relies on it truncates instead of refusing. Known limit: the
+  reader keeps the chunks plus the parsed Blob, about twice the body in memory
+  (30 MiB in, ~60 MiB held per concurrent request).
 - Extensions are bound with omp's own `initializeExtensions()` from
   `@oh-my-pi/pi-coding-agent/modes/runtime-init` — the same wiring `omp --mode rpc`
   uses — with a browser-backed `ExtensionUIContext` layered on top. Do not
@@ -537,18 +568,35 @@ nothing to decide.
 
 For an untrusted project nothing loads from inside it: rules, `AGENTS.md` and
 the other context files, prompt templates, slash commands, a project's
-`SYSTEM.md` / `APPEND_SYSTEM.md`, extensions, custom tools and skills. Code is
-filtered by a **positive allowlist**, not by "not under the project": only
-paths under `getAgentDir()` or `os.homedir()` survive, because a project's
-`config.yml` can name a path *outside* itself and an exclusion test cannot see
-that. An extension the operator configured at `/opt/foo.ts` therefore does not
-load in a project they have not trusted, and comes back when they trust it.
+`SYSTEM.md` / `APPEND_SYSTEM.md`, extensions, custom tools and skills.
+
+Trust is decided at `resolveProjectRoot(cwd)`, never at the session cwd: the
+nearest directory at or above it carrying `.git` or `.omp` (a home's
+`.omp/agent` is not a project marker), stopping below the process home and the
+temp roots. A session opened in `repo/src` therefore inherits `repo`'s state —
+`getProjectTrustStatus()`, `trustProject()` and `filterLoads()` all call it.
+
+Code is filtered by a **positive allowlist**, not by "not under the project":
+only paths whose **real** path resolves under `userCodeRoots(agentDir)` survive
+— the agent directory itself (where `extensions/`, `tools/` and `hooks/` live),
+`~/.claude`, `~/.codex` and the plugin tree. `os.homedir()` is deliberately not
+a root: it contains the projects themselves, so `../evil.ts` from `~/work/repo`
+stayed inside "the home". An extension the operator configured at `/opt/foo.ts`
+therefore does not load in a project they have not trusted, and comes back when
+they trust it.
 The container is `filterLoads` in `lib/load-policy.ts`; the code half is
 `untrustedProjectSessionOptions()`.
 
+Every project-scoped load that carries a path is tested with
+`isInsideProject(path, root)`, which realpaths both sides; a project file whose
+symlink points outside the project is dropped for **every** identity, trusted
+or not, and the diagnostic says the path resolves through a symlink. Loads
+without a path (prompt templates, slash commands) keep deciding by `level`.
+Comparing the link text is not a boundary.
+
 Skills follow trust because they are prompt text a merely-opened repository must
-not write. `trustedProjectSkills` keeps anything `level: "user"` **and** outside
-the project root — the level alone misses a project pointing
+not write. `trustedProjectSkills` keeps anything `level: "user"` **and** whose
+real path is outside the project root — the level alone misses a project pointing
 `skills.customDirectories` at itself. `loadSessionSkills()` is the one loader
 `GET /api/skills` and the session both call, so the panel never lists a skill
 the agent lacks. See `docs/project-trust.md`.
@@ -661,10 +709,13 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - Sessions whose cwd points at a removed worktree are inferred back into the main project instead of becoming a phantom project row.
 
 ### File access allow-list
-- `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/omp-cwd-*`, and roots explicitly added with `allowFileRoot()`.
+- `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/omp-cwd-*`, and roots explicitly added with `allowFileRoot()`. An `omp-cwd-*` entry becomes a root only when `lstat` says it is a real directory and its realpath stays inside the caller's home; a symlink with that name is skipped, because the root set is what every later check is measured against.
 - The allow-list is **per account**, not per process. `getAllowedFileRoots(identity)` takes the caller's `WebIdentity`; a missing identity yields the empty set, and it does not even reach `listAllSessions` there, because an unfiltered scan would rebuild the set the identity is there to narrow. Roots live in a `Map` keyed by identity. `"/"` and `OMP_WEB_ALLOWED_ROOTS` are added in the **admin branch only** — a non-admin never sees them.
 - Admins are `pi`, `omp`, `steimerbyte` by default, overridable through `OMP_WEB_ADMINS`. The exemption is deliberate and covers writes: a compromised admin password is host compromise, not just a stolen tenant. The write boundary is narrower than the read one — `isWritePathAllowed` filters the filesystem root out of the writable set even for an admin, so `/etc` is readable and not writable.
 - Writes are guarded by `isWritePathAllowed` / `authorizeTransfer`, which take an identity with no default. A route that writes and does not call one is a hole; `grep -c isWritePathAllowed 'app/api/files/[...path]/route.ts'` returning 0 used to mean exactly that.
+- A file read is bound to the object it authorized: `openAuthorizedFile()` opens the already-`realpath`ed name with `O_RDONLY | O_NONBLOCK | O_NOFOLLOW`, re-checks the fresh realpath against the roots, and requires the `stat` of that path to match `fstat` of the descriptor. `O_NONBLOCK` is a no-op for regular files; without it, `open` on a FIFO in the caller's home blocked the whole process before `fstat` could refuse it (measured). Every branch that reads bytes uses that **fd** (streams hand it to `createReadStream`; `watch` observes the resolved path), and `PUT` replaces the resolved target with its temp file beside it. A path string that was checked once is not an authorization.
+- `/api/files` serves active content — SVG, HTML, XHTML, XML — as `attachment` with `Content-Security-Policy: sandbox; default-src 'none'` and `X-Content-Type-Options: nosniff`; raster images and PDFs stay inline. A new MIME type a browser parses as a document belongs in `isActiveContent()`, not in a comment.
+- `/api/file-actions` copy and DELETE are asynchronous and bounded, but not identically (`lib/file-actions-tree.ts`): a copy allows 50 000 entries, 64 levels, 512 MiB and 10 s; a delete allows 64 levels and 10 s, with no entry and no byte cap — async `rm` does not block the loop, and the entry cap is a copy-work budget. The inspection runs before the first write or removal; a refusal is 413 for the copy byte limit and 422 for entries (copy only), depth and time. Do not put `readdirSync`/`rmSync` back into that route — the measured event-loop block is in the module header.
 - The identity arrives in the `x-omp-user` / `x-omp-admin` request headers, and `proxy.ts` is the only thing that may set them. It deletes both before it sets them, on **every** path that lets a request through, including the anonymous one. A delete that a branch never reaches is not a protection: on an unlocked server `identity` is null, and a client-supplied `x-omp-admin: 1` used to survive into the route and grant full admin access.
 - Accounts live in a separate `omp-web-accounts.json` beside the credential file, with its own schema version, lifetime and ownership. `validateAccountName` rejects anything that is not `/^[a-z_][a-z0-9_-]{0,31}$/`, checked before any `mkdir`, so `../etc` never becomes a directory. With `OMP_WEB_PASSWORD` set there is exactly one account; several accounts need the account file.
 - `models.yml` and `config.yml` are per account under that account's agent directory. The **admin's own skills** are the process agent dir (`~/.omp/agent/skills`), as they always were. A **tenant's own skills** live in their account's agent dir. `startRpcSession` keeps the **process** agent directory on purpose — omp's skill loader reads `getAgentDir()` from process state and ignores the `agentDir` passed to `createAgentSession` (`discoverSkills(cwd, _agentDir)`); moving it would split credentials, memory and `agent.db` from the skills without moving the skills. What it does resolve per identity is the **Settings instance** (`getSettingsForIdentity`), and `skills.customDirectories` in the account's `config.yml` is where omp's `loadSkills()` finds the tenant folder. `GET /api/skills/user` registers that absolute entry idempotently, preserving every other key, and `ensureTenantAgentDir` runs before the flush. Without the Settings change a tenant's session read the operator's store while the manager showed him his own. Nothing is migrated: a new account starts empty on purpose, because copying the operator's `models.yml` would hand his API key to the first tenant.
@@ -677,11 +728,12 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - An **admin** terminal is never sandboxed, and that is a decision: `getUserHome` gives an admin `/`, and a sandbox around `/` is the disk. `sandboxed: false` in `GET /api/terminal` carries it, the environment is still the allowlist, and the route passes the real `isAdmin` flag into `spawn()` instead of the old hardcoded `isAdmin: false`.
 - **Service secrets are not in the process environment, and not readable inside the tenant's shell.** `/etc` is bound read-only (a shell needs it), so the service's own secret files under it — secrets, credential, accounts, session key — are masked with an empty file each (`--ro-bind <empty> <path>`; `/dev/null` fails on `MS_NODEV`, measured).
 - **Service secrets are not in the process environment.** The keys omp-web itself reads (`OMP_WEB_PASSWORD`, `GITHUB_TOKEN`) come from `OMP_WEB_SECRETS_FILE` (default `/etc/omp-web.env`) through `lib/runtime-secrets.ts` and `bin/web-auth-store.js`, which keep them in a module value; the unit must not use `Environment=`/`EnvironmentFile=` for them, because every child inherits the process environment — the agent's `bash` (its shell is in-process and reads the native environ, measured), MCP stdio servers (they build `{...Bun.env}`), the scheduler, `git`, `npx`. Keys the SDK resolves itself (model providers, MCP server env) are not read from this file: they belong in the SDK's own store, or they stay in the environment and stay inheritable. `childEnv()` is the map the app hands to the children it starts itself; it drops anything whose name looks like a secret or is a key of the secrets file. Startup logs the names of secrets it still finds inherited.
-- **`git` runs with hooks and repo-defined drivers disabled, and without the service env** (`lib/git-safe.ts`: `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `diff.external=`, `--no-optional-locks`, plus `filter.*.clean/smudge/process` and `diff.*.textconv/command` from the repo's own `.git/config`; the diffs pass `--no-textconv`). A driver pulled in through `include.path` stays open — that is the edge of this fix, not an oversight. A tenant-writable repository is otherwise a shell: a `core.fsmonitor` hook received `BRAVE_API_KEY`, `OMP_WEB_PASSWORD` and `OPENROUTER_API_KEY` on the first `git status` (`SHELL-ISOLATION-SCAN.md` §4b, measured).
+- **`git` runs with hooks and repo-defined drivers disabled, and without the service env** (`lib/git-safe.ts`: `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `diff.external=`, `--no-optional-locks`). The driver names come from `git config --list --name-only --includes` on **every** call, run with `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`: only what the repository can write — repo config, legacy and dotted sections, files it includes via `include.path`/`includeIf`, and `config.worktree` — and each `filter.*.clean/smudge/process` and `diff.*.command/textconv` found there is disabled; a name that cannot be a `-c` key goes into a quoted include file (`0600`, per-process `mkdtemp`). Global and system drivers stay **active on purpose**: disabling a globally installed git-lfs filter made every LFS file look modified (measured). If the enumeration fails, the git call is **refused** — a caller may fall back to a non-git answer, but no git process runs without the overrides. Known limit: this spawns one `git config` per git call and can block up to its 5 s timeout. A tenant-writable repository is otherwise a shell: a `core.fsmonitor` hook received `BRAVE_API_KEY`, `OMP_WEB_PASSWORD` and `OPENROUTER_API_KEY` on the first `git status` (`SHELL-ISOLATION-SCAN.md` §4b, measured).
 - **The agent's `bash` tool has no sandbox and cannot get one from this SDK** (18.14.0 has no `sandbox`/`allowedPaths`/`noNewPrivs`, and the shell is embedded, so there is no `bash` binary to wrap). What it does get is a per-session `tool_call` guard (`lib/session-shell-guard.ts`, registered through `CreateAgentSessionOptions.extensions`): `bash` is refused when the session cwd is outside the account's home and the roots explicitly granted to it. **That is the whole gate, measured:** the bash tool's LLM-facing schema in 18.14.0 is `{command, timeout}` — `BashToolOptions` has a `spawnHook`, but the tool input carries no working directory, so the hook resolves one value per call (the session cwd; a `cwd` key only appears if the model invents one) and a `cd /` inside the command text is invisible to it. The shell also runs as the service user with whatever the uid can read, and the guard therefore narrows nothing beyond "this session was opened in a directory the account may use". Only per-account OS users (unavailable, see `lib/sandbox.ts`) or an SDK spawn hook would change that; `docs/inventory-tools.md` states the residual plainly.
 - None of the others are containment. Every one is an assignment decided from data the service process can write, so they stop an account from seeing another's work by accident and through the routes that exist, not against someone who edits the underlying files. `docs/authentication.md` says so in the place a reader of this file is pointed at.
 
 ### Plugins and skills
+- `POST /api/plugins` is **admin-only**, first statement in the handler so every new action inherits it. Every action writes the process-global plugin tree, registries and lockfile, and install imports the package's declared extensions in the server process; a caller's `cwd` only selects project overrides. `GET` stays open behind the allowed-root check.
 - `/api/plugins` drives omp's `PluginManager` (`~/.omp/plugins`): install, uninstall, enable/disable, plus `doctor()` output as diagnostics. omp has no in-place update, so "update" reinstalls the spec with `force`.
 - `/api/skills` uses omp's own `loadSkills()`, so `.omp/skills`, `~/.omp/agent/skills`, `.claude/skills`, plugin skills and `.agents/skills` are listed exactly as a session sees them. The list is resolved with the caller's identity (its Settings instance), but it is still the *union*: an admin sees the managed/global entries, a tenant additionally sees their own `custom:user` folder. Under an untrusted project it drops the project-scoped entries through the same filter the session uses (`trustedProjectSkills`); the panel must never advertise what the session did not load.
 - The **skills manager** (`?view=skills`, `components/SkillsManagerView.tsx`) reads and writes only the caller's own store: `<agent dir>/skills/<name>/SKILL.md`. Its routes are `/api/skills/user` and `/api/skills/user/[name]`. They address a **name**, never a path, validate it with the managed-skill rule `^[a-z0-9][a-z0-9-]{0,63}$`, derive the folder themselves, refuse symlinks, and write atomically. A foreign tenant's name answers **404**, because the folder is derived from the caller's home and does not exist there.
@@ -863,6 +915,8 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - API-key status endpoints must never return the raw key.
 - `models.yml` is YAML: `/api/models-config` parses whichever of `models.yml` / `models.yaml` / `models.json` exists and always writes back `models.yml`.
 - A header value in `models.yml` that names an environment variable is written as the **bare name** (`X-Token: MY_VAR`), not `$MY_VAR`.
+- `POST /api/models-config/discover` and `POST /api/models-config/test` are **admin-only**: the provider/model object arrives in the request body, but the credential they resolve is the process `AuthStorage`, keyed only by provider name, and both probes send it to the caller-chosen `baseUrl`. The guard is the route's first check after the origin check.
+- Both probe routes refuse a `!`-prefixed string **anywhere** in the submitted provider/model object (`commandConfigValuePath`, 400). The SDK routes such a value through `/bin/sh -c` (`resolve-config-value.ts`); that feature is for operator-written `models.yml`, never for an HTTP body. `resolveModelDiscoveryAuth()` checks the provider object again, so a new caller cannot skip the route's check.
 
 ### Password access is verified in the proxy, stored hashed, and shared with `bin/`
 `bin/web-auth-store.js` is the single source of truth for the password lock, and
@@ -886,6 +940,26 @@ TypeScript half type-checks against — keep the two in sync.
   accepted them, because scrypt runs on every request otherwise. The key
   includes the digest, so a password change invalidates the cache across
   bundles.
+- Every rejected credential check pays exactly one scrypt
+  (`payCredentialCost()` in `lib/web-auth.ts`, against a fixed dummy digest)
+  when its branch would otherwise return before the real hash: unknown or
+  disabled names, environment-mode passwords, and a missing store. Measured
+  without it: an unknown name answered in 0.10 ms and a known name with a wrong
+  password in 36.06 ms — an unauthenticated caller could tell whether the name
+  exists. Do not "optimise" a rejection by skipping it. Known limit: every
+  rejection now spends ~36 ms of CPU, including the unauthenticated Basic-auth
+  path `proxy.ts` checks on each request, and omp-web has no auth rate limit —
+  the fix removes the oracle, not the CPU cost.
+- `OMP_WEB_ADMINS` is authoritative whenever it is **set**, including empty. An
+  empty value means *no admins at all*: the admin panel and every
+  `requireAdmin` route stay closed. Only an absent variable falls back to
+  `pi, omp, steimerbyte`. Treating `""` as unset is the bug this rule exists to
+  prevent.
+- `POST /api/web-access/login` and `POST /api/web-access/recovery` read at most
+  4 KiB (`lib/web-access-body.ts`) and answer 413 before the credential store or
+  a recovery code is touched. The configured `proxyClientMaxBodySize` is not
+  this limit: it truncates the proxy's clone silently, so an oversized body
+  would reach `req.json()` as a broken one instead of being refused.
 - `/recover` and `POST /api/web-access/recovery` are the only unauthenticated
   paths. They still go through the host allow-list and cross-site checks, and
   the recovery code is printed on the server's stdout, never returned in the

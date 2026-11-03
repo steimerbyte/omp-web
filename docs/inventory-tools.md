@@ -124,16 +124,17 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
 - **Darf nicht**: (a) **Der Pfad kommt aus der URL, also ist er vom Aufrufer gewählt.** Alles
   Weitere leitet sich aus der Identität allein ab — nie aus dem Pfad, `sessionId` oder
   `expectedMtimeMs` (`route.ts:686-691`). (b) Es gibt **zwei** Prüfungen, und die zweite ist nicht
-  überflüssig: erst `isFilePathAllowed` (rein lexikalisch, `:456`), dann nach `statSync` noch
-  `isExistingFilePathAllowed` (realpath, `:504`). Die erste kann einen Symlink passieren, die
-  zweite nicht. (c) `allowedBySessionReference` (`:460-463`) gilt **nur** für Nicht-`list` und
-  hebt die realpath-Prüfung **nicht** auf: `isExistingFilePathAllowed` läuft seit `9c974b4` für
-  **jeden** Pfad, auch über den Durchlass. Der Durchlass überspringt damit nur die *lexikalische*
+  überflüssig: erst `isFilePathAllowed` (rein lexikalisch), dann `resolveAuthorizedPath` (realpath
+  gegen die Wurzeln) und beim Öffnen noch einmal `openAuthorizedFile` (realpath plus Inode). Die
+  erste kann einen Symlink passieren, die folgenden nicht.
+  (c) `allowedBySessionReference` (`:460-463`) gilt **nur** für Nicht-`list` und
+  hebt die realpath-Prüfung **nicht** auf: `resolveAuthorizedPath` läuft für **jeden** Pfad, auch
+  über den Durchlass. Der Durchlass überspringt damit nur die *lexikalische*
   Allowlist. **Wozu er überhaupt nötig ist:** die beiden Prüfungen sehen nicht dasselbe, und sie
   laufen genau dann auseinander, wenn eine Root selbst über einen Symlink erreicht wird — ein Konto
   mit symlink-gebundenem Home, oder eine Session, deren `cwd` ein Symlink ist. Dann steht in der
   Root-Menge der Symlink-Pfad, während ein Werkzeug in `details.resolvedPath` den *aufgelösten*
-  Pfad meldet (`TOOL_RESULT_PATH_FIELDS.write` in `lib/session-file-references-core.ts:118`).
+  `TOOL_RESULT_PATH_FIELDS.write` in `lib/session-file-references-core.ts:118`).
   Der zeigt auf dieselbe Datei, liegt aber lexikalisch außerhalb jeder Root; ohne den Durchlass
   bekäme der Agent beim Lesen der gerade selbst geschriebenen Datei ein 403. **Was er nicht ist:**
   keine Ausnahme von der Mandantengrenze. Ein Pfad, der nach `realpath` nicht in den Roots der
@@ -146,7 +147,21 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
   Pfad aus ihrem Inhalt sessionreferenziert hätte. (d) Eine fehlende Identität wird **zweimal**
   abgelehnt, einmal explizit und einmal implizit über die leere Root-Menge — „the explicit early
   return is there to make that impossible to get wrong by accident later" (`:450-453`).
-- **Ort**: `app/api/files/[...path]/route.ts:432-672` (GET), `:40-42` (Typen), `:456-506` (Prüfungen)
+  (e) **Aktive Dokumente kommen als Download.** `?type=read` lieferte ein SVG inline als
+  `image/svg+xml` aus; ein `<script>` darin lief bei direkter Navigation mit der Sitzung des
+  Betrachters. `isActiveContent` (SVG, HTML, XHTML, XML) setzt jetzt `attachment`,
+  `Content-Security-Policy: sandbox; default-src 'none'` und `nosniff`; Rasterbilder und PDFs
+  bleiben inline. (f) **Gelesen wird der geprüfte Descriptor, nicht der Pfad.**
+  `openAuthorizedFile` öffnet den bereits aufgelösten Pfad mit
+  `O_RDONLY | O_NONBLOCK | O_NOFOLLOW`, prüft den realpath erneut und hält `stat` gegen `fstat`
+  (gleicher Inode). `O_NONBLOCK` ändert für reguläre Dateien nichts, verhindert aber, dass ein FIFO
+  im Home den Prozess beim `open` blockiert, bevor `fstat` ihn ablehnen kann (gemessen: das
+  Read-only-Open kehrte nie zurück). Die Zweige, die Bytes lesen (`read`,
+  Stream, Download, Vorschau, Meta), lesen diesen `fd`; ein zwischen Prüfung und Zugriff
+  ausgetauschter Pfad liefert keine Bytes. `PUT` schreibt seine Temp-Datei neben das aufgelöste
+  Ziel.
+- **Ort**: `app/api/files/[...path]/route.ts` (GET), `lib/file-access.ts` (`openAuthorizedFile`,
+  `resolveAuthorizedPath`), `:40-42` (Typen)
 
 ### PUT /api/files — der Editor-Speicher
 - **Kann**: Schreibt den Inhalt einer Datei zurück, mit Optimistic-Concurrency über
@@ -198,26 +213,40 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
   Prozesses. (e) **Ein vorhandenes Ziel wird mit 409 abgelehnt, nicht überschrieben**
   (`:150-153`): „the user cannot see what was there before it is gone". (f) `isSameOrBelow`
   verhindert „Ordner in sich selbst" (`:135-137`, `:163-166`). (g) **Kopieren folgt Symlinks nicht**
-  (`copyTree`, `:78-92`): ein Symlink in der Quelle wird als Symlink kopiert, damit ein Link nach
-  draußen nicht fremden Inhalt durch den Copy hineinzieht. `chmod` trägt den Modus über, weil
-  `copyFileSync` das nicht überall tut (`:91`) — ein Executable ohne `+x` ist ein echter Regress.
+  (`copyTree` in `lib/file-actions-tree.ts`): ein Symlink in der Quelle wird als Symlink kopiert,
+  damit ein Link nach draußen nicht fremden Inhalt durch den Copy hineinzieht. `chmod` trägt den
+  Modus über, weil `fs.copyFile` das nicht überall tut — ein Executable ohne `+x` ist ein echter
+  Regress.
   (h) **Ein `EXDEV` beim Move wird gemeldet, nicht umgangen** (`:170-182`): ein Copy-dann-Delete
-  ließe einen halb verschobenen Baum, wenn der Prozess dazwischen stirbt. (i) Copy-Größe 512 MB
-  (`:40`), geprüft **vor** dem Schreiben (`:168-173`).
-- **Ort**: `app/api/file-actions/[...path]/route.ts:16-33` (Begründung), `:49-64` (`safeName`),
-  `:97-207` (POST)
+  ließe einen halb verschobenen Baum, wenn der Prozess dazwischen stirbt. (i) **Copy und DELETE
+  laufen asynchron, aber mit unterschiedlichen Grenzen** (`lib/file-actions-tree.ts`): **Copy**
+  50 000 Einträge, 64 Ebenen, 512 MiB und 10 s; **DELETE** 64 Ebenen und 10 s, **ohne** Eintrags-
+  und Byte-Deckel — asynchrones `rm` blockiert den Loop nicht, und der Eintragsdeckel ist ein
+  Copy-Budget. `inspectTree` prüft das **vor** dem ersten Schreibzugriff oder Löschen; ein Verstoß
+  antwortet 413 (Bytes, nur Copy) oder 422 (Einträge nur Copy, Tiefe, Zeit) und lässt kein halbes
+  Ziel zurück. Der synchrone Vorgänger blockierte den Event-Loop gemessen 413 ms (Copy) bzw. 55 ms
+  (Delete); über die Route sind es 34,1 ms bzw. 4,3 ms maximale Loop-Lücke bei 1184 ms bzw. 61 ms
+  Wandzeit (2026-11-03, 12 Kerne, Last 5,19, 20 200 Einträge, 10-ms-Sonde).
+- **Ort**: `app/api/file-actions/[...path]/route.ts` (Begründung, `safeName`, POST),
+  `lib/file-actions-tree.ts` (`inspectTree`, `copyTree`, `TreeRefusal`)
 
 ### DELETE /api/file-actions — rekursives Löschen
-- **Kann**: Löscht Datei (`unlinkSync`) oder Baum rekursiv (`rmSync` mit `recursive: true`).
+- **Kann**: Löscht eine Datei (`fs.promises.unlink`) oder einen Baum rekursiv
+  (`fs.promises.rm` mit `recursive: true`), asynchron.
 - **Tastatur**: im Kontextmenü `Shift`-Klick ohne Rückfrage (`en.ts` `files.deleteWithShiftClick`,
   `SessionSidebar.tsx:2598`).
 - **Darf nicht**: (a) **Das Löschen eines Dateisystemwurzelverzeichnisses wird abgelehnt** —
   `path.resolve(target) === path.parse(path.resolve(target)).root` → 400 (`:224-229`), mit der
   Begründung: „a root that somehow entered the writable set must not be removable with one
   request". (b) `force: false` — ein nicht leerer Ordner, der sich nicht entfernen lässt, ist ein
-  Fehler und kein Erfolg (`:230`). (c) `lstatSync` statt `statSync` (`:219`): ein Symlink ohne
-  Ziel belegt den Namen, und `rmSync` auf einen solchen Pfad würde durch den Link hindurch löschen.
-- **Ort**: `app/api/file-actions/[...path]/route.ts:209-259`
+  Fehler und kein Erfolg. (c) **Ein Symlink wird als Link entfernt** (`lstat`, dann `unlink`); er
+  wird nicht verfolgt. (d) **Alles andere wird über seinen echten Pfad gelöscht:** `realpath`
+  gegen die Schreibwurzeln und die geschützten Bäume, danach `inspectTree` mit den
+  DELETE-Grenzen (64 Ebenen, 10 s, kein Eintrags- und kein Byte-Deckel), erst dann `rm`. Der
+  aufgelöste Pfad ist der, der verschwindet; der Zwischensymlink-Hop aus dem Befund ist damit
+  weg. Ein Parent-Directory-Swap zwischen Auflösung und `rm` bleibt offen, weil Node kein
+  fd-relatives `rm` hat — der Kommentar im Handler sagt das ausdrücklich.
+- **Ort**: `app/api/file-actions/[...path]/route.ts` (DELETE), `lib/file-actions-tree.ts`
 
 ### isWritePathAllowed — die eigentliche Schreibgrenze
 - **Kann**: Prüft, ob ein Ziel in einem **schreibbaren** Root liegt, nach Symlink-Auflösung.
@@ -275,7 +304,10 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
   (`file-access.ts:53-58`) — der Dienst läuft als ein Konto, ein Scan im Prozess-Home hätte jedem
   angemeldeten Nutzer die Kratzverzeichnisse des Dienstkontos als lesbare Wurzeln gegeben: „a
   cross-tenant read that no identity check could catch afterwards, because by then the path was in
-  the allowlist". (c) **`allowFileRoot` invalidiert den Cache, statt ihn zu flicken**
+  the allowlist". Ein gleichnamiger **Symlink** wird übersprungen: `lstat` muss ein echtes
+  Verzeichnis melden, und sein `realpath` muss im Home bleiben — sonst machte `omp-cwd-20260101 ->
+  /etc` sein Ziel zur Lesewurzel (OMP-006).
+  (c) **`allowFileRoot` invalidiert den Cache, statt ihn zu flicken**
   (`allowed-roots.ts:112-116`): der gesetzte Eintrag wurde für *eine* Identität zusammengesetzt
   und kann durch sie gefiltert sein, ein Einsetzen könnte also die Home-Grenze durchbrechen, die
   beim Zusammensetzen lag. (d) **Für einen Admin liegt `/` in der Lesewurzelmenge — und das ist
@@ -456,11 +488,14 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
 - **Kann**: `install`, `remove`, `update` (als Neuinstallation mit `force: true`, „omp has no
   in-place update"), `enable`, `disable`.
 - **Tastatur**: `Enter` installiert, nur wenn Quelle nicht leer und nicht `busy`.
-- **Darf nicht**: (a) **Jeder Zweig prüft `cwd` gegen die Lesewurzeln dieser Identität**
-  (`plugins/route.ts:170-172`) — und zwar **vor** der Konstruktion des `PluginManager`
-  (`:175`), damit ein fremdes Verzeichnis nie einen Manager mit diesem Pfad bekommt. (b) **Das
-  `update` läuft über `install(source, { force: true })`** (`:189`) — das ist Absicht, kein
-  Kurzschluss.
+- **Darf nicht**: (a) **`POST` ist admin-only, bevor `cwd` gelesen wird** (`requireAdmin` als
+  erste Anweisung): jede Aktion schreibt den prozessweiten Plugin-Baum, die Registries und das
+  Lockfile, und Install importiert die deklarierten Extensions im Serverprozess. `GET` bleibt
+  hinter der Root-Prüfung offen. (b) **Jeder Zweig prüft `cwd` gegen die Lesewurzeln dieser
+  Identität** (`plugins/route.ts:170-172`) — und zwar **vor** der Konstruktion des
+  `PluginManager` (`:175`), damit ein fremdes Verzeichnis nie einen Manager mit diesem Pfad
+  bekommt. (c) **Das `update` läuft über `install(source, { force: true })`** (`:189`) — das ist
+  Absicht, kein Kurzschluss.
 - **Ort**: `app/api/plugins/route.ts:143-198`
 
 ### /api/mcp — MCP-Server-Konfiguration
@@ -477,7 +512,10 @@ getUserHome()       die EINE Mandantengrenze: Admin "/" , sonst /home/$name
   **Guard** verhindert das Versprechen, das ohne ihn falsch wäre: `rpc-manager.ts:1840` startet
   jede Session mit `getAgentDir()`, eine Mandantendatei `~/.omp/agent/mcp.json` würde **nie
   gelesen** (vgl. dieselbe Begründung bei `auth/api-key/[provider]`). `GET` filtert zusätzlich den
-  User-Scope aus `loadCapability`, das `~` über `os.homedir()` des Prozesses auflöst.
+  User-Scope aus `loadCapability`, das `~` über `os.homedir()` des Prozesses auflöst, und den
+  Projekt-Scope, dessen echter Pfad nicht im Projekt bleibt. Für einen **Mandanten** prüfen beide
+  `configPath`-Scopes mit `resolvedPathInside`; beim **Admin** löst `resolvedPath` den Symlink ohne
+  Containment auf, damit ein dotfile-verwaltetes `mcp.json` funktioniert.
   (b) **`validatedCwd` prüft gegen die Lesewurzeln** (`mcp/route.ts:315-321`) und wirft „Access denied",
   was `GET` auf 403 abbildet — ein Project-Scope ohne berechtigtes `cwd` ist damit nicht
   erreichbar. (c) **Ein `cwd` im Query ohne Berechtigung ist 403, kein 500** — die Fehlermeldung

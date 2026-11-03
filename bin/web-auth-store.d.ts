@@ -211,6 +211,14 @@ export declare function readWebAccounts(options?: WebAuthStoreOptions): {
   file: string;
 };
 export declare function resolveAccountHome(username: string, env?: NodeJS.ProcessEnv): string;
+/**
+ * Die Admin-Namen aus `OMP_WEB_ADMINS`.
+ *
+ * Fehlt die Variable, gilt `DEFAULT_WEB_ADMIN_USERNAMES`. Ist sie gesetzt, gilt
+ * allein ihr Inhalt — auch ein leerer (oder nur aus Trennzeichen bestehender)
+ * Wert: dann gibt es **keine** Admins. Ein gesetzter Wert faellt nie auf die
+ * Vorgabeliste zurueck.
+ */
 export declare function resolveAdminUsernames(env?: NodeJS.ProcessEnv): string[];
 export declare function resolveHomeRoot(env?: NodeJS.ProcessEnv): string;
 export declare function resolveWebAccountsFile(env?: NodeJS.ProcessEnv): string;

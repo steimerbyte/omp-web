@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -201,6 +201,26 @@ test("a single transcript file inside the agent directory is refused too", async
   });
 });
 
+test("a protected tree reached through a symlinked parent is still refused", async () => {
+  // The requested name has no `.omp` segment; the resolved directory does. The
+  // delete decision is taken on the resolved object, so the rule must read the
+  // same path the removal would walk.
+  await withAccount(async ({ home, headers }) => {
+    const seed = seedAgentDir(home);
+    const alias = join(home, "workspace", "alias");
+    symlinkSync(seed.agentDir, alias, process.platform === "win32" ? "junction" : "dir");
+    const viaAlias = join(alias, "agent", "sessions", "chat-0001.jsonl");
+
+    const response = await deleteRequest(viaAlias, headers);
+
+    assert.equal(response.status, 403);
+    const body = await response.json();
+    assert.equal(body.code, "protected");
+    seed.assertIntact();
+    assert.equal(existsSync(alias), true, "the link itself is untouched too");
+  });
+});
+
 // ------------------------------------------------------- DELETE: negative list --
 
 test("an ordinary project directory is still deletable, for a non-admin", async () => {
@@ -376,7 +396,7 @@ test("every destructive call in the route is behind a protectedRefusal", async (
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./[...path]/route.ts", import.meta.url), "utf8");
 
-  const destructive = [...source.matchAll(/fs\.(rmSync|unlinkSync|renameSync)\s*\(/g)];
+  const destructive = [...source.matchAll(/fs\.(?:promises\.)?(rmSync|unlinkSync|renameSync|rm|unlink|rename)\s*\(/g)];
   assert.ok(destructive.length >= 4, `expected the delete, rename and move calls, found ${destructive.length}`);
 
   const guardSites = [...source.matchAll(/protectedRefusal\s*\(/g)].map((match) => match.index);

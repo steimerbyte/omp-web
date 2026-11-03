@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, readFileSync } from "fs";
-import { dirname, join } from "path";
+import { dirname } from "path";
 import { NextResponse } from "next/server";
 import { loadCapability } from "@oh-my-pi/pi-coding-agent/capability";
 import type { MCPServer } from "@oh-my-pi/pi-coding-agent/capability/mcp";
 import { setMcpServerEnabled } from "@oh-my-pi/pi-coding-agent/mcp/config-writer";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { getRequestIdentity, isAdminIdentity, type WebIdentity } from "@/lib/request-identity";
+import { isInsideProject, resolveProjectRoot, resolvedPath, resolvedPathInside } from "@/lib/project-trust";
 import { resolveTenantAgentDir } from "@/lib/tenant-config";
 import { writePrivateFileAtomicSync } from "@/lib/atomic-file";
 import type { McpConfigResponse, McpScopeConfig, McpServerConfig, McpServerEntry } from "@/lib/settings-api";
@@ -169,11 +170,33 @@ function restoreRedactedValues(submitted: unknown, existing: unknown, path: stri
  * Verzeichnis. Damit kann **kein** Aufrufer mehr in einen Pfad schreiben, der
  * nicht der eigene ist, auch nicht der `setMcpServerEnabled`-Rueckfall auf
  * `userPath` in `PATCH`.
+ *
+ * Beide Pfade werden ueber ihren **echten** Pfad geprueft, nicht ueber den
+ * Linktext: `<cwd>/.omp` als Symlink auf `/home/pi/.omp/agent` liess `GET` die
+ * Server des Betreibers anzeigen und `PUT` seine `mcp.json` ueberschreiben
+ * (OMP-005). Was aus seinem erlaubten Verzeichnis herausaufloest, ist
+ * `Access denied` — kein stiller Fallback auf den Linkpfad.
+ *
+ * Fuer den Admin entfaellt die Containment-Pruefung, nicht die Aufloesung: er
+ * ist das Prozesskonto und darf ueberall lesen und schreiben, und ein
+ * `~/.omp/agent/mcp.json`, das in ein Dotfiles-Repository verlinkt, ist ein
+ * normaler Aufbau. Ein unaufloesbarer Link bleibt auch fuer ihn ein Fehler.
  */
 function configPath(identity: WebIdentity, scope: "user" | "project", cwd?: string): string {
-  return scope === "user"
-    ? join(resolveTenantAgentDir(identity), "mcp.json")
-    : join(cwd!, ".omp", "mcp.json");
+  const admin = isAdminIdentity(identity);
+  let path: string | undefined;
+  if (scope === "user") {
+    const agentDir = resolveTenantAgentDir(identity);
+    path = admin
+      ? resolvedPath(agentDir, "mcp.json")
+      : resolvedPathInside(agentDir, agentDir, "mcp.json");
+  } else {
+    path = admin
+      ? resolvedPath(cwd!, ".omp", "mcp.json")
+      : resolvedPathInside(cwd!, resolveProjectRoot(cwd!), ".omp", "mcp.json");
+  }
+  if (path === undefined) throw new Error("Access denied");
+  return path;
 }
 
 function readScope(identity: WebIdentity, scope: "user" | "project", cwd?: string): McpScopeConfig {
@@ -229,21 +252,26 @@ function discoveredConfig(server: MCPServer): McpServerConfig {
  * Projekt des Mandanten bleibt dadurch sichtbar, statt vom globalen Eintrag
  * verdeckt zu werden.
  *
- * Nur der User-Scope wird gefiltert. `project` gehoert dem cwd und ist ueber
- * `validatedCwd` geprueft, `native` wird ohnehin nicht einsortiert.
+ * User-Scope wird fuer Nicht-Admins verworfen; Projekt-Scope nur, wenn sein
+ * echter Pfad im Projekt bleibt. `<cwd>/.omp` als Symlink auf einen fremden
+ * Store wurde von `loadCapability` genauso mitgelesen wie von `configPath`
+ * (OMP-005) — derselbe Befund, zwei Lesewege.
  */
 async function addDiscoveredServers(
   identity: WebIdentity,
   response: McpConfigResponse,
   cwd?: string,
 ): Promise<void> {
+  const projectRoot = resolveProjectRoot(cwd ?? process.cwd());
   const discovered = await loadCapability<MCPServer>("mcps", {
     cwd: cwd ?? process.cwd(),
     includeDisabled: true,
     includeInvalid: true,
-    ...(isAdminIdentity(identity)
-      ? {}
-      : { filter: (item: MCPServer & { _source: { level: string } }) => item._source.level !== "user" }),
+    filter: (item: MCPServer & { _source: { level: string } }) => {
+      if (item._source.level === "user") return isAdminIdentity(identity);
+      if (item._source.level !== "project") return true;
+      return isInsideProject(item._source.path, projectRoot);
+    },
   });
   for (const server of discovered.items) {
     const target = server._source.level === "project"

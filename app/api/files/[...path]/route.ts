@@ -3,9 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import {
+  closeAuthorizedFile,
   getAllowedFileRoots,
   isExistingFilePathAllowed,
   isFilePathAllowed,
+  openAuthorizedFile,
+  resolveAuthorizedPath,
 } from "@/lib/file-access";
 import { getRequestIdentity, type WebIdentity } from "@/lib/request-identity";
 import { isWritePathAllowed } from "@/lib/write-access";
@@ -87,25 +90,22 @@ function parseFileRequestType(value: string): FileRequestType | null {
 }
 
 /**
- * Read the sniff window from the head of `filePath`.
+ * Read the sniff window from the head of an open descriptor.
  *
- * `null` when the file cannot be opened at all. That is *not* binary: the caller
- * must not answer "no preview" for a file it simply could not read, and the
- * `read` branch already holds the bytes anyway, so it sniffs those.
+ * `null` when the descriptor cannot be read at all. That is *not* binary: the
+ * caller must not answer "no preview" for a file it simply could not read, and
+ * the `read` branch already holds the bytes anyway, so it sniffs those.
+ *
+ * Takes a descriptor, not a path: the file being sniffed has to be the one
+ * `openAuthorizedFile` already bound to the authorization.
  */
-function readSniffHead(filePath: string): Buffer | null {
-  let fd: number | null = null;
+function readSniffHead(fd: number): Buffer | null {
   try {
-    fd = fs.openSync(filePath, "r");
     const buffer = Buffer.alloc(PRESENT_SNIFF_BYTES);
     const bytesRead = fs.readSync(fd, buffer, 0, PRESENT_SNIFF_BYTES, 0);
     return buffer.subarray(0, bytesRead);
   } catch {
     return null;
-  } finally {
-    if (fd !== null) {
-      try { fs.closeSync(fd); } catch { /* already gone */ }
-    }
   }
 }
 
@@ -315,8 +315,12 @@ export async function POST(
   }
 }
 
-function createFileBodyStream(filePath: string, range?: { start: number; end: number }): ReadableStream<Uint8Array> {
-  const fileStream = fs.createReadStream(filePath, range);
+function createFileBodyStream(fd: number, range?: { start: number; end: number }): ReadableStream<Uint8Array> {
+  // The descriptor is the object the authorization was checked against, so the
+  // stream must read it and not the path: re-opening by name here would undo
+  // the inode binding from `openAuthorizedFile`. `autoClose` hands ownership of
+  // the descriptor to the stream.
+  const fileStream = fs.createReadStream("", { fd, autoClose: true, ...range });
   let closed = false;
 
   return new ReadableStream<Uint8Array>({
@@ -369,25 +373,64 @@ function getContentDisposition(filePath: string, asDownload = false): string {
   return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
 }
 
-function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
+/**
+ * Types a browser parses as a document and would therefore execute a script
+ * from. `image/svg+xml` is the measured one: `?type=read` served it inline and
+ * headless Chrome ran its `<script>`, which fetched `/api/whoami` with the
+ * session cookie. Raster images and PDFs are handed to a decoder/viewer and are
+ * not documents in this origin, so they stay inline.
+ */
+function isActiveContent(contentType: string): boolean {
+  return /^(?:image\/svg\+xml|text\/html|application\/xhtml\+xml|(?:text|application)\/xml)\b/i.test(contentType);
+}
+
+function streamFile(
+  filePath: string,
+  stat: fs.Stats,
+  contentType: string,
+  rangeHeader: string | null,
+  fd: number,
+  asDownload = false,
+): Response {
+  const active = isActiveContent(contentType);
+  const disposition = asDownload || active;
   const headers = {
     "Content-Type": contentType,
     "Cache-Control": "no-cache",
     "Accept-Ranges": "bytes",
-    "Content-Disposition": getContentDisposition(filePath, asDownload),
+    "Content-Disposition": getContentDisposition(filePath, disposition),
+    // An attachment alone still leaves a direct navigation that renders the
+    // document if the browser ignores the header; `sandbox` makes the document
+    // an opaque origin with scripting and networking disabled, and `nosniff`
+    // keeps the declared type. Only active types need them.
+    ...(active ? {
+      "Content-Security-Policy": "sandbox; default-src 'none'",
+      "X-Content-Type-Options": "nosniff",
+    } : {}),
+  };
+  // Every return path below either hands the descriptor to the stream or
+  // closes it; the caller must not close it afterwards.
+  const close = () => {
+    try { fs.closeSync(fd); } catch { /* already closed */ }
   };
 
   if (!rangeHeader) {
-    return new Response(createFileBodyStream(filePath), {
-      headers: {
-        ...headers,
-        "Content-Length": String(stat.size),
-      },
-    });
+    try {
+      return new Response(createFileBodyStream(fd), {
+        headers: {
+          ...headers,
+          "Content-Length": String(stat.size),
+        },
+      });
+    } catch (error) {
+      close();
+      throw error;
+    }
   }
 
   const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
   if (!match) {
+    close();
     return new Response(null, {
       status: 416,
       headers: {
@@ -406,6 +449,7 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
   }
 
   if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= stat.size) {
+    close();
     return new Response(null, {
       status: 416,
       headers: {
@@ -417,14 +461,19 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
 
   end = Math.min(end, stat.size - 1);
   const chunkSize = end - start + 1;
-  return new Response(createFileBodyStream(filePath, { start, end }), {
-    status: 206,
-    headers: {
-      ...headers,
-      "Content-Length": String(chunkSize),
-      "Content-Range": `bytes ${start}-${end}/${stat.size}`,
-    },
-  });
+  try {
+    return new Response(createFileBodyStream(fd, { start, end }), {
+      status: 206,
+      headers: {
+        ...headers,
+        "Content-Length": String(chunkSize),
+        "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+      },
+    });
+  } catch (error) {
+    close();
+    throw error;
+  }
 }
 
 function escapeHtml(text: string): string {
@@ -485,6 +534,58 @@ ${bodyHtml}
 </html>`;
 }
 
+/**
+ * List `directory` — the resolved path the authorization was checked on — but
+ * echo `requestedPath` back to the client. The explorer navigates by the path
+ * it is given, and its follow-up requests go through the lexical allowlist;
+ * handing it a resolved path would move the account out of the root that was
+ * granted (a home that is itself a symlink) and turn the next click into a 403.
+ */
+function listDirectory(directory: string, requestedPath: string, allowedRoots: Set<string>): Response {
+  // Avoid per-entry stat calls for normal files and directories. Symlinks and
+  // filesystems without directory type information use the stat fallback.
+  const dirents = fs.readdirSync(directory, { withFileTypes: true });
+  const entries = dirents
+    .filter((d) => !IGNORED_NAMES.has(d.name) && !IGNORED_SUFFIXES.some((s) => d.name.endsWith(s)))
+    .flatMap((d) => {
+      const isDir = resolveDirentIsDirectory(d, path.join(directory, d.name));
+      return isDir === null
+        ? []
+        : [{ name: d.name, isDir, size: 0, modified: "" }];
+    })
+    .sort((a, b) => {
+      // Dirs first, then files, both alphabetically
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  // Welche Vorfahren man betreten darf, entscheidet der Server: der Client
+  // kennt die Allowlist nicht. `getFileDirectory()` rechnet rein lexikalisch,
+  // also liegen fuer ein Konto mit Home `<home-root>/alice` genau die Crumbs
+  // ueber der Home ausserhalb jeder Root — und jeder Klick auf sie endete in
+  // `403 Access denied`, obwohl die Krume daneben sichtbar war. Dieselbe
+  // Fehlerklasse wie beim Aufwaerts-Knopf (5569d3a), dieselbe Route.
+  //
+  // `ancestors` zaehlt nach oben bis zur ersten nicht erlaubten Stufe, vom
+  // naechsten Vorfahren aus; `parentPath` ist dessen erstes Element und
+  // damit unveraendert die eine Stufe, die der Aufwaerts-Knopf braucht. Fuer
+  // einen Mandanten mit Home `<root>/alice` und cwd
+  // `<root>/alice/projects/demo` stehen `<root>/alice/projects` und
+  // `<root>/alice` in der Liste — die Home jedes Kontos steht in
+  // `getAdditionalAllowedRoots` —, `<root>` fehlt.
+  const ancestors: string[] = [];
+  let cursor = getFileDirectory(requestedPath);
+  while (cursor && cursor !== requestedPath && isExistingFilePathAllowed(cursor, allowedRoots)) {
+    ancestors.push(cursor);
+    const next = getFileDirectory(cursor);
+    // Die Wurzel ist ihr eigener Elternpfad; daruber waere die Schleife endlos.
+    if (next === cursor) break;
+    cursor = next;
+  }
+
+  return NextResponse.json({ entries, path: requestedPath, parentPath: ancestors[0] ?? null, ancestors });
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -521,13 +622,12 @@ export async function GET(
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(filePath);
-    } catch {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-
+    // Eine Aufloesung, ein Objekt: der Pfad, auf dem unten gelesen wird, ist
+    // der, der hier geprueft wurde. `resolveAuthorizedPath` ersetzt die alte
+    // Kombination aus `statSync` und `isExistingFilePathAllowed`; ein Pfad, der
+    // sich nicht aufloesen laesst, ist ein 404, ein aufgeloester Pfad ausserhalb
+    // der Roots ein 403.
+    //
     // Die realpath-Pruefung laeuft **immer**, auch ueber den Durchlass. Ohne das
     // `!allowedBySessionReference &&` waere eine Sessionreferenz ein vollstaendiger
     // Bypass der Mandantengrenze fuer `/etc/passwd`, `.ssh/id_*` und alles
@@ -537,7 +637,7 @@ export async function GET(
     //
     // Er ueberspringt die **lexikalische** Allowlist, nicht die Mandantengrenze.
     // Das ist noetig, weil die beiden Pruefungen nicht dasselbe sehen:
-    // `isFilePathAllowed` vergleicht Zeichenketten, `isExistingFilePathAllowed`
+    // `isFilePathAllowed` vergleicht Zeichenketten, `resolveAuthorizedPath`
     // loest vorher `realpath` auf. Die beiden laufen genau dann auseinander,
     // wenn eine Root selbst ueber einen Symlink erreicht wird — ein Konto, dessen
     // Home auf ein anderes Verzeichnis zeigt, oder eine Session, deren `cwd` ein
@@ -557,139 +657,171 @@ export async function GET(
     // Fuer einen Admin ist alles folgenlos, denn seine Wurzelmenge enthaelt `/`
     // (siehe `getAdditionalAllowedRoots`), und `isPathWithinRoots` beantwortet
     // damit fuer jeden absoluten Pfad `true`.
-    if (!isExistingFilePathAllowed(filePath, allowedRoots)) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
-    }
-
-    if (type === "read") {
-      if (!stat.isFile()) {
-        return NextResponse.json({ error: "Not a file" }, { status: 400 });
-      }
-      const imageMime = getImageMime(filePath);
-      if (imageMime) {
-        if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
-          return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
-        }
-        return streamFile(filePath, stat, imageMime, request.headers.get("range"));
-      }
-      const audioMime = getAudioMime(filePath);
-      if (audioMime) {
-        return streamFile(filePath, stat, audioMime, request.headers.get("range"));
-      }
-      const documentMime = getDocumentMime(filePath);
-      if (documentMime) {
-        return streamFile(filePath, stat, documentMime, request.headers.get("range"));
-      }
-      if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
-        return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
-      }
-      // One read, two answers, and the two rejections are checked in this
-      // order for a reason. `looksBinary` is the cheap heuristic (a NUL byte or
-      // a high share of control characters in the head); the round trip below is
-      // the exact one. Run the heuristic first so a real binary is reported as
-      // binary — the exact check rejects nearly every binary too, and if it ran
-      // first the client would be told "not valid UTF-8" about a PNG. Run in this
-      // order, neither protection disappears: a file that passes the heuristic
-      // (ISO-8859-1 source, a log line truncated mid-sequence) never reaches the
-      // binary message, it only reaches the round trip, which is the one that
-      // can catch it.
-      //
-      // `readFileSync(path, "utf-8")` turned every unknown-extension binary into
-      // a string of NUL bytes and U+FFFD, which the viewer then rendered as
-      // source code and happily offered to edit.
-      const bytes = fs.readFileSync(filePath);
-      if (looksBinary(bytes)) {
-        return NextResponse.json(
-          { error: "Binary file cannot be displayed", binary: true, size: stat.size },
-          { status: 415 },
-        );
-      }
-      const content = bytes.toString("utf-8");
-      // The editor writes back with `Buffer.from(content, "utf-8")`, so
-      // whatever `read` hands out has to survive that round trip byte for byte.
-      // Reading with "utf-8" is lossy for anything that is not valid UTF-8: an
-      // ISO-8859-1 file, a truncated log line, or a binary blob. Every invalid
-      // byte becomes U+FFFD, and saving then writes EF BF BD over the original
-      // — content destroyed by a save the user believed was faithful. Refuse to
-      // serve what cannot be represented, rather than offering an edit that
-      // cannot help but corrupt.
-      if (!Buffer.from(content, "utf-8").equals(bytes)) {
-        return NextResponse.json(
-          { error: "File is not valid UTF-8 and cannot be edited safely", binary: true, size: stat.size },
-          { status: 415 },
-        );
-      }
-      const language = getLanguage(filePath);
-      return NextResponse.json({ content, language, size: stat.size });
-    }
-
-    if (type === "download") {
-      if (!stat.isFile()) {
-        return NextResponse.json({ error: "Not a file" }, { status: 400 });
-      }
-      const mime = getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream";
-      return streamFile(filePath, stat, mime, request.headers.get("range"), true);
-    }
-
-    if (type === "meta") {
-      if (!stat.isFile()) {
-        return NextResponse.json({ error: "Not a file" }, { status: 400 });
-      }
-      const imageMime = getImageMime(filePath);
-      const audioMime = getAudioMime(filePath);
-      const documentMime = getDocumentMime(filePath);
-      return NextResponse.json({
-        size: stat.size,
-        language: getLanguage(filePath),
-        // The Properties dialog prints this string verbatim, and "text/plain"
-        // for a compiled binary is the same wrong answer `read` used to give —
-        // the file has no extension table entry, so only the content can say.
-        mime: imageMime
-          || audioMime
-          || documentMime
-          || (looksBinary(readSniffHead(filePath)) ? "application/octet-stream" : "text/plain"),
-        previewKind: documentPreviewKind(filePath),
-      });
-    }
-
-    if (type === "preview") {
-      if (!stat.isFile()) {
-        return NextResponse.json({ error: "Not a file" }, { status: 400 });
-      }
-      if (getFileExt(filePath) !== "docx") {
-        return NextResponse.json({ error: "Preview not available for this file type" }, { status: 400 });
-      }
-      if (stat.size > DOCX_PREVIEW_MAX_BYTES) {
-        return NextResponse.json({ error: "DOCX too large for preview (>10MB)" }, { status: 413 });
-      }
-
-      const mammoth = await import("mammoth");
-      const result = await mammoth.convertToHtml(
-        { path: filePath },
-        {
-          externalFileAccess: false,
-          convertImage: mammoth.images.dataUri,
-        }
+    const authorized = resolveAuthorizedPath(filePath, allowedRoots);
+    if (!authorized.ok) {
+      return NextResponse.json(
+        { error: authorized.reason === "not-found" ? "Not found" : "Access denied" },
+        { status: authorized.reason === "not-found" ? 404 : 403 },
       );
-      const html = wrapDocxPreviewHtml(result.value, path.basename(filePath));
-      return new Response(html, {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-cache",
-          "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
-          "Referrer-Policy": "no-referrer",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
     }
+    const resolvedPath = authorized.path;
 
-    if (type === "watch") {
-      if (!stat.isFile()) {
+    // Die Datei kann zwischen Aufloesung und stat verschwunden sein; das ist
+    // ein 404 wie vorher, kein Serverfehler.
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(resolvedPath);
+    } catch {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (stat.isDirectory()) {
+      if (type !== "list") {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
+      return listDirectory(resolvedPath, filePath, allowedRoots);
+    }
+    if (type === "list") {
+      return NextResponse.json({ error: "Not a directory" }, { status: 400 });
+    }
+
+    // Ab hier wird eine Datei gelesen. Der Descriptor ist das Objekt, an dem
+    // die Erlaubnis haengt; alle Zweige unten lesen `fd` oder `descriptorPath`
+    // und nie `filePath`. Siehe `openAuthorizedFile`.
+    const opened = openAuthorizedFile(filePath, allowedRoots);
+    if (!opened.ok) {
+      const status = opened.reason === "not-found" ? 404 : opened.reason === "not-a-file" ? 400 : 403;
+      const error = opened.reason === "not-found" ? "Not found" : opened.reason === "not-a-file" ? "Not a file" : "Access denied";
+      return NextResponse.json({ error }, { status });
+    }
+    const fileStat = opened.file.stat;
+    const descriptorPath = opened.file.path;
+    let fdOwnedByStream = false;
+    try {
+      if (type === "read") {
+        const imageMime = getImageMime(filePath);
+        if (imageMime) {
+          if (fileStat.size > IMAGE_PREVIEW_MAX_BYTES) {
+            return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
+          }
+          fdOwnedByStream = true;
+          return streamFile(filePath, fileStat, imageMime, request.headers.get("range"), opened.file.fd);
+        }
+        const audioMime = getAudioMime(filePath);
+        if (audioMime) {
+          fdOwnedByStream = true;
+          return streamFile(filePath, fileStat, audioMime, request.headers.get("range"), opened.file.fd);
+        }
+        const documentMime = getDocumentMime(filePath);
+        if (documentMime) {
+          fdOwnedByStream = true;
+          return streamFile(filePath, fileStat, documentMime, request.headers.get("range"), opened.file.fd);
+        }
+        if (fileStat.size > TEXT_PREVIEW_MAX_BYTES) {
+          return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
+        }
+        // One read, two answers, and the two rejections are checked in this
+        // order for a reason. `looksBinary` is the cheap heuristic (a NUL byte or
+        // a high share of control characters in the head); the round trip below is
+        // the exact one. Run the heuristic first so a real binary is reported as
+        // binary — the exact check rejects nearly every binary too, and if it ran
+        // first the client would be told "not valid UTF-8" about a PNG. Run in this
+        // order, neither protection disappears: a file that passes the heuristic
+        // (ISO-8859-1 source, a log line truncated mid-sequence) never reaches the
+        // binary message, it only reaches the round trip, which is the one that
+        // can catch it.
+        //
+        // `readFileSync(path, "utf-8")` turned every unknown-extension binary into
+        // a string of NUL bytes and U+FFFD, which the viewer then rendered as
+        // source code and happily offered to edit.
+        //
+        // Vom Descriptor, nicht vom Pfad: gelesen wird genau die Datei, deren
+        // Inode `openAuthorizedFile` geprueft hat.
+        const bytes = fs.readFileSync(opened.file.fd);
+        if (looksBinary(bytes)) {
+          return NextResponse.json(
+            { error: "Binary file cannot be displayed", binary: true, size: fileStat.size },
+            { status: 415 },
+          );
+        }
+        const content = bytes.toString("utf-8");
+        // The editor writes back with `Buffer.from(content, "utf-8")`, so
+        // whatever `read` hands out has to survive that round trip byte for byte.
+        // Reading with "utf-8" is lossy for anything that is not valid UTF-8: an
+        // ISO-8859-1 file, a truncated log line, or a binary blob. Every invalid
+        // byte becomes U+FFFD, and saving then writes EF BF BD over the original
+        // — content destroyed by a save the user believed was faithful. Refuse to
+        // serve what cannot be represented, rather than offering an edit that
+        // cannot help but corrupt.
+        if (!Buffer.from(content, "utf-8").equals(bytes)) {
+          return NextResponse.json(
+            { error: "File is not valid UTF-8 and cannot be edited safely", binary: true, size: fileStat.size },
+            { status: 415 },
+          );
+        }
+        const language = getLanguage(filePath);
+        return NextResponse.json({ content, language, size: fileStat.size });
+      }
+
+      if (type === "download") {
+        const mime = getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream";
+        fdOwnedByStream = true;
+        return streamFile(filePath, fileStat, mime, request.headers.get("range"), opened.file.fd, true);
+      }
+
+      if (type === "meta") {
+        const imageMime = getImageMime(filePath);
+        const audioMime = getAudioMime(filePath);
+        const documentMime = getDocumentMime(filePath);
+        return NextResponse.json({
+          size: fileStat.size,
+          language: getLanguage(filePath),
+          // The Properties dialog prints this string verbatim, and "text/plain"
+          // for a compiled binary is the same wrong answer `read` used to give —
+          // the file has no extension table entry, so only the content can say.
+          mime: imageMime
+            || audioMime
+            || documentMime
+            || (looksBinary(readSniffHead(opened.file.fd)) ? "application/octet-stream" : "text/plain"),
+          previewKind: documentPreviewKind(filePath),
+        });
+      }
+
+      if (type === "preview") {
+        if (getFileExt(filePath) !== "docx") {
+          return NextResponse.json({ error: "Preview not available for this file type" }, { status: 400 });
+        }
+        if (fileStat.size > DOCX_PREVIEW_MAX_BYTES) {
+          return NextResponse.json({ error: "DOCX too large for preview (>10MB)" }, { status: 413 });
+        }
+
+        // Aus dem Descriptor statt aus dem Pfad: mammoth bekommt die Bytes, die
+        // geprueft wurden. Die 10-MB-Grenze oben ist die Obergrenze fuer den
+        // Puffer, den das kostet.
+        const bytes = fs.readFileSync(opened.file.fd);
+        const mammoth = await import("mammoth");
+        const result = await mammoth.convertToHtml(
+          { buffer: bytes },
+          {
+            externalFileAccess: false,
+            convertImage: mammoth.images.dataUri,
+          }
+        );
+        const html = wrapDocxPreviewHtml(result.value, path.basename(filePath));
+        return new Response(html, {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-cache",
+            "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+          },
+        });
+      }
+
+      // type === "watch"
       let watcher: fs.FSWatcher | null = null;
-      let lastMtimeMs = stat.mtimeMs;
-      let lastSize = stat.size;
+      let lastMtimeMs = fileStat.mtimeMs;
+      let lastSize = fileStat.size;
       const stream = new ReadableStream({
         start(controller) {
           const send = (eventName: string, data: Record<string, unknown>) => {
@@ -703,9 +835,11 @@ export async function GET(
           // Send initial ping so client knows connection is live
           send("connected", { filePath });
           try {
-            watcher = fs.watch(filePath, () => {
+            // Der aufgeloeste Pfad, nicht der angefragte: beobachtet wird die
+            // Datei, deren Inode oben geprueft wurde.
+            watcher = fs.watch(descriptorPath, () => {
               try {
-                const s = fs.statSync(filePath);
+                const s = fs.statSync(descriptorPath);
                 // Some platforms emit watch events for file reads/attribute
                 // access. Ignore those or the client's refresh read loops.
                 if (s.mtimeMs === lastMtimeMs && s.size === lastSize) return;
@@ -736,55 +870,12 @@ export async function GET(
           "X-Accel-Buffering": "no",
         },
       });
+    } finally {
+      // Nur schliessen, was nicht an einen Stream uebergeben wurde; ein
+      // doppeltes close() koennte einen bereits wiederverwendeten Descriptor
+      // treffen.
+      if (!fdOwnedByStream) closeAuthorizedFile(opened.file);
     }
-
-    // type === "list"
-    if (!stat.isDirectory()) {
-      return NextResponse.json({ error: "Not a directory" }, { status: 400 });
-    }
-
-    // Avoid per-entry stat calls for normal files and directories. Symlinks and
-    // filesystems without directory type information use the stat fallback.
-    const dirents = fs.readdirSync(filePath, { withFileTypes: true });
-    const entries = dirents
-      .filter((d) => !IGNORED_NAMES.has(d.name) && !IGNORED_SUFFIXES.some((s) => d.name.endsWith(s)))
-      .flatMap((d) => {
-        const isDir = resolveDirentIsDirectory(d, path.join(filePath, d.name));
-        return isDir === null
-          ? []
-          : [{ name: d.name, isDir, size: 0, modified: "" }];
-      })
-      .sort((a, b) => {
-        // Dirs first, then files, both alphabetically
-        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-
-    // Welche Vorfahren man betreten darf, entscheidet der Server: der Client
-    // kennt die Allowlist nicht. `getFileDirectory()` rechnet rein lexikalisch,
-    // also liegen fuer ein Konto mit Home `<home-root>/alice` genau die Crumbs
-    // ueber der Home ausserhalb jeder Root — und jeder Klick auf sie endete in
-    // `403 Access denied`, obwohl die Krume daneben sichtbar war. Dieselbe
-    // Fehlerklasse wie beim Aufwaerts-Knopf (5569d3a), dieselbe Route.
-    //
-    // `ancestors` zaehlt nach oben bis zur ersten nicht erlaubten Stufe, vom
-    // naechsten Vorfahren aus; `parentPath` ist dessen erstes Element und
-    // damit unveraendert die eine Stufe, die der Aufwaerts-Knopf braucht. Fuer
-    // einen Mandanten mit Home `<root>/alice` und cwd
-    // `<root>/alice/projects/demo` stehen `<root>/alice/projects` und
-    // `<root>/alice` in der Liste — die Home jedes Kontos steht in
-    // `getAdditionalAllowedRoots` —, `<root>` fehlt.
-    const ancestors: string[] = [];
-    let cursor = getFileDirectory(filePath);
-    while (cursor && cursor !== filePath && isExistingFilePathAllowed(cursor, allowedRoots)) {
-      ancestors.push(cursor);
-      const next = getFileDirectory(cursor);
-      // Die Wurzel ist ihr eigener Elternpfad; daruber waere die Schleife endlos.
-      if (next === cursor) break;
-      cursor = next;
-    }
-
-    return NextResponse.json({ entries, path: filePath, parentPath: ancestors[0] ?? null, ancestors });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
@@ -826,7 +917,25 @@ export async function PUT(
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    const stat = fs.statSync(filePath);
+    // The read/write checks above judged the *name* the caller sent. Everything
+    // below replaces an object, so the decision is taken again on the object:
+    // `realpath` is what the read by the editor already reports, and a symlink
+    // (final entry or a parent) must not make the guard answer for one file and
+    // the rename replace another. `mustExist: true` keeps this path from
+    // creating the target through the editor endpoint.
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(filePath);
+    } catch {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+    if (!(await isWritePathAllowed(realPath, { mustExist: true }, identity))) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+
+    // The size and mtime conflict have to describe the file that will be
+    // replaced, not the pre-swap view of the requested name.
+    const stat = fs.statSync(realPath);
     if (!stat.isFile()) {
       return NextResponse.json({ error: "Not a file" }, { status: 400 });
     }
@@ -854,22 +963,17 @@ export async function PUT(
       );
     }
 
-    // Reject writes through symlinks the same way the upload route does: the
-    // real target must still sit inside an allowed root, otherwise a symlinked
-    // file could redirect the write outside the sandbox.
-    const realPath = fs.realpathSync(filePath);
-    const realRoots = new Set<string>();
-    for (const root of allowedRoots) {
-      try { realRoots.add(fs.realpathSync(root)); } catch { /* stale root */ }
-    }
-    if (!isFilePathAllowed(realPath, realRoots)) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
-    }
-
     const bytes = Buffer.from(body.content, "utf-8");
     // Atomic write: dump to a sibling temp file, then rename. If the process
     // crashes mid-write the original file is intact.
-    const tempPath = `${filePath}.omp-web-${process.pid}-${Date.now()}-${randomUUID()}.tmp`;
+    //
+    // The temp file lives in `dirname(realPath)` and the rename replaces
+    // `realPath`, so an intermediate symlink that was resolved above cannot
+    // send the write back through the link. (Node has no descriptor-relative
+    // rename, so a parent directory exchanged for a symlink between this
+    // resolution and the rename is still not closed by the language; the
+    // resolved object removes the hop this finding was about.)
+    const tempPath = `${realPath}.omp-web-${process.pid}-${Date.now()}-${randomUUID()}.tmp`;
     try {
       fs.writeFileSync(tempPath, bytes, { flag: "wx", mode: stat.mode & 0o777 });
       // `writeFileSync` masks `mode` with the umask a second time, so a file
@@ -877,7 +981,7 @@ export async function PUT(
       // executable would lose its +x and stop being runnable. `copyTree` in the
       // file-actions route keeps the mode for the same reason.
       fs.chmodSync(tempPath, stat.mode & 0o777);
-      fs.renameSync(tempPath, filePath);
+      fs.renameSync(tempPath, realPath);
     } catch (error) {
       // Clean up unconditionally. The old code only unlinked once `tempHandle`
       // was set, which happened only after the write returned — so a write that
@@ -887,7 +991,7 @@ export async function PUT(
       throw error;
     }
 
-    const after = fs.statSync(filePath);
+    const after = fs.statSync(realPath);
     return NextResponse.json({
       ok: true,
       size: after.size,

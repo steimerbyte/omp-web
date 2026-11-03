@@ -5,22 +5,12 @@ import { switchColdSessionModel } from "@/lib/cold-model-switch";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getRequestIdentity } from "@/lib/request-identity";
 import { requireSessionAccess } from "@/app/api/sessions/session-guard";
-
-/**
- * Request-body ceiling this route accepts, matching
- * `experimental.proxyClientMaxBodySize` in `next.config.ts`. Kept slightly
- * under the Next limit so the handler answers with a reason instead of the
- * proxy dropping the connection.
- */
-const MAX_REQUEST_BODY_BYTES = 30 * 1024 * 1024;
-
-/** Trusted Content-Length, or null when absent or not a plain integer. */
-function declaredBodyLength(req: Request): number | null {
-  const header = req.headers.get("content-length");
-  if (!header || !/^\d+$/.test(header)) return null;
-  const length = Number(header);
-  return Number.isSafeInteger(length) ? length : null;
-}
+import {
+  MAX_AGENT_REQUEST_BODY_BYTES,
+  RequestBodyTooLargeError,
+  oversizedRequestBody,
+  readJsonBodyWithinLimit,
+} from "@/lib/request-body";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -33,16 +23,14 @@ export async function POST(
 
   const { id } = await params;
 
-  // Die Berechtigung steht **vor** `hasJsonContentType` und der Body-Grenze,
-  // nicht danach. Zwei Argumente dagegen, und beide tragen nicht:
+  // Die Berechtigung steht **vor** dem Lesen des Bodys, nicht danach. Zwei
+  // Argumente dafuer:
   //
-  // 1. Die beiden spaeteren Pruefungen lesen den Body nicht. Die
-  //    Groessenpruefung liest nur `content-length` aus den Headern, und
-  //    `hasJsonContentType` liest `content-type`. "Die Route verarbeitet einen
-  //    fremden Body" trifft also nicht zu — es entsteht kein Lese- oder
-  //    Pufferaufwand, den ein Angreifer gegen einen Mandanten ausnutzen
-  //    koennte. Der 30-MB-Deckel bleibt ueber `proxy.ts` ohnehin eine
-  //    transportermassige Grenze, unabhaengig von der Reihenfolge hier.
+  // 1. Erst der Guard, dann der Body: der 30-MB-Deckel zaehlt jetzt die Bytes,
+  //    die wirklich ankommen (auch bei `Transfer-Encoding: chunked`), und das
+  //    ist Lese- und Pufferaufwand. Ein Aufrufer ohne Zugriff auf die Session
+  //    soll ihn nicht ausloesen koennen — sonst waere jede fremde Session-Id
+  //    ein kostenloser 30-MB-Puffer.
   // 2. Umgekehrt liefern 415 und 413 einem Aufrufer ohne Berechtigung Antworten
   //    ueber eine Ressource, die ihm nicht gehoert. Sie sind Fehler *ueber*
   //    seinen Body, verkleidet als Fehler *ueber die Session*. Die
@@ -59,32 +47,29 @@ export async function POST(
     return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
   }
 
-  // `proxy.ts` matches this route and refuses oversized bodies at the Next
-  // limit, which reaches the client as a bare 413 with no explanation. This
-  // guard runs first, so an over-budget prompt gets the same `prompt_rejected`
-  // shape the client already knows how to react to — with a reason it can
-  // show. It only reads Content-Length; chunked requests still fall through to
-  // the proxy, and `validateAgentImages` re-checks the decoded sizes either way.
-  const declaredLength = declaredBodyLength(req);
-  if (declaredLength !== null && declaredLength > MAX_REQUEST_BODY_BYTES) {
-    return NextResponse.json({
-      error: `Request body is too large (${Math.round(declaredLength / (1024 * 1024))}MB); attach fewer or smaller images`,
-      code: "prompt_rejected",
-      accepted: false,
-    }, { status: 413 });
-  }
-
   let commandType: string | undefined;
   let promptAccepted = false;
 
   try {
-    const body = await req.json() as { type: string; [key: string]: unknown };
+    // Der Deckel greift auf den gelesenen Bytes, nicht auf `content-length`:
+    // ein chunked Request hat den Header nicht, und ein gefaelschter waere
+    // wertlos. Ein ueberbudgetierter Prompt bekommt weiterhin die
+    // `prompt_rejected`-Form, die der Client schon kennt.
+    const body = await readJsonBodyWithinLimit(req, MAX_AGENT_REQUEST_BODY_BYTES) as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
+
+    // Der Aufrufer, nicht der Erzeuger der Session: dieselbe laufende Session
+    // kann von jedem Konto angesprochen werden, dem `requireSessionAccess`
+    // Zugriff gibt. Die Identitaet wird deshalb bei **jedem** Dispatch an
+    // `send` gebunden — operative Slash-Kommandos muessen dem Aufrufer folgen,
+    // nicht dem Konto, das die Session gestartet hat. Sie kommt ausschliesslich
+    // aus den Proxy-Headern, nie aus dem Body.
+    const identity = getRequestIdentity(req.headers);
 
     // Fast path: already-running session
     const existing = getRpcSession(id);
     if (existing?.isAlive()) {
-      const result = await existing.send(body);
+      const result = await existing.send(body, identity);
       promptAccepted = body.type === "prompt";
       return NextResponse.json({ success: true, data: result });
     }
@@ -116,7 +101,6 @@ export async function POST(
       return NextResponse.json({ success: true, data: switched });
     }
 
-    const identity = getRequestIdentity(req.headers);
     const { session } = await startRpcSession(id, filePath, undefined, {
       // Die Identitaet des anfragenden Kontos wandert in die Sitzung: die
       // Kalender-Werkzeuge laufen im Serverprozess und koennen dort keinen
@@ -126,11 +110,14 @@ export async function POST(
       identity: identity ?? undefined,
       owner: identity?.username,
     });
-    const result = await session.send(body);
+    const result = await session.send(body, identity);
     promptAccepted = body.type === "prompt";
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json(oversizedRequestBody(error), { status: 413 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(commandType === "prompt" && !promptAccepted

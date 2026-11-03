@@ -49,6 +49,16 @@ The consequence is blunt and accepted: a repository that carries a
 A project with none of the above never sees a prompt: `requiresTrust` is false
 and the session loads on omp's normal path.
 
+### Trust is decided at the project root
+
+The decision is taken at `resolveProjectRoot(cwd)`, not at the session cwd:
+the nearest directory at or above it carrying `.git` or `.omp`, stopping below
+the process home and the temp roots. omp's own discovery walks up to the
+repository root, so a session opened in `repo/src` inherits `repo`'s resources
+and its trust state. Measured before this change, that session reported
+`requiresTrust: false` while the repository's `.agents/skills/…` loaded
+(OMP-010).
+
 ### Rules and prompts follow trust
 
 Project rules, `AGENTS.md` and the other context files, prompt templates,
@@ -80,12 +90,12 @@ through `resolveSessionLoads`; the code half stays
   `SYSTEM.md`/`APPEND_SYSTEM.md`, extensions, custom tools and skills — each
   list returns without the project's entries.
 - `preloadedExtensionPaths` / `preloadedCustomToolPaths` — discovered code
-  minus every path that is not under `getAgentDir()` or `os.homedir()`, and
+  minus every path whose real path is not under `userCodeRoots(agentDir)`, and
   minus anything marked `level: "project"`.
 - `enableMCP: false` — MCP servers are processes omp would spawn from a
   project manifest.
 - `skills` — discovered skills minus every entry marked `level: "project"` and
-  minus every entry whose file lives under the project root
+  minus every entry whose real path is inside the project root
   (`trustedProjectSkills`).
 
 The skills filter needs both halves. The level catches every project scan the
@@ -94,23 +104,40 @@ cannot: a custom directory is labelled `custom:user` however it was configured,
 and a project's own `.omp/config.yml` can point `skills.customDirectories` at
 itself — measured, not hypothetical.
 
+### Project files are compared by their real path
+
+`filterLoads` does not compare the link text. For a candidate that carries a
+path — a rule or a context file — a project-scoped entry survives only when
+`isInsideProject(path, projectRoot)` finds its **real** path still inside the
+project root. The candidate types without a path (prompt templates, slash
+commands) are decided by their loader's `level`, as before. The path check runs
+for every identity, trusted or not: a link is not a project file, even in a
+trusted project. The dropped entries contribute to the diagnostic count, and
+the reason names the symlink ("a path resolves outside the project through a
+symlink").
+
 ### The code filter is an allowlist, not an exclusion
 
 "Not under the project root" was the old rule and it could not see a path a
 project points at. Measured: `.omp/config.yml` with
 `extensions: [/tmp/outside-evil2/ext.ts]` was discovered and ran, because
 neither the detector nor the filter had a reason to look at that file. What
-survives now is code from the roots omp itself scans for this account —
-`<agentDir>/extensions`, `<agentDir>/tools`, `~/.agents/…`, `~/.claude/…`,
-`~/.omp/plugins` — and nothing else. A path under the operator's own roots is
-the operator's decision; a path merely outside the project is a number the
-project chose.
+survives now is code from `userCodeRoots(agentDir)` — the agent directory
+itself (which holds `extensions/`, `tools/` and `hooks/`), `~/.claude`,
+`~/.codex` and the plugin tree (`~/.omp/plugins`, or its XDG equivalent) — and
+nothing else. A path under the operator's own roots is the operator's
+decision; a path merely outside the project is a number the project chose.
+
+`os.homedir()` is deliberately not a root. It contains the projects
+themselves, so a repository at `~/work/repo` naming `../evil.ts` stayed inside
+"the home" and ran (OMP-011). A root that sits inside the project is dropped
+from the list too, so project code cannot wear a user path.
 
 The consequence is deliberate: an operator who configured an extension at
 `/opt/foo.ts` does not get it inside a project they have not trusted, and gets
 it back the moment they trust it. Installed tooling is not filtered by
-identity either: a tenant loads the extensions and custom tools the operator
-installed.
+identity either: a tenant loads the operator-installed extensions and custom
+tools that this allowlist keeps.
 
 User-level skills in `~/.omp/agent/skills`, `~/.agents/skills`,
 `~/.claude/skills` and any custom directory the *user* configured outside the

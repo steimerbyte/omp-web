@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bumpSessionEpoch } from "@/bin/web-auth-store.js";
+import { RequestBodyTooLargeError, readJsonBodyWithinLimit } from "@/lib/request-body";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { CREDENTIAL_BODY_TOO_LARGE, MAX_CREDENTIAL_REQUEST_BODY_BYTES } from "@/lib/web-access-body";
 import {
   SESSION_COOKIE_NAME,
   issueSessionCookie,
@@ -61,8 +63,17 @@ export async function POST(req: Request) {
 
   let body: { username?: unknown; password?: unknown };
   try {
-    body = await req.json() as { username?: unknown; password?: unknown };
-  } catch {
+    body = await readJsonBodyWithinLimit(req, MAX_CREDENTIAL_REQUEST_BODY_BYTES) as {
+      username?: unknown;
+      password?: unknown;
+    };
+  } catch (error) {
+    // The body is read before any credential check, and login plus recovery are
+    // the only routes an unauthenticated caller reaches — so the cap answers
+    // here rather than at the proxy.
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json(CREDENTIAL_BODY_TOO_LARGE, { status: 413 });
+    }
     return NextResponse.json({ error: "Expected a JSON body" }, { status: 400 });
   }
 

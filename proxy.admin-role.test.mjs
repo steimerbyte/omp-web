@@ -17,6 +17,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const { proxy } = await jiti.import("./proxy.ts");
 const { SESSION_COOKIE_NAME, issueSessionCookie } = await jiti.import("./lib/web-auth-session.ts");
+const { requireAdmin } = await jiti.import("./lib/request-identity.ts");
 
 const ORIGIN = "http://localhost:30141";
 
@@ -145,5 +146,29 @@ test("ein x-omp-admin vom Client wird geloescht, auch wenn die Rolle passt", (t)
     const denied = proxy(signedIn("alice", { "x-omp-admin": "1" }));
     assert.equal(forwarded(denied, "x-omp-admin"), null);
     assert.equal(denied.headers.get("x-omp-admin"), null, "und er landet auch nicht in der Antwort");
+  });
+});
+
+test("ein gesetztes, aber leeres OMP_WEB_ADMINS macht niemanden zum Admin — und die Sperre antwortet 403", (t) => {
+  withServer(t, () => {
+    // bob ist ueber die Datei Admin. Wird die Umgebung danach ausdruecklich
+    // leer gesetzt, muss die Datei verlieren: "es gibt keine Admins", nicht
+    // "nimm die Vorgabe". Frueher fiel genau dieser Wert auf die Datei bzw.
+    // `pi`/`omp`/`steimerbyte` zurueck.
+    store.setWebAccountRole("bob", true);
+    process.env.OMP_WEB_ADMINS = "";
+    // Kein clearAdminRoleCache(): die Zusage gilt auch fuer einen warmen Cache.
+
+    const response = proxy(signedIn("bob"));
+    assert.equal(response.status, 200, "die Anfrage selbst bleibt erlaubt");
+    assert.equal(forwarded(response, "x-omp-admin"), null);
+
+    // Was der Proxy weiterreicht, entscheidet der Guard: 403, kein Throw.
+    const headers = new Headers({ host: "localhost:30141" });
+    for (const name of ["x-omp-user", "x-omp-admin"]) {
+      const value = forwarded(response, name);
+      if (value !== null) headers.set(name, value);
+    }
+    assert.equal(requireAdmin(new Request(ORIGIN, { headers })).status, 403);
   });
 });

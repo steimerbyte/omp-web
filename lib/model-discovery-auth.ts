@@ -18,10 +18,37 @@ function stringRecord(value: unknown): Record<string, string> {
   return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 
+/**
+ * The SDK routes any `!`-prefixed config value through `/bin/sh -c`
+ * (`resolve-config-value.ts`). That feature is meant for operator-written
+ * models.yml, never for a provider object that arrived in an HTTP body, so the
+ * first `!`-prefixed string anywhere in that object is a refusal.
+ */
+export function commandConfigValuePath(value: unknown, path: string): string | null {
+  if (typeof value === "string") return value.startsWith("!") ? path : null;
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const found = commandConfigValuePath(value[index], `${path}[${index}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (isRecord(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      const found = commandConfigValuePath(entry, `${path}.${key}`);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export async function resolveModelDiscoveryAuth(
   providerName: string,
   provider: Record<string, unknown>,
 ): Promise<ModelDiscoveryAuth> {
+  const commandPath = commandConfigValuePath(provider, `providers.${providerName}`);
+  if (commandPath) throw new Error(`"${commandPath}" must not be a command value`);
+
   let tempDir: string | undefined;
   try {
     tempDir = mkdtempSync(join(tmpdir(), "omp-web-model-discovery-"));

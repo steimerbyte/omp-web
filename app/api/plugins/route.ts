@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PluginManager } from "@oh-my-pi/pi-coding-agent/extensibility/plugins";
 import type { InstalledPlugin } from "@oh-my-pi/pi-coding-agent/extensibility/plugins";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
-import { getRequestIdentity } from "@/lib/request-identity";
+import { getRequestIdentity, requireAdmin } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import type {
   PluginDiagnostic,
@@ -152,6 +152,12 @@ export async function GET(req: Request) {
 
 // POST /api/plugins body: { action, source?, cwd }
 export async function POST(req: Request) {
+  // Every action is a mutation of the process-global plugin store
+  // (`~/.omp/plugins`, the marketplace registries, the runtime lockfile) and
+  // install/update execute `bun install`/`git clone` in-process. The guard is
+  // the entry, not a branch: a new action added below inherits it.
+  const denied = requireAdmin(req);
+  if (denied) return denied;
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }

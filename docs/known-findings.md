@@ -96,6 +96,13 @@ Sonderregel fuer die api-key-Route: wenn die Ablage mandantenfaehig ist, faellt
 dabei liegen, denn ein Admin *ist* das Prozesskonto — dieselbe Begruendung, die
 schon in `lib/tenant-config.ts` steht.
 
+**Stand v0.22.4:** Die beiden Modell-Proberouten
+(`POST /api/models-config/discover` und `/test`) sind seither **admin-only**,
+weil sie den prozessweiten `AuthStorage` benutzen und Discover den Schluessel
+an eine vom Aufrufer gewaehlte `baseUrl` schickt (OMP-002). Das schliesst den
+Weg ueber diese Routen, nicht die Ablage: der Eintrag bleibt offen, bis
+`getAuthStorageForIdentity` existiert.
+
 ## `OMP_WEB_PASSWORD` schlaegt das gespeicherte Passwort
 
 **Kein Befund, sondern eine bewusste Entscheidung.** `resolveWebAuthPolicy()` in

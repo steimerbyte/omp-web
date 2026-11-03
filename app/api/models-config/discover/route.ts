@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { resolveModelDiscoveryAuth } from "@/lib/model-discovery-auth";
+import { commandConfigValuePath, resolveModelDiscoveryAuth } from "@/lib/model-discovery-auth";
 import { buildModelsListUrl, parseDiscoveredModels } from "@/lib/model-discovery";
+import { requireAdmin } from "@/lib/request-identity";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,11 @@ export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
+  // Credentials come from the process-wide AuthStorage, i.e. the process
+  // account's own store; sending one to an endpoint named by the caller is an
+  // operator action, not a tenant one.
+  const denied = requireAdmin(req);
+  if (denied) return denied;
   if (!hasJsonContentType(req)) {
     return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
   }
@@ -43,6 +49,11 @@ export async function POST(req: Request) {
     const providerName = typeof body.providerName === "string" ? body.providerName.trim() : "";
     if (!providerName) return NextResponse.json({ error: "providerName is required" }, { status: 400 });
     if (!isRecord(body.provider)) return NextResponse.json({ error: "provider is required" }, { status: 400 });
+
+    const commandPath = commandConfigValuePath(body.provider, "provider");
+    if (commandPath) {
+      return NextResponse.json({ error: `"${commandPath}" must not be a command value` }, { status: 400 });
+    }
 
     const baseUrl = typeof body.provider.baseUrl === "string" ? body.provider.baseUrl.trim() : "";
     if (!baseUrl) return NextResponse.json({ error: "Base URL is required" }, { status: 400 });

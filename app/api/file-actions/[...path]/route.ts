@@ -6,11 +6,14 @@ import { filePathFromSegments } from "@/lib/file-paths";
 import {
   authorizeTransfer,
   destinationExists,
+  getWritableRoots,
   isSameOrBelow,
   isWritePathAllowed,
 } from "@/lib/write-access";
+import { isExistingPathWithinRoots } from "@/lib/path-security";
 import { getRequestIdentity, getUserHome, type WebIdentity } from "@/lib/request-identity";
 import { protectedRootReason } from "@/lib/projects-delete";
+import { copyTree, inspectTree, treeDeadline, TreeRefusal } from "@/lib/file-actions-tree";
 
 export const dynamic = "force-dynamic";
 
@@ -55,8 +58,6 @@ export const dynamic = "force-dynamic";
  * so it goes first and a refusal there explains itself as a permission problem
  * rather than as "that folder is not yours to remove".
  */
-
-const MAX_COPY_BYTES = 512 * 1024 * 1024;
 
 function errorResponse(message: string, status: number, extra?: Record<string, unknown>) {
   return NextResponse.json({ error: message, ...extra }, { status });
@@ -106,42 +107,6 @@ function safeName(value: unknown): string | null {
   if (trimmed.includes("/") || trimmed.includes("\\")) return null;
   if (trimmed.includes("\0")) return null;
   return trimmed;
-}
-
-/** Total bytes a directory tree occupies, for the copy size guard. */
-function treeSize(target: string): number {
-  const stat = fs.lstatSync(target);
-  if (stat.isFile()) return stat.size;
-  if (!stat.isDirectory()) return 0;
-  let total = 0;
-  for (const entry of fs.readdirSync(target)) {
-    total += treeSize(path.join(target, entry));
-  }
-  return total;
-}
-
-/**
- * Recursive copy. Deliberately does not follow symlinks: a symlink inside the
- * source is copied as a symlink, so a link pointing outside the project cannot
- * pull foreign content in through the copy.
- */
-function copyTree(source: string, destination: string): void {
-  const stat = fs.lstatSync(source);
-  if (stat.isSymbolicLink()) {
-    fs.symlinkSync(fs.readlinkSync(source), destination);
-    return;
-  }
-  if (stat.isDirectory()) {
-    fs.mkdirSync(destination, { recursive: true });
-    for (const entry of fs.readdirSync(source)) {
-      copyTree(path.join(source, entry), path.join(destination, entry));
-    }
-    return;
-  }
-  fs.copyFileSync(source, destination);
-  // copyFileSync does not carry the mode across on every platform, and an
-  // executable losing +x is a real regression for a project the agent runs.
-  fs.chmodSync(destination, stat.mode);
 }
 
 export async function POST(
@@ -258,14 +223,12 @@ export async function POST(
       }
 
       if (type === "copy") {
-        const size = treeSize(source);
-        if (size > MAX_COPY_BYTES) {
-          return errorResponse(
-            `Refusing to copy ${(size / 1024 / 1024).toFixed(0)} MB; the limit is ${MAX_COPY_BYTES / 1024 / 1024} MB`,
-            413,
-          );
-        }
-        copyTree(source, destination);
+        // `inspectTree` refuses over-limit trees before the first write, and
+        // both halves are asynchronous so a large folder cannot hold the event
+        // loop — see lib/file-actions-tree.ts for the measured numbers.
+        const deadline = treeDeadline();
+        await inspectTree(source, "copy", deadline);
+        await copyTree(source, destination, deadline);
       } else {
         // renameSync is atomic within a filesystem and throws EXDEV across
         // one. A copy-then-delete fallback would leave a half-moved tree if the
@@ -290,6 +253,7 @@ export async function POST(
     return errorResponse(`Unknown action "${type ?? ""}"`, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof TreeRefusal) return errorResponse(error.message, error.status);
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return errorResponse("Not found", 404);
     if (code === "ENOTEMPTY") return errorResponse("Target folder is not empty", 409);
@@ -335,25 +299,58 @@ export async function DELETE(
     const refused = protectedRefusal(target, identity);
     if (refused) return refused;
 
-    const stat = fs.lstatSync(target);
+    // A symlink is removed as a link. `unlink` never follows the final entry,
+    // so this cannot reach a target outside the roots, and `rm` must not be
+    // used here: it would follow nothing either, but it would also accept a
+    // directory-shaped view of the link and keep the pathname semantics.
+    const entry = await fs.promises.lstat(target);
+    if (entry.isSymbolicLink()) {
+      await fs.promises.unlink(target);
+      return NextResponse.json({ ok: true, path: target });
+    }
+
+    // Everything else is removed by the object it resolves to, not by the name
+    // that was handed in. OMP-019's delete trace is this handler: the guard
+    // judged `target`, then `rm` walked a path whose parent could have been
+    // exchanged for a symlink to another tree. `resolved` is what is actually
+    // removed, and the resolved roots are what it is checked against.
+    const resolved = await fs.promises.realpath(target);
+    if (!isExistingPathWithinRoots(resolved, await getWritableRoots(identity))) {
+      return errorResponse("Access denied", 403);
+    }
+    // The resolved tree is the one that disappears, so the protected rule has
+    // to see it too; inspecting only the requested name would miss
+    // `<home>/link/.omp` where `link` points at the home.
+    const resolvedRefusal = protectedRefusal(resolved, identity);
+    if (resolvedRefusal) return resolvedRefusal;
+
+    const stat = await fs.promises.lstat(resolved);
     if (stat.isDirectory()) {
-      // rmSync without recursive would fail on a populated folder. Recursive
+      // `rm` without recursive would fail on a populated folder. Recursive
       // deletion is the user's explicit action, and the writable-root check
       // above is what bounds it — but refuse the filesystem root outright,
       // because a root that somehow entered the writable set must not be
       // removable with one request. Unreachable while `isWritePathAllowed`
       // filters `/` out of the write set; kept as a second line under a
       // recursive delete, which is the wrong place to be short one.
-      if (path.resolve(target) === path.parse(path.resolve(target)).root) {
+      if (path.resolve(resolved) === path.parse(path.resolve(resolved)).root) {
         return errorResponse("Refusing to delete a filesystem root", 400);
       }
-      fs.rmSync(target, { recursive: true, force: false });
+      // Same pre-check as the copy: the depth and time budgets are verified
+      // without removing anything, so an over-limit folder is refused whole
+      // rather than half deleted (a delete has no entry cap — see the module).
+      await inspectTree(resolved, "delete", treeDeadline());
+      // No fd-relative rm exists in Node, so a parent-directory swap between
+      // this resolution and the call stays open; the resolved path removes the
+      // intermediate-symlink hop that was the finding.
+      await fs.promises.rm(resolved, { recursive: true, force: false });
     } else {
-      fs.unlinkSync(target);
+      await fs.promises.unlink(resolved);
     }
     return NextResponse.json({ ok: true, path: target });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof TreeRefusal) return errorResponse(error.message, error.status);
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return errorResponse("Not found", 404);
     if (code === "ENOTEMPTY") return errorResponse("Target folder is not empty", 409);

@@ -8,6 +8,12 @@ import { isWritePathAllowed } from "@/lib/write-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
 import { startRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import {
+  MAX_AGENT_REQUEST_BODY_BYTES,
+  RequestBodyTooLargeError,
+  oversizedRequestBody,
+  readJsonBodyWithinLimit,
+} from "@/lib/request-body";
 // omp owns the selector grammar (including abbreviations like "med"); reuse its
 // parser so the browser and the CLI accept exactly the same values.
 function parseThinkingLevel(value: unknown): ConfiguredThinkingLevel | undefined {
@@ -31,7 +37,10 @@ export async function POST(req: Request) {
   let commandType: string | undefined;
   let promptAccepted = false;
   try {
-    const body = await req.json() as { cwd?: string; [key: string]: unknown };
+    // Same bounded read as `/api/agent/[id]`: a new session accepts the same
+    // prompt body, so it needs the same ceiling instead of buffering whatever
+    // arrives (chunked requests included).
+    const body = await readJsonBodyWithinLimit(req, MAX_AGENT_REQUEST_BODY_BYTES) as { cwd?: string; [key: string]: unknown };
     const { cwd, ...command } = body;
     commandType = typeof command.type === "string" ? command.type : undefined;
 
@@ -142,6 +151,9 @@ export async function POST(req: Request) {
       configuredThinkingLevel: state.configuredThinkingLevel,
     });
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json(oversizedRequestBody(error), { status: 413 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(commandType === "prompt" && !promptAccepted

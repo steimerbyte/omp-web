@@ -12,7 +12,14 @@ import type { PromptTemplate } from "@oh-my-pi/pi-coding-agent/config/prompt-tem
 import { loadCapability } from "@oh-my-pi/pi-coding-agent/discovery";
 import { discoverCustomToolPaths, type ToolPathWithSource } from "@oh-my-pi/pi-coding-agent/extensibility/custom-tools";
 import type { ResourceDiagnostic } from "./api-types";
-import { getProjectTrustStatus, isInsideProject, untrustedProjectSessionOptions } from "./project-trust";
+import {
+  getProjectTrustStatus,
+  isInsideProject,
+  isSpelledInside,
+  resolveProjectRoot,
+  untrustedProjectSessionOptions,
+  userCodeRoots,
+} from "./project-trust";
 import { getUserHome, isAdminIdentity, type WebIdentity } from "./request-identity";
 import { resolveTenantAgentDir } from "./tenant-config";
 import { resolveSessionSystemPrompts, type ResolvedSessionSystemPrompts } from "./session-system-prompt";
@@ -116,6 +123,11 @@ function isOperatorStore(candidate: LoadCandidate, roots: LoadRoots): boolean {
  * `read` narrows an item to its path and level; the call sites are one line each
  * (`(rule) => ({ path: rule.path, level: rule._source?.level })`) and the policy
  * stays free of per-type knowledge.
+ *
+ * Every path is judged by what it really reaches, not by its link text: a
+ * project file whose symlink points outside the project is dropped for every
+ * identity (`OMP-007`). Trust itself is decided at the project root, so a
+ * session in `repo/src` cannot outrun a `repo/.agents` resource (`OMP-010`).
  */
 export function filterLoads<T>(
   items: readonly T[],
@@ -124,21 +136,31 @@ export function filterLoads<T>(
 ): LoadDecision<T> {
   const roots = loadRoots(scope.identity);
   const tenant = scope.identity !== null && !isAdminIdentity(scope.identity);
-  const trust = getProjectTrustStatus(scope.cwd, getAgentDir());
+  const projectRoot = resolveProjectRoot(scope.cwd);
+  const trust = getProjectTrustStatus(projectRoot, getAgentDir());
   // `requiresTrust && !trusted` and nothing else: a project that ships no
   // trust-requiring resource is on omp's normal path (`lib/project-trust.ts`),
   // which is what "untrusted" has always meant here.
   const narrowed = trust.requiresTrust && !trust.trusted;
-  if (!tenant && !narrowed) return { items: undefined, withheld: 0 };
+  const codeRoots = scope.code ? userCodeRoots(getAgentDir()) : [];
 
   let fromProject = 0;
+  let fromSymlink = 0;
   let fromOperator = 0;
   const kept = items.filter((item) => {
     const candidate = read(item);
-    const insideProject =
+    const path = candidate.path;
+    // Project scope is the loader's label or the file's spelling under the
+    // project — the cwd is included because a session can sit in a subdirectory
+    // of a project whose paths are spelled from there.
+    const projectScoped =
       candidate.level === "project" ||
-      (candidate.path !== undefined && isInsideProject(candidate.path, scope.cwd));
-    if (narrowed && insideProject) {
+      (path !== undefined && (isSpelledInside(path, scope.cwd) || isSpelledInside(path, projectRoot)));
+    if (projectScoped && path !== undefined && !isInsideProject(path, projectRoot)) {
+      fromSymlink += 1;
+      return false;
+    }
+    if (narrowed && projectScoped) {
       fromProject += 1;
       return false;
     }
@@ -146,17 +168,24 @@ export function filterLoads<T>(
       fromOperator += 1;
       return false;
     }
-    const codePath = candidate.path;
-    if (narrowed && scope.code && (codePath === undefined || !roots.operator.some((root) => isInsideProject(codePath, root)))) {
+    if (
+      narrowed &&
+      scope.code &&
+      (path === undefined || !codeRoots.some((root) => isInsideProject(path, root)))
+    ) {
       fromProject += 1;
       return false;
     }
     return true;
   });
 
-  const withheld = fromProject + fromOperator;
+  const withheld = fromProject + fromSymlink + fromOperator;
+  // The operator's clean path stays "no list": replacing omp's own discovery
+  // with an identical copy would silently change which loader decides.
+  if (!tenant && !narrowed && withheld === 0) return { items: undefined, withheld: 0 };
   if (withheld === 0) return { items: kept, withheld: 0 };
   const reasons = [
+    ...(fromSymlink > 0 ? ["a path resolves outside the project through a symlink"] : []),
     ...(fromProject > 0 ? ["this project is not trusted"] : []),
     ...(fromOperator > 0 ? ["this account does not inherit the operator's agent directory"] : []),
   ];
