@@ -260,7 +260,15 @@ test("ein Admin darf seine mcp.json aus dem Agent-Verzeichnis heraus verlinken",
   const read = await mcpRoute.GET(request("/api/mcp", { headers: ADMIN }));
   assert.equal(read.status, 200, `erwartet 200, bekam ${read.status}`);
   const body = await read.json();
-  assert.deepEqual((body.user?.servers ?? []).map((entry) => entry.name), ["dotfile"]);
+  // Kein deepEqual auf die ganze Liste: `addDiscoveredServers` liest
+  // prozessweite Capability-Discovery, in die eine frueher gelaufene Testdatei
+  // denselben Bun-Prozess einen Server (`thunderbird`) gelegt hat. `dotfile`
+  // kann nur aus dem Symlink-Ziel stammen — nichts sonst im Fixture deklariert
+  // ihn —, also belegt `includes` genau die Behauptung.
+  assert.ok(
+    (body.user?.servers ?? []).some((entry) => entry.name === "dotfile"),
+    `der verlinkte Server fehlt: ${JSON.stringify(body.user?.servers)}`,
+  );
 
   const written = await mcpRoute.PUT(request("/api/mcp", {
     method: "PUT",
