@@ -12,6 +12,7 @@ import {
   formatGermanWeekRange,
   germanHolidays,
   resolveEventColor,
+  weekdayIndex,
   type CalendarEvent,
 } from "@/lib/calendar";
 import {
@@ -101,6 +102,18 @@ const TIME_AXIS_WIDTH_SMALL = 28;
 /** Der Innenabstand einer Tageszelle, schmal und breit. */
 const CELL_PADDING = "4px 5px";
 const CELL_PADDING_SMALL = "3px 3px";
+
+/**
+ * Die Flaeche eines Wochenendtages — in allen drei Ansichten dieselbe.
+ *
+ * Ein Anteil der Akzentfarbe statt einer festen Farbe: `applyOmpPalette`
+ * schreibt die Variablen zur Laufzeit um, ein Literal bliebe in einem
+ * importierten Theme stehen. Der Anteil ist klein genug, um neben der
+ * Tageszahl in Akzentfarbe und dem roten Feiertagsnamen nicht zu stoeren,
+ * und stark genug, um sich von der Abdunklung des Nachbarmonats
+ * (`--bg` 60 % + `--bg-panel`) zu unterscheiden.
+ */
+const WEEKEND_BG = "color-mix(in srgb, var(--accent) 9%, var(--bg))";
 
 /**
  * Wohin ein Termin gezogen wurde.
@@ -902,22 +915,29 @@ function MonthGrid({
               flexShrink: 0,
             }}
           >
-            {GERMAN_WEEKDAYS_MIN.map((name) => (
-              <div
-                key={name}
-                style={{
-                  padding: compact ? "4px 2px" : "6px 8px",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--text-dim)",
-                  textAlign: "center",
-                  borderRight: "1px solid var(--border)",
-                  overflow: "hidden",
-                }}
-              >
-                {name}
-              </div>
-            ))}
+            {GERMAN_WEEKDAYS_MIN.map((name, index) => {
+              // Die Woche beginnt am Montag, also sind die letzten beiden
+              // Eintraege Samstag und Sonntag.
+              const weekend = index >= 5;
+              return (
+                <div
+                  key={name}
+                  data-cal-weekend={weekend ? "true" : undefined}
+                  style={{
+                    padding: compact ? "4px 2px" : "6px 8px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: weekend ? "var(--accent)" : "var(--text-dim)",
+                    background: weekend ? WEEKEND_BG : "none",
+                    textAlign: "center",
+                    borderRight: "1px solid var(--border)",
+                    overflow: "hidden",
+                  }}
+                >
+                  {name}
+                </div>
+              );
+            })}
           </div>
 
           <div
@@ -933,6 +953,7 @@ function MonthGrid({
         {days.map((date) => {
           const dayEvents = eventsOf(date);
           const outside = date.slice(0, 7) !== month;
+          const weekend = weekdayIndex(date) >= 5;
           const holiday = holidays.get(date);
           const isToday = date === todayDate;
 
@@ -961,6 +982,7 @@ function MonthGrid({
             <div
               key={date}
               data-cal-cell="true"
+              data-cal-weekend={weekend ? "true" : undefined}
               onClick={() => {
                 // Die Liste oeffnet nur, wenn es etwas zu waehlen gibt — und
                 // dann aus einem der beiden Gruende:
@@ -1016,7 +1038,11 @@ function MonthGrid({
                 padding: compact ? CELL_PADDING_SMALL : CELL_PADDING,
                 minHeight: 0,
                 overflow: "hidden",
-                background: outside ? "color-mix(in srgb, var(--bg) 60%, var(--bg-panel))" : "none",
+                background: weekend
+                  ? WEEKEND_BG
+                  : outside
+                    ? "color-mix(in srgb, var(--bg) 60%, var(--bg-panel))"
+                    : "none",
                 cursor: "pointer",
               }}
             >
@@ -1218,8 +1244,13 @@ function TimeGrid({
         *
         * Auf dem schmalen Bildschirm entfaellt beides: dort teilen sich die
         * sieben Tage die Panelbreite, und es gibt nichts zu schieben.
+        *
+        * Senkrecht scrollt diese Area dagegen **immer**: der Tag ist 24
+        * Stunden hoch (1152 Pixel), und die passt auf kein Display. Auf
+        * dem Handy waere `hidden` das Ende des Rasters bei etwa 18 Uhr.
+        * Nur die Seite scrollt nicht — die Kopfzeile bleibt stehen.
         */}
-      <div style={{ flex: 1, minHeight: 0, overflow: compact ? "hidden" : "auto" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: compact ? "hidden" : "auto" }}>
         <div
           style={{
             minWidth: compact ? 0 : TIME_AXIS_WIDTH + days.length * TIME_COLUMN_MIN_WIDTH,
@@ -1237,32 +1268,51 @@ function TimeGrid({
               gridTemplateColumns: `${axisWidth}px repeat(${days.length}, ${columnTemplate})`,
               borderBottom: "1px solid var(--border)",
               flexShrink: 0,
+              // Die Datumszeile bleibt beim Scrollen stehen: bei 20 Uhr ist
+              // sie sonst laengst aus dem Bild, und die Spalte darunter
+              // waere ohne ihren Tag nicht mehr lesbar. `var(--bg)` ist
+              // deckend — die Stundenlinien duerfen nicht durchscheinen.
+              position: "sticky",
+              top: 0,
+              zIndex: 2,
+              background: "var(--bg)",
             }}
           >
             <div />
-            {days.map((date) => (
-              <div key={date} style={{ padding: compact ? "3px 2px" : "4px 6px", borderRight: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
-                  {Number(date.slice(8, 10))}.
+            {days.map((date) => {
+              const weekend = weekdayIndex(date) >= 5;
+              return (
+                <div
+                  key={date}
+                  data-cal-weekend={weekend ? "true" : undefined}
+                  style={{
+                    padding: compact ? "3px 2px" : "4px 6px",
+                    borderRight: "1px solid var(--border)",
+                    background: weekend ? WEEKEND_BG : "none",
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 600, color: weekend ? "var(--accent)" : "var(--text-muted)" }}>
+                    {Number(date.slice(8, 10))}.
+                  </div>
+                  {holidays.get(date) ? (
+                    <div style={{ fontSize: 10, color: "var(--danger)" }}>{holidays.get(date)}</div>
+                  ) : null}
+                  {allDayOf(date).map((event) => (
+                    <EventChip
+                      key={event.id}
+                      event={event}
+                      onClick={(clickEvent) => {
+                        clickEvent.stopPropagation();
+                        onEdit(event);
+                      }}
+                      onDragStart={(dragEvent) => {
+                        dragEvent.dataTransfer.setData("text/plain", event.id);
+                      }}
+                    />
+                  ))}
                 </div>
-                {holidays.get(date) ? (
-                  <div style={{ fontSize: 10, color: "var(--danger)" }}>{holidays.get(date)}</div>
-                ) : null}
-                {allDayOf(date).map((event) => (
-                  <EventChip
-                    key={event.id}
-                    event={event}
-                    onClick={(clickEvent) => {
-                      clickEvent.stopPropagation();
-                      onEdit(event);
-                    }}
-                    onDragStart={(dragEvent) => {
-                      dragEvent.dataTransfer.setData("text/plain", event.id);
-                    }}
-                  />
-                ))}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Die Stundenskala. */}
@@ -1290,7 +1340,12 @@ function TimeGrid({
         {days.map((date) => (
           <div
             key={date}
-            style={{ borderRight: "1px solid var(--border)", position: "relative" }}
+            data-cal-weekend={weekdayIndex(date) >= 5 ? "true" : undefined}
+            style={{
+              borderRight: "1px solid var(--border)",
+              position: "relative",
+              background: weekdayIndex(date) >= 5 ? WEEKEND_BG : "none",
+            }}
           >
             {Array.from({ length: MINUTES_PER_DAY / 60 }, (_, hour) => (
               <div

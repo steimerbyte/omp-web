@@ -377,6 +377,29 @@ Kalender öffnet, ist aus demselben Grund deutsch beschriftet
   werden absolut positioniert.
 - **Tag** — eine Spalte, dieselbe Stundenskala.
 
+Wochen- und Tagesansicht scrollen **senkrecht**, auf jedem Bildschirm: 24
+Stunden à 48 Pixel sind 1152 Pixel, und die passen auf kein Display. Auf dem
+Handy war dieser Bereich früher `hidden`; das Raster endete damit bei etwa
+18 Uhr, und alles darunter war unerreichbar. Jetzt scrollt der Bereich unter
+der Datumszeile — nicht die Seite. Die Datumszeile selbst bleibt beim
+Scrollen stehen (`position: sticky` mit deckendem `var(--bg)`), damit die
+Spalten bei 20 Uhr noch ihrem Tag zuzuordnen sind. Die 1152 Pixel hält
+`components/calendar/calendar-view.test.mjs` fest.
+
+#### Das Wochenende ist markiert
+
+Samstag und Sonntag tragen in allen drei Ansichten dieselbe Markierung: eine
+Fläche aus `color-mix(in srgb, var(--accent) 9%, var(--bg))`. Im Monat sind
+es die beiden letzten Einträge der Wochentagskopfzeile und die sechste und
+siebte Spalte jeder Woche; in der Wochen- und Tagesansicht die Kopfzelle des
+Tages und seine ganze Spalte. Der Anteil ist klein genug, um Tageszahl (heute
+in `var(--accent)`) und Feiertagsname (`var(--danger)`) lesbar zu lassen, und
+stärker als die Abdunklung des Nachbarmonats (`--bg` 60 % + `--bg-panel`),
+damit ein Wochenendtag im aktuellen Monat nicht wie ein fremder aussieht.
+
+Theme-Variablen statt Farbwerten, aus demselben Grund wie überall sonst:
+`applyOmpPalette` schreibt sie zur Laufzeit um.
+
 #### Die Terminliste eines Tages
 
 In eine Monatszelle passen nur wenige Termine: der Rest steht als „N weitere"
@@ -419,6 +442,11 @@ sich die sieben Spalten die Panelbreite (`repeat(7, minmax(0, 1fr))` bzw.
 eine Stundenskala von 28 Pixeln), und nichts scrollt seitlich. Der Preis ist
 ein gekürzter Termintitel in der Wochenansicht — eine Woche, die man ganz
 sieht, ist mehr wert als ein Titel, den man ganz liest.
+
+Die Schwelle entscheidet **nur** über die waagerechte Aufteilung. Das
+Wochenende ist auf jedem Bildschirm gleich markiert, und das Zeitraster
+scrollt auf jedem Bildschirm senkrecht bis 24:00. Der schmale Bildschirm
+tauscht Spaltenbreite gegen Scrollen in der Höhe, nicht gegen Vollständigkeit.
 
 ### Ein neuer Termin bekommt eine echte Endzeit
 

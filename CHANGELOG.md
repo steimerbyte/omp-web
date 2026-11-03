@@ -5,6 +5,25 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.22.3
+
+Released 2026-11-02.
+
+### Korrekturen
+
+- **Kalender: das Zeitraster scrollt auf dem Handy bis 24 Uhr.** Auf einem
+  schmalen Bildschirm war der Scrollbereich der Wochen- und Tagesansicht
+  `hidden`; das Raster endete bei etwa 18 Uhr, und alles darunter war
+  unerreichbar. Der Bereich scrollt jetzt senkrecht (`overflow-y: auto`,
+  waagerecht weiterhin `hidden`), und die Datumszeile bleibt als
+  `position: sticky` stehen. Gemessen in Chromium mit echten Touch-Events
+  bei 390×844 und auf einem Pixel 7: eine Wischgeste erreicht das Ende des
+  Rasters (24:00), die Seite selbst scrollt nicht.
+
+- **Kalender: das Wochenende ist markiert.** Samstag und Sonntag tragen in
+  allen drei Ansichten dieselbe Fläche; im Monat über die beiden Spalten und
+  die Kopfzeile, in Woche und Tag über die ganze Tagesspalte.
+
 ## v0.22.2
 
 Released 2026-11-02.

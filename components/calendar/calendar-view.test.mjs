@@ -638,6 +638,96 @@ test("auf 390 Pixeln passen alle sieben Tage in die Breite — Monat und Woche",
   });
 });
 
+// ------------------------- Wochenende und senkrechtes Scrollen --
+
+test("schmal: Wochen- und Tagesansicht scrollen senkrecht bis 24:00", async () => {
+  // Der gemeldete Mangel: auf dem Handy war der Scrollbereich `hidden` —
+  // das Raster endete bei etwa 18 Uhr, und was darunter lag, war nicht
+  // erreichbar. Der Bereich muss in *beiden* Ansichten senkrecht scrollen,
+  // und das Raster muss weiter 24 Stunden hoch sein.
+  await withMobile(async () => {
+    const { root } = await mount();
+
+    for (const tab of ["Woche", "Tag"]) {
+      await act(async () => { buttonWith(tab).click(); });
+      await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+      const scroller = [...win.document.querySelectorAll("div")]
+        .find((d) => d.style.overflowY === "auto");
+      assert.ok(scroller, `${tab}: der Zeitraster-Bereich scrollt nicht senkrecht`);
+      assert.equal(scroller.style.overflowX, "hidden", `${tab}: der schmale Bildschirm scrollt seitlich`);
+
+      // 48 Pixel je Stunde, 24 Stunden: 1152 Pixel. Die Zahl steht auch im
+      // Kommentar am Scrollbereich — der Test haelt sie fest.
+      const hourGrid = [...win.document.querySelectorAll("div")]
+        .find((d) => d.style.gridTemplateColumns?.startsWith("28px repeat(") && d.style.minHeight);
+      assert.ok(hourGrid, `${tab}: das Stundenraster fehlt`);
+      assert.equal(hourGrid.style.minHeight, "1152px", `${tab}: das Raster ist nicht 24 Stunden hoch`);
+      assert.equal(hourGrid.children[0].children.length, 24, `${tab}: die Stundenskala endet vor 24 Uhr`);
+    }
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+test("das Wochenende ist markiert — Monatskopf, Monatszellen und Wochenansicht", async () => {
+  const { root } = await mount();
+
+  // Der Monatskopf: sieben Wochentage, die letzten beiden sind Sa und So.
+  const monthHeader = [...win.document.querySelectorAll("div")].find(
+    (d) => d.style.gridTemplateColumns === "repeat(7, minmax(0, 1fr))" && !d.style.gridTemplateRows,
+  );
+  assert.ok(monthHeader, "die Wochentagskopfzeile des Monats fehlt");
+  const markedHeaders = [...monthHeader.children]
+    .filter((element) => element.getAttribute("data-cal-weekend") === "true");
+  assert.equal(markedHeaders.length, 2, "der Monatskopf markiert nicht genau zwei Tage");
+  assert.deepEqual(markedHeaders.map((element) => element.textContent), ["Sa", "So"]);
+
+  // Die 42 Monatszellen: markiert ist die sechste und siebte Spalte jeder
+  // Woche, keine Zelle eines Wochentags.
+  const cells = [...win.document.querySelectorAll("[data-cal-cell]")];
+  assert.equal(cells.length, 42, "das Monatsraster hat nicht 42 Zellen");
+  cells.forEach((cell, index) => {
+    assert.equal(
+      cell.getAttribute("data-cal-weekend") === "true",
+      index % 7 >= 5,
+      `die Monatszelle ${index} traegt die falsche Wochenendmarkierung`,
+    );
+  });
+
+  // Die Wochenansicht: zwei markierte Tagesspalten und zwei markierte
+  // Kopfzellen.
+  await act(async () => { buttonWith("Woche").click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const weekHeader = [...win.document.querySelectorAll("div")].find(
+    (d) => d.style.gridTemplateColumns?.startsWith("56px repeat(") && !d.style.minHeight,
+  );
+  assert.ok(weekHeader, "die Datumszeile der Wochenansicht fehlt");
+  // Das erste Kind ist die leere Ecke ueber der Stundenskala.
+  const weekHeaderDays = [...weekHeader.children].slice(1);
+  assert.equal(weekHeaderDays.length, 7);
+  assert.equal(
+    weekHeaderDays.filter((element) => element.getAttribute("data-cal-weekend") === "true").length,
+    2,
+    "die Datumszeile markiert nicht genau Sa und So",
+  );
+
+  const weekGrid = [...win.document.querySelectorAll("div")].find(
+    (d) => d.style.gridTemplateColumns?.startsWith("56px repeat(") && d.style.minHeight,
+  );
+  assert.ok(weekGrid, "das Stundenraster der Wochenansicht fehlt");
+  const weekColumns = [...weekGrid.children];
+  assert.equal(weekColumns.length, 8, "die Wochenansicht hat nicht sieben Tagesspalten");
+  assert.deepEqual(
+    weekColumns.map((element) => element.getAttribute("data-cal-weekend") === "true"),
+    [false, false, false, false, false, false, true, true],
+    "markiert sind nicht die beiden Wochenendspalten",
+  );
+
+  await act(async () => { root.unmount(); });
+});
+
 // ------------------------- Uhrzeit im Dialog, aus jeder Ansicht heraus --
 
 test("Monatsansicht: der Klick auf einen Termin-Chip fuellt die Uhrzeit des Termins", async () => {
