@@ -9,7 +9,7 @@ bun run dev   # port 30141
 
 Typecheck: `bun run typecheck`
 Lint: `bun run lint`
-Tests: `bun test`
+Tests: `bun run test` (suite + gate), see [Testing](#testing)
 **Never run `bun run build` during dev** — pollutes `.next/` and breaks `bun run dev`.
 Exception: `bun run desktop:build` (via `scripts/stage-desktop.mjs`) is safe — it builds
 into `src-tauri/server/.next` through `OMP_WEB_DIST_DIR` and never touches the dev `.next/`.
@@ -31,6 +31,31 @@ Two consequences worth remembering:
   own transitive entry points.
 - `bun test`, not `node --test`. The test files are `node:test`-based and Bun
   runs them; Node cannot import the SDK the tests exercise.
+
+## Testing
+
+`bun run test` is the gate: the suite at `--parallel=8 --timeout=30000`, then
+coverage, then `scripts/test-coverage-gate.mjs`. `bun run test:fast` skips
+coverage for the inner loop; `bun run verify` (typecheck, then the gate) must
+pass before a commit. Details and troubleshooting: `docs/testing.md`.
+
+- **Every new function needs a test.** The gate ratchets per file on `FNF`/`FNH`
+  from `coverage/lcov.info`: one more function without a caller raises
+  `uncovered` and fails. A new source file that no test imports fails outright.
+- **Measure one area** with
+  `node scripts/coverage-functions.mjs --missing lib/foo.ts coverage` — one line
+  per file, `found hit uncovered file`, from the last gate run.
+- **A baseline exception needs a reason** (`reason` + `since` in
+  `.test-baseline.json`) and is never for a red test. Both blocks only shrink:
+  once a test reaches the file, the gate demands the entry be deleted.
+  `bun run test:baseline` rewrites the machine-owned `coverage` block and adds
+  unknown `unreachable` entries as `TODO` so they show up in the diff.
+- **No `.only`, no silent skip.** `test.skip(`/`test.todo(` fail the gate, and so
+  does `{ skip: <probe> }` without a string reason — write
+  `{ skip: process.platform === "win32" && "POSIX file permissions" }`.
+- **`mock.module` needs `--parallel`**: it is process-wide and cannot be undone,
+  so `lib/http-dispatcher.unit.test.mjs` (`mock.module("undici")`) relies on one
+  worker per file.
 
 ---
 

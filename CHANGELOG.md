@@ -5,6 +5,70 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.23.0
+
+Released 2026-11-04.
+
+Test-Harness statt Testlauf: ein Kommando beantwortet, ob die Suite grün ist,
+ob eine neue Quelldatei ungetestet ist und ob eine Datei neue ungetestete
+Funktionen bekommen hat. Am Laufzeitverhalten ändert sich nichts außer den zwei
+Fehlern unten — dieser Release ändert Tests, Skripte und Doku.
+
+### Harness
+
+- **`bun run test` ist das Gate.** Suite mit `--parallel=8 --timeout=30000`,
+  Coverage und danach die Regeln aus `scripts/test-coverage-gate.mjs`; ein
+  Exit-Code, 41,5 s gemessen. `test:fast` lässt die Coverage weg,
+  `test:unit|api|ui` sind Ausschnitte, `verify` ist Typecheck plus Gate.
+- **378 Testdateien, 2.901 Fälle (2.900 pass, 1 skip, 0 fail).** Vorher 229
+  Dateien, 2.005 Fälle in 57 s seriell, mit zwei reihenfolgeabhängigen
+  Fehlschlägen — die Prozess-Isolation durch `--parallel` hat sie beseitigt.
+  896 neue Fälle in 149 neuen Dateien.
+- **Fünf Regeln, keine Allowlist für rote Tests.** R1 Reichweite (jede
+  Quelldatei wird von einem Test transitiv importiert), R2 Ratchet (bezahlte
+  Debt muss aus der Baseline), R3 Funktionen (`uncovered = FNF − FNH` darf pro
+  Datei nicht steigen), R4 kein `.only`, R5 kein stiller Skip ohne Grund.
+- **332 Quelldateien im Gate:** 315 erreichbar, 17 dokumentierter Debt
+  (`app/layout.tsx`, Service Worker, CLI-/Build-Skripte samt Harness). 4.849
+  Funktionen gefunden, 4.174 ausgeführt (86,1 %), 675 offen.
+- `node scripts/coverage-functions.mjs --missing <datei> coverage` nennt für
+  eine einzelne Datei `found hit uncovered`; `.test-baseline.json` hält
+  Reichweite und Zähler, beide Blöcke werden nur kleiner.
+
+### Fehlerbehebungen
+
+- **Skills mit `disable-model-invocation` wurden dem Modell weiter angeboten.**
+  `lib/skills-service.ts` und `app/api/skills/route.ts` lasen den Schlüssel in
+  Kebab-Schreibweise, `parseFrontmatter` normalisiert ihn aber auf
+  `disableModelInvocation` — der Lookup war immer `undefined`. `PATCH`
+  duplizierte den Schlüssel zusätzlich, wenn er schon auf `false` stand. Beide
+  Pfade lesen jetzt den normalisierten Schlüssel; ein vorhandenes `false` wird
+  ersetzt, statt einen zweiten Schlüssel darüber zu setzen.
+- **Quick Phrases aus Leerzeichen werden verworfen.** `lib/quick-phrases.ts`
+  nahm `"   "` als Phrase an und erzeugte einen Button ohne Funktion;
+  maßgeblich ist jetzt `text.trim() !== ""`.
+
+### Messgrenzen
+
+- Bun 1.4.4 schreibt keine `FN:`/`FNDA:`-Sätze; das Ratchet arbeitet mit
+  `FNF`/`FNH` pro Datei. Die 675 offenen Funktionen sind überwiegend anonyme
+  Inline-JSX-Callbacks in `FileExplorer`, `SessionSidebar`, `AppShell` und
+  `ModelsConfig`; die Zahl soll sinken, sie ist nicht „getestet".
+- **Die Baseline hält den kleinsten gemessenen Stand.** 9 Callbacks in
+  `skills/check`, `skills/update`, `ModelsConfig`, `rpc-manager` und `npx`
+  laufen nur, wenn die Testumgebung Provider-Keys im Env hat (Filter- und
+  Sort-Callbacks über `process.env`). Auf dem Deploy-Host ohne diese Keys sind
+  es 4.174 von 4.849 Funktionen (86,1 %), 675 offen; in einer Entwickler-Shell
+  sind es 4.183/666. Die Baseline wird deshalb auf dem nüchternen Host
+  gemessen, sonst urteilt dasselbe Repo auf zwei Maschinen verschieden.
+- 67 Einzeiler (Rumpf auf der Deklarationszeile) sind per Zeilen-Coverage nicht
+  messbar und zählen weder als gedeckt noch als ungedeckt.
+
+### Deploy
+
+- Keine neue Abhängigkeit, keine Migration, keine Konfiguration. Ein Deploy
+  bringt nur die zwei Fixes; Harness und Doku liegen nicht im Laufzeitpfad.
+
 ## v0.22.5
 
 Released 2026-11-04.
