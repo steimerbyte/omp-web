@@ -106,22 +106,35 @@ export async function PATCH(req: Request) {
     }
 
     const content = readFileSync(resolvedFilePath, "utf8");
+    // Written in the spec's kebab form; read back under the camelCase key,
+    // because `parseFrontmatter` normalizes both spellings to it.
     const key = "disable-model-invocation";
+    const keyLine = /^(?:disable-model-invocation|disableModelInvocation)\s*:.*$/m;
+    const keyLineWithNewline = /^(?:disable-model-invocation|disableModelInvocation)\s*:.*\r?\n/m;
 
     // Use parseFrontmatter to check current value, then do a surgical line edit
     // to preserve the original YAML formatting of all other fields.
+    // Keys come back normalized to camelCase (`disableModelInvocation`) — a
+    // kebab lookup here was always `undefined`, so `false` never removed the
+    // line and a second `true` stacked a duplicate key.
     const { frontmatter } = parseFrontmatter(content);
-    const alreadySet = Boolean(frontmatter[key]);
+    const alreadySet = frontmatter.disableModelInvocation === true;
 
     let updated = content;
     if (disableModelInvocation && !alreadySet) {
-      // Add key after the opening --- line
-      updated = content.replace(/^---\r?\n/, `---\n${key}: true\n`);
-      // If no frontmatter exists, create one
-      if (updated === content) updated = `---\n${key}: true\n---\n${content}`;
+      // A present-but-false line must be rewritten, not shadowed: the prepend
+      // below would put a second key above it and YAML keeps the last one.
+      if ("disableModelInvocation" in frontmatter) {
+        updated = content.replace(keyLine, `${key}: true`);
+      } else {
+        // Add key after the opening --- line
+        updated = content.replace(/^---\r?\n/, `---\n${key}: true\n`);
+        // If no frontmatter exists, create one
+        if (updated === content) updated = `---\n${key}: true\n---\n${content}`;
+      }
     } else if (!disableModelInvocation && alreadySet) {
       // Remove the key line entirely
-      updated = content.replace(new RegExp(`^${key}\\s*:.*\\r?\\n`, "m"), "");
+      updated = content.replace(keyLineWithNewline, "");
     }
 
     writeFileSync(resolvedFilePath, updated, "utf8");

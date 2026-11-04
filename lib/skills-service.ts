@@ -136,11 +136,15 @@ export async function loadSessionSkills(
 /**
  * omp's `Skill` does not carry the raw frontmatter, and the toggle in the panel
  * edits exactly one key, so read it back from the file the skill came from.
+ *
+ * `parseFrontmatter` normalizes keys to camelCase (`disable-model-invocation` →
+ * `disableModelInvocation`); the kebab lookup this used to do was always
+ * `undefined`. `=== true` matches how the SDK's own loader reads the key.
  */
 function readDisableModelInvocation(filePath: string): boolean {
   try {
     const { frontmatter } = parseFrontmatter(readFileSync(filePath, "utf8"));
-    return Boolean(frontmatter["disable-model-invocation"]);
+    return frontmatter.disableModelInvocation === true;
   } catch {
     return false;
   }
