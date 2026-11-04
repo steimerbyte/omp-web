@@ -5,8 +5,9 @@
  * A phrase has two fields on purpose: the button shows `label`, the composer
  * inserts `text`. That is the only way a long or multi-line insertion can carry
  * a short button caption. An empty `label` is therefore legal and degrades to
- * the text itself — a blank button would be a silent malfunction. An empty
- * `text` is not: a phrase that inserts nothing has no purpose and is dropped.
+ * the text itself — a blank button would be a silent malfunction. A `text`
+ * with no content is not: a phrase that inserts nothing is dropped, whitespace
+ * only included, while spaces the user typed around a word are kept.
  *
  * The list lives on the server, one file per account
  * (`lib/quick-phrases-store.ts`), and this module is what both sides agree on:
@@ -127,15 +128,17 @@ function getBrowserStorage(): StorageLike | null {
 }
 
 /**
- * Eine Rohphrase ist nur dann eine Phrase, wenn `text` ein nicht-leerer String
- * ist. Alles andere (fehlender Eintrag, Zahl, Objekt, Array) faellt weg, damit
- * ein von Hand manipulierter oder aus einer aelteren Version stammender Wert
- * keinen Button ohne Funktion erzeugen kann.
+ * Eine Rohphrase ist nur dann eine Phrase, wenn `text` ein String mit Inhalt
+ * ist. Fuehrende und folgende Leerzeichen bleiben stehen — sie gehoeren dem
+ * Nutzer —, reine Leerzeichen zaehlen aber nicht als Inhalt. Alles andere
+ * (fehlender Eintrag, Zahl, Objekt, Array) faellt weg, damit ein von Hand
+ * manipulierter oder aus einer aelteren Version stammender Wert keinen Button
+ * ohne Funktion erzeugen kann.
  */
 function toQuickPhrase(value: unknown): QuickPhrase | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as { label?: unknown; text?: unknown };
-  if (typeof candidate.text !== "string" || candidate.text.length === 0) return null;
+  if (typeof candidate.text !== "string" || candidate.text.trim() === "") return null;
   return {
     label: typeof candidate.label === "string" ? candidate.label : "",
     text: candidate.text,
