@@ -21,11 +21,62 @@ try {
  */
 const OMP_SDK_REQUEST = /^@oh-my-pi\//;
 
+/** Cache-Control fuer die beiden oeffentlichen Einstiegsseiten (PA-04/E-09). */
+const PRIVATE_NO_STORE = "private, no-store";
+
+/**
+ * Security-Header fuer Dokumente (PA-03/E-01).
+ *
+ * `script-src 'unsafe-inline'` ist nicht vermeidbar: die Seiten sind
+ * prerendert, und das ausgelieferte HTML traegt den RSC-Bootstrap
+ * (`self.__next_f.push(...)`) plus das Theme-Script aus `app/layout.tsx`.
+ * Next setzt einen Nonce nur beim Rendern pro Request und liest ihn aus dem
+ * CSP-**Request**-Header; statisches HTML kann ihn nicht tragen, und
+ * `headers()` schreibt nur Response-Header. `'unsafe-eval'` fehlt bewusst:
+ * die Regel gilt nur ausserhalb von `next dev`.
+ *
+ * `frame-ancestors 'self'` statt `'none'`: die HTML-Vorschau rahmt ein
+ * `srcDoc`-Dokument, das die CSP des Eltern-Dokuments erbt, und
+ * `frame-ancestors 'none'` wuerde es blockieren. Die PDF-Vorschau rahmt
+ * `/api/files/...` (deren eigenen `frame-ancestors 'self'`), deshalb
+ * `frame-src 'self'`. Eine zu enge `img-src` wuerde die Chat-Anhaenge
+ * (`data:`, `blob:`) und die Bilder in gerendertem Markdown
+ * (`getFileApiUrl` → `/api/files/...`) blockieren.
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "frame-src 'self'",
+  "frame-ancestors 'self'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join("; ");
+
+/**
+ * `/(.*)` waere falsch: ein gleichnamiger Config-Header verdraengt den Header
+ * der Route (`send-response.js` setzt nur, was noch fehlt), und die API-Routen
+ * setzen ihre eigenen CSPs (`/api/files` DOCX-Preview mit `frame-ancestors
+ * 'self'`, aktive Typen mit `sandbox; default-src 'none'`, der Session-Export
+ * mit `sandbox allow-scripts`). Der Lookahead nimmt `/api` und `/api/...`
+ * aus, laesst aber `/apiary` stehen.
+ */
+const NON_API_PATH = "/((?!api(?:/|$)).*)";
+
 const nextConfig: NextConfig = {
   // Desktop builds (scripts/stage-desktop.mjs) redirect the production build
   // into src-tauri/server/.next so packaging never touches the dev `.next/`.
   distDir: process.env.OMP_WEB_DIST_DIR || ".next",
   outputFileTracingRoot: __dirname,
+  // PA-03: kein `X-Powered-By: Next.js` auf jeder HTML-Antwort.
+  poweredByHeader: false,
   serverExternalPackages: [
     "undici",
     "@oh-my-pi/pi-coding-agent",
@@ -91,13 +142,18 @@ const nextConfig: NextConfig = {
   // browser tab connects to http://127.0.0.1:30141) and from LAN devices.
   allowedDevOrigins: ["127.0.0.1", "192.168.*.*"],
   async headers() {
-    return [
+    const rules: { source: string; headers: { key: string; value: string }[] }[] = [
       {
         source: "/",
         headers: [
           { key: "Cache-Control", value: "private, no-cache, max-age=0, must-revalidate" },
         ],
       },
+      // PA-04/E-09: der Einstiegspunkt darf nicht ein Jahr aus einem
+      // Zwischencache kommen; `no-store` statt `no-cache`, weil hier kein
+      // Validator-Roundtrip noetig ist und die Seiten keine Nutzdaten tragen.
+      { source: "/login", headers: [{ key: "Cache-Control", value: PRIVATE_NO_STORE }] },
+      { source: "/recover", headers: [{ key: "Cache-Control", value: PRIVATE_NO_STORE }] },
       {
         source: "/sw.js",
         headers: [
@@ -112,6 +168,32 @@ const nextConfig: NextConfig = {
         ],
       },
     ];
+
+    // Nur ausserhalb von `next dev`: das Dev-Bundle ist eval-source-map und
+    // braeuchte `'unsafe-eval'`. Ein Header, der in der Entwicklung fehlt, ist
+    // sichtbar falsch, keiner der dort die Haelfte blockiert.
+    if (process.env.NODE_ENV !== "development") {
+      rules.unshift({
+        source: NON_API_PATH,
+        headers: [
+          { key: "Content-Security-Policy", value: CONTENT_SECURITY_POLICY },
+          // `SAMEORIGIN`, weil die CSP `frame-ancestors 'self'` sagt; Browser
+          // mit `frame-ancestors` ignorieren XFO ohnehin.
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          // notifications und clipboard-* bleiben absichtlich offen:
+          // `components/AppShell.tsx` fragt Notification-Permission an,
+          // `lib/clipboard.ts` schreibt in die Zwischenablage.
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+          },
+        ],
+      });
+    }
+
+    return rules;
   },
   env: {
     NEXT_PUBLIC_APP_VERSION: version,

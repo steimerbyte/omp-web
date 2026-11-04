@@ -31,15 +31,22 @@ const PASSWORD = "correct horse battery staple";
 const HOST = "localhost:30141";
 const ORIGIN = `http://${HOST}`;
 
-function withServer(t, run) {
+async function withServer(t, run) {
   const dir = mkdtempSync(join(tmpdir(), "omp-web-login-route-"));
-  const keys = ["OMP_WEB_PASSWORD", "OMP_WEB_AUTH_FILE", "OMP_WEB_SESSION_KEY_FILE", "OMP_WEB_SESSIONS_FILE"];
+  const keys = [
+    "OMP_WEB_PASSWORD", "OMP_WEB_AUTH_FILE", "OMP_WEB_SESSION_KEY_FILE", "OMP_WEB_SESSIONS_FILE",
+    "OMP_WEB_SECRETS_FILE", "OMP_WEB_TRUST_PROXY",
+  ];
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 
   process.env.OMP_WEB_PASSWORD = PASSWORD;
   process.env.OMP_WEB_AUTH_FILE = join(dir, "omp-web-auth.json");
   process.env.OMP_WEB_SESSION_KEY_FILE = join(dir, "omp-web-session-key");
   process.env.OMP_WEB_SESSIONS_FILE = join(dir, "omp-web-sessions.json");
+  // Eine leere Geheimnisdatei: ein `OMP_WEB_TRUST_PROXY` aus der echten
+  // /etc/omp-web.env darf das Ergebnis hier nicht umdrehen.
+  process.env.OMP_WEB_SECRETS_FILE = join(dir, "omp-web.env");
+  delete process.env.OMP_WEB_TRUST_PROXY;
 
   t.after(() => {
     for (const key of keys) {
@@ -49,11 +56,11 @@ function withServer(t, run) {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  return run({ dir });
+  return await run({ dir });
 }
 
-function login(extraHeaders = {}) {
-  return POST(new Request(`${ORIGIN}/api/web-access/login`, {
+function login(extraHeaders = {}, origin = ORIGIN) {
+  return POST(new Request(`${origin}/api/web-access/login`, {
     method: "POST",
     headers: { host: HOST, "content-type": "application/json", ...extraHeaders },
     body: JSON.stringify({ password: PASSWORD }),
@@ -92,11 +99,30 @@ test("der Login setzt den Cookie mit allen Attributen und der Lebensdauer aus SE
 
 test("hinter TLS traegt derselbe Login Secure", async (t) => {
   await withServer(t, async () => {
-    const { header } = cookieFrom(await login({ "x-forwarded-proto": "https" }));
+    // Direkt-TLS: der Ursprung ist https, das Flag bleibt aus.
+    const { header } = cookieFrom(await login({}, `https://${HOST}`));
     assert.match(header, /Secure/i);
     // Und die uebrigen Attribute bleiben, sonst waere es ein zweiter Cookie.
     assert.match(header, /SameSite=Lax/i, "Lax, nicht Strict: ein Link aus einer anderen App ist eine Cross-Site-Navigation");
     assert.match(header, new RegExp(`Max-Age=${SESSION_TTL_MS / 1000}`));
+  });
+});
+
+test("ein Client-Header kippt Secure nicht", async (t) => {
+  await withServer(t, async () => {
+    // Die Pentest-Probe, nur ohne Kante: `X-Forwarded-Proto` ist ein
+    // Client-Header und darf das Attribut nicht setzen.
+    const { header } = cookieFrom(await login({ "x-forwarded-proto": "https" }));
+    assert.doesNotMatch(header, /Secure/i);
+  });
+});
+
+test("mit OMP_WEB_TRUST_PROXY traegt der Login hinter dem Proxy Secure", async (t) => {
+  await withServer(t, async () => {
+    // Der Betreiber erklaert: auf diesem Port kam jede Anfrage ueber TLS.
+    process.env.OMP_WEB_TRUST_PROXY = "1";
+    const { header } = cookieFrom(await login({ "x-forwarded-proto": "https" }));
+    assert.match(header, /Secure/i);
   });
 });
 
@@ -125,7 +151,7 @@ test("die Erneuerung schreibt denselben Cookie wie der Login", async (t) => {
       issuedAt: Date.now() - agedSecondsAgo * 1000,
       ttlMs: SESSION_TTL_MS,
     });
-    const renewed = proxy(asRequest(aged)).headers.getSetCookie();
+    const renewed = (await proxy(asRequest(aged))).headers.getSetCookie();
     assert.equal(renewed.length, 1, `genau ein Set-Cookie aus der Erneuerung: ${JSON.stringify(renewed)}`);
 
     // Namen *und* die Lebensdauer-Attribute. Ein Attribut, das nur einer der
@@ -144,7 +170,7 @@ test("die Erneuerung schreibt denselben Cookie wie der Login", async (t) => {
 test("der Logout widerruft die Kopie, die schon draussen ist", async (t) => {
   await withServer(t, async () => {
     const { value: stolen } = cookieFrom(await login());
-    assert.equal(proxy(asRequest(stolen)).status, 200, "Vorbedingung: der Cookie gilt");
+    assert.equal((await proxy(asRequest(stolen))).status, 200, "Vorbedingung: der Cookie gilt");
 
     const response = await DELETE(new NextRequest(`${ORIGIN}/api/web-access/login`, {
       method: "DELETE",
@@ -157,12 +183,12 @@ test("der Logout widerruft die Kopie, die schon draussen ist", async (t) => {
 
     // Das ist der Punkt: nicht der Browser, der Server weist die alte Kopie ab.
     assert.equal(readSession(stolen), null, "die alte Kopie verifiziert nicht mehr");
-    assert.equal(proxy(asRequest(stolen)).status, 401, "und der Proxy laesst sie nicht mehr durch");
+    assert.equal((await proxy(asRequest(stolen))).status, 401, "und der Proxy laesst sie nicht mehr durch");
 
     // Ein neuer Login funktioniert weiterhin — der Widerruf trifft die alten
     // Cookies, nicht das Konto.
     const again = cookieFrom(await login()).value;
     assert.notEqual(again, stolen);
-    assert.equal(proxy(asRequest(again)).status, 200);
+    assert.equal((await proxy(asRequest(again))).status, 200);
   });
 });

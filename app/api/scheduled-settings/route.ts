@@ -37,8 +37,8 @@ function identityFor(req: Request): WebIdentity | null {
  *
  * `home` steht mit drin, weil `defaultCwd: null` allein nicht sagt, *wohin* der
  * Lauf dann geht. Der Client soll "Home des Kontos" beschriften koennen, ohne
- * die Home zu raten — `/api/home` liefert `os.homedir()`, also die Home des
- * Prozesses, und das ist fuer einen Mieter die falsche.
+ * die Home zu raten — `/api/home` liefert fuer einen Mieter dessen eigene Home
+ * und nur fuer den Betreiber (und im Modus `open`) `os.homedir()`.
  *
  * `folders` ist dieselbe Liste fuer beide Stellen, an denen ein Ordner gewaehlt
  * wird (Dialog und Einstellungen): das Projektregister des Kontos plus dessen

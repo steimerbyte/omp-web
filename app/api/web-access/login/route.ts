@@ -88,7 +88,7 @@ export async function POST(req: Request) {
   const requested = typeof body.username === "string" ? body.username.trim() : "";
   const username = requested.length > 0 ? requested : getExpectedUsername();
 
-  const identity = verifyCredential(username, body.password);
+  const identity = await verifyCredential(username, body.password);
   if (identity === null) {
     await pause(FAILURE_DELAY_MS);
     return rejected();
@@ -104,9 +104,9 @@ export async function POST(req: Request) {
 
   const response = NextResponse.json({ ok: true, user: identity }, { headers: NO_STORE });
   // Same attributes as the proxy's renewal — one helper, so the two can never
-  // drift apart. `secure` follows the request: plain HTTP on :8788, HTTPS when
-  // TLS termination is in front.
-  response.cookies.set({ name: SESSION_COOKIE_NAME, value: session, ...sessionCookieOptions(req.url, req.headers) });
+  // drift apart. Whether the cookie is `Secure` is decided by the helper (TLS
+  // origin or `OMP_WEB_TRUST_PROXY`), never by a request header.
+  response.cookies.set({ name: SESSION_COOKIE_NAME, value: session, ...sessionCookieOptions(req.url) });
   return response;
 }
 
@@ -139,7 +139,7 @@ export async function DELETE(req: NextRequest) {
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
     value: "",
-    ...sessionCookieOptions(req.nextUrl, req.headers),
+    ...sessionCookieOptions(req.nextUrl),
     maxAge: 0,
   });
   return response;

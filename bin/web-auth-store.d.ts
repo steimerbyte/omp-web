@@ -254,7 +254,7 @@ export declare function consumeRecoveryCode(
   code: unknown,
   password: unknown,
   options?: WebAuthStoreOptions,
-): RecoveryConsumeResult;
+): Promise<RecoveryConsumeResult>;
 export declare function createDigest(
   secret: string,
   params?: WebAuthStoreOptions["params"],
@@ -274,5 +274,5 @@ export declare function setWebPasswordEnabled(enabled: boolean, options?: WebAut
 export declare function setWebUsername(username: unknown, options?: WebAuthStoreOptions): WebAuthStatus;
 export declare function validatePassword(password: unknown): string | null;
 export declare function validateUsername(username: unknown): string | null;
-export declare function verifyDigest(secret: unknown, digest: unknown): boolean;
-export declare function verifyWebPassword(password: unknown, options?: WebAuthStoreOptions): boolean;
+export declare function verifyDigest(secret: unknown, digest: unknown): Promise<boolean>;
+export declare function verifyWebPassword(password: unknown, options?: WebAuthStoreOptions): Promise<boolean>;

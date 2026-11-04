@@ -12,7 +12,7 @@ import { createJiti } from "jiti";
  * 104-MB clone. The route now answers with 413 above its own 4-KiB cap and
  * does that before any credential work.
  *
- * `crypto.scryptSync` is patched so a verification cannot hide behind the
+ * `crypto.scrypt` is patched so a verification cannot hide behind the
  * 150-ms failure pause: every failed `verifyCredential` pays exactly one
  * scrypt call (OMP-020), so zero calls proves the oversized body never reached
  * it. The fixture streams one 1-KiB chunk repeatedly and never holds a body
@@ -24,7 +24,7 @@ const crypto = require("node:crypto");
 const store = require("../../../../bin/web-auth-store.js");
 
 const scryptCalls = [];
-const originalScryptSync = crypto.scryptSync;
+const originalScrypt = crypto.scrypt;
 
 const jiti = createJiti(import.meta.url, {
   alias: { "@": process.cwd() },
@@ -55,13 +55,13 @@ function withAccount(t, run) {
   process.env.OMP_WEB_SESSIONS_FILE = join(dir, "sessions.json");
   mkdirSync(process.env.OMP_WEB_HOME_ROOT, { recursive: true, mode: 0o700 });
 
-  crypto.scryptSync = function patched(secret, salt, keylen, options) {
+  crypto.scrypt = function patched(secret, salt, keylen, options, callback) {
     scryptCalls.push({ secret, salt });
-    return originalScryptSync.call(this, secret, salt, keylen, options);
+    return originalScrypt.call(this, secret, salt, keylen, options, callback);
   };
 
   t.after(() => {
-    crypto.scryptSync = originalScryptSync;
+    crypto.scrypt = originalScrypt;
     for (const key of keys) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];

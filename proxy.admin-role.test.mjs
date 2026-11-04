@@ -41,7 +41,7 @@ function forwarded(response, name) {
   return response.headers.get(`x-middleware-request-${name}`);
 }
 
-function withServer(t, run) {
+async function withServer(t, run) {
   const dir = mkdtempSync(join(tmpdir(), "omp-web-proxy-role-"));
   const homeRoot = join(dir, "home");
   mkdirSync(homeRoot, { recursive: true, mode: 0o700 });
@@ -75,7 +75,7 @@ function withServer(t, run) {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  return run({ dir, homeRoot });
+  return await run({ dir, homeRoot });
 }
 
 /** Ein Browser-Request mit gueltiger Sitzung fuer `username`. */
@@ -89,18 +89,18 @@ function signedIn(username, extraHeaders = {}) {
   });
 }
 
-test("ein Konto ohne Admin-Rolle bekommt keinen x-omp-admin vom Proxy", (t) => {
-  withServer(t, () => {
-    const response = proxy(signedIn("bob"));
+test("ein Konto ohne Admin-Rolle bekommt keinen x-omp-admin vom Proxy", async (t) => {
+  await withServer(t, async () => {
+    const response = await proxy(signedIn("bob"));
     assert.equal(response.status, 200, "der Request ist erlaubt, nur nicht als Admin");
     assert.equal(forwarded(response, "x-omp-user"), "bob");
     assert.equal(forwarded(response, "x-omp-admin"), null);
   });
 });
 
-test("die Rolle aus der Kontendatei landet im Header, ohne Neustart", (t) => {
-  withServer(t, () => {
-    assert.equal(forwarded(proxy(signedIn("alice")), "x-omp-admin"), null, "alice ist kein Admin");
+test("die Rolle aus der Kontendatei landet im Header, ohne Neustart", async (t) => {
+  await withServer(t, async () => {
+    assert.equal(forwarded(await proxy(signedIn("alice")), "x-omp-admin"), null, "alice ist kein Admin");
 
     // `alice` wird mit hochgestuft, damit `bob` wieder herabgestuft werden
     // darf — der Store verweigert die Entmachtung des letzten Admins, und das
@@ -108,33 +108,33 @@ test("die Rolle aus der Kontendatei landet im Header, ohne Neustart", (t) => {
     store.setWebAccountRole("alice", true);
     store.setWebAccountRole("bob", true);
 
-    const asAdmin = proxy(signedIn("bob"));
+    const asAdmin = await proxy(signedIn("bob"));
     assert.equal(forwarded(asAdmin, "x-omp-user"), "bob");
     assert.equal(forwarded(asAdmin, "x-omp-admin"), "1");
 
     // Und wieder zurueck, im naechsten Request — nicht erst nach einem Neustart.
     store.setWebAccountRole("bob", false);
-    assert.equal(forwarded(proxy(signedIn("bob")), "x-omp-admin"), null);
-    assert.equal(forwarded(proxy(signedIn("alice")), "x-omp-admin"), "1", "die andere Rolle steht");
+    assert.equal(forwarded(await proxy(signedIn("bob")), "x-omp-admin"), null);
+    assert.equal(forwarded(await proxy(signedIn("alice")), "x-omp-admin"), "1", "die andere Rolle steht");
   });
 });
 
-test("der Sessionname allein macht niemanden zum Admin", (t) => {
-  withServer(t, () => {
+test("der Sessionname allein macht niemanden zum Admin", async (t) => {
+  await withServer(t, async () => {
     // Der Keks nennt nur `bob`. Die Rolle kommt aus der Datei, und die sagt
     // nein — ohne den zweiten Blick in den Namen waere jedes Konto so gut wie
     // ein Admin.
-    const response = proxy(signedIn("bob"));
+    const response = await proxy(signedIn("bob"));
     assert.equal(forwarded(response, "x-omp-user"), "bob");
     assert.equal(forwarded(response, "x-omp-admin"), null);
   });
 });
 
-test("ein x-omp-admin vom Client wird geloescht, auch wenn die Rolle passt", (t) => {
-  withServer(t, () => {
+test("ein x-omp-admin vom Client wird geloescht, auch wenn die Rolle passt", async (t) => {
+  await withServer(t, async () => {
     store.setWebAccountRole("bob", true);
 
-    const response = proxy(signedIn("bob", { "x-omp-admin": "1" }));
+    const response = await proxy(signedIn("bob", { "x-omp-admin": "1" }));
     // Der Client darf den Wert mitschicken; entschieden wird er hier. Dass er
     // gleich aussieht, ist kein Zufall, sondern der Nachweis, dass `bob` die
     // Rolle wirklich aus der Datei hat.
@@ -143,14 +143,14 @@ test("ein x-omp-admin vom Client wird geloescht, auch wenn die Rolle passt", (t)
     // Fuer ein Nicht-Admin ist derselbe Request die eigentliche Probe: der
     // mitgelieferte Wert darf nicht durchkommen, sonst waere jeder Mandant ein
     // Einzeiler.
-    const denied = proxy(signedIn("alice", { "x-omp-admin": "1" }));
+    const denied = await proxy(signedIn("alice", { "x-omp-admin": "1" }));
     assert.equal(forwarded(denied, "x-omp-admin"), null);
     assert.equal(denied.headers.get("x-omp-admin"), null, "und er landet auch nicht in der Antwort");
   });
 });
 
-test("ein gesetztes, aber leeres OMP_WEB_ADMINS macht niemanden zum Admin — und die Sperre antwortet 403", (t) => {
-  withServer(t, () => {
+test("ein gesetztes, aber leeres OMP_WEB_ADMINS macht niemanden zum Admin — und die Sperre antwortet 403", async (t) => {
+  await withServer(t, async () => {
     // bob ist ueber die Datei Admin. Wird die Umgebung danach ausdruecklich
     // leer gesetzt, muss die Datei verlieren: "es gibt keine Admins", nicht
     // "nimm die Vorgabe". Frueher fiel genau dieser Wert auf die Datei bzw.
@@ -159,7 +159,7 @@ test("ein gesetztes, aber leeres OMP_WEB_ADMINS macht niemanden zum Admin — un
     process.env.OMP_WEB_ADMINS = "";
     // Kein clearAdminRoleCache(): die Zusage gilt auch fuer einen warmen Cache.
 
-    const response = proxy(signedIn("bob"));
+    const response = await proxy(signedIn("bob"));
     assert.equal(response.status, 200, "die Anfrage selbst bleibt erlaubt");
     assert.equal(forwarded(response, "x-omp-admin"), null);
 

@@ -331,13 +331,18 @@ beim nächsten Refactor wegoptimiert wird.
   `session === null`), und das muss so bleiben: sonst verlaengert ein Angreifer mit einem
   gestohlenen Cookie die Lebensdauer durch Klopfen auf einen 401.
 - **Darf nicht**: Die Attribute der Erneuerung **nicht** getrennt von der Login-Route pflegen. Beide
-  benutzen `sessionCookieOptions()` (`:420-430`): `HttpOnly`, `SameSite=lax`, `Path=/`,
-  `Max-Age` aus `SESSION_TTL_MS`, `Secure` **nur** wenn die Anfrage ueber HTTPS kam
-  (`x-forwarded-proto` oder `https:`-URL), nie `Domain`. Zwei `Set-Cookie` mit demselben Namen und
+  benutzen `sessionCookieOptions()` (`:470-485`): `HttpOnly`, `SameSite=lax`, `Path=/`,
+  `Max-Age` aus `SESSION_TTL_MS`, `Secure` **nur** wenn die URL `https:` ist oder der Betreiber
+  `OMP_WEB_TRUST_PROXY=1` gesetzt hat, nie `Domain`. Zwei `Set-Cookie` mit demselben Namen und
   unterschiedlichen Attributen sind zwei Cookies, und welches der Browser behaelt, haengt an der
   Header-Reihenfolge. `proxy.session-cookie.test.mjs` und
   `app/api/web-access/login/route.test.mjs` pruefen genau einen Header und die Attribute; vor
   dieser Aenderung hat **kein** Test die Attribute geprueft.
+- **Darf nicht**: `Secure` aus einem Request-Header ableiten. Next baut `req.url` selbst aus
+  `x-forwarded-proto` (`next-server.js:1264-1266`), ein zweiter Lesevorgang waere nur eine zweite
+  Kopie eines client-kontrollierten Werts. `sessionCookieOptions(url)` liest deshalb keinen
+  Header; die einzige belastbare Aussage ist „vor diesem Port terminiert TLS“, und die trifft der
+  Betreiber mit `OMP_WEB_TRUST_PROXY=1` (Unit-`Environment=`, kein Secret).
 - **Ist**: `SameSite=lax`, **nicht** `strict`, und das ist kein Nachlassen. Ein Link, den der
   Betreiber in einer Mail oder einem Messenger antippt, ist eine **Cross-Site-Navigation**; `strict`
   haelt den Cookie bei genau dieser Anfrage zurueck, `proxy.ts` sieht keine Identitaet und
@@ -419,11 +424,15 @@ beim nächsten Refactor wegoptimiert wird.
   die Datei ist dadurch lesbar ohne den Proxy gelesen zu haben. Analog: `hasJsonContentType()`
   **vor** `req.json()` — sonst kann ein `text/plain`-Body als JSON geparst werden und den
   Content-Type-Vertrag umgehen.
-- **Kann**: `Secure` folgt der Anfrage, ueber die sie kam: `sessionCookieOptions()` setzt es, wenn
-  die URL `https:` ist oder `x-forwarded-proto` `https` meldet. Auf dem internen Klartext-Port
-  `:8788` bleibt es aus — ein `secure`-Cookie wuerde der Browser dort bei jedem Request verwerfen,
-  der Login waere unmoeglich — und hinter der TLS-Terminierung ist es an. Kein Schalter, den
-  jemand vergessen kann: derselbe Helper schreibt Login, Erneuerung und Logout.
+- **Kann**: `Secure` haengt am Betreiber-Schalter: `sessionCookieOptions()` setzt es, wenn die URL
+  `https:` ist oder `OMP_WEB_TRUST_PROXY=1` gesetzt wurde. Auf dem internen Klartext-Port `:8788`
+  bleibt es ohne den Schalter aus — ein `secure`-Cookie wuerde der Browser dort bei jedem Request
+  verwerfen, der Login waere unmoeglich. **Der Schalter existiert jetzt, und er ist ein
+  Pflichtschritt im Deploy:** ohne ihn haengt `Secure` wieder an `req.url`, und `req.url` baut Next
+  selbst aus `x-forwarded-proto` — also aus einem Client-Header. Er steht als
+  `Environment=OMP_WEB_TRUST_PROXY=1` in der Unit (nicht in der Secrets-Datei, es ist kein Secret)
+  und ist nur dort richtig, wo vor dem Port TLS terminiert. Derselbe Helper schreibt Login,
+  Erneuerung und Logout.
 - **Darf nicht**: `maxAge` **nicht** hier berechnen. Es kommt aus `sessionCookieOptions()` und damit
   aus `SESSION_TTL_MS`; eine zweite Zahl an dieser Stelle waere die erste, die nach der
   naechsten TTL-Aenderung falsch ist.

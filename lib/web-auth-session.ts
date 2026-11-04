@@ -446,11 +446,11 @@ export function readSessionCookie(
  *
  * Login, the proxy's renewal and the logout must write the same cookie: two
  * `Set-Cookie` headers that differ in an attribute are two cookies, and which
- * one the browser keeps is a matter of header order. `secure` follows the
- * request instead of a constant — the deployment serves plain HTTP on `:8788`
- * and HTTPS in front of it, and a `secure` cookie would be dropped on the
- * first. Never `domain`-scoped: a host-only cookie cannot be widened by a
- * hostile parent domain.
+ * one the browser keeps is a matter of header order. `secure` is `true` when
+ * the URL is `https:` or when the operator set `OMP_WEB_TRUST_PROXY=1` — the
+ * deployment serves plain HTTP on `:8788` and HTTPS in front of it, and a
+ * `secure` cookie would be dropped on the first. Never `domain`-scoped: a
+ * host-only cookie cannot be widened by a hostile parent domain.
  *
  * `sameSite` is `lax`, not `strict`, and the difference is the phone this
  * cookie exists for. A link tapped in a mail or a messenger is a **cross-site**
@@ -467,14 +467,19 @@ export function readSessionCookie(
  * and `HttpOnly` keeps it out of reach of script. A cookie attribute cannot be
  * the only lock on a mutating endpoint, and here it is not.
  */
-export function sessionCookieOptions(url: URL | string, headers?: Headers) {
+export function sessionCookieOptions(url: URL | string) {
   const protocol = typeof url === "string" ? new URL(url).protocol : url.protocol;
-  const forwarded = headers?.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
   return {
     httpOnly: true,
     sameSite: "lax" as const,
     path: "/",
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
-    secure: protocol === "https:" || forwarded === "https",
+    // PA-02: `secure` haengt am Betreiber-Schalter, nicht an einem Header.
+    // Next baut `req.url` selbst aus `x-forwarded-proto`
+    // (`next-server.js:1264-1266`), ein zweiter Lesevorgang desselben Header
+    // waere also nur eine zweite Kopie eines client-kontrollierten Werts.
+    // `OMP_WEB_TRUST_PROXY=1` heisst: vor diesem Port terminiert TLS. Ohne den
+    // Schalter bleibt es bei der URL (LAN und Tauri laufen ueber HTTP).
+    secure: protocol === "https:" || process.env.OMP_WEB_TRUST_PROXY === "1",
   };
 }

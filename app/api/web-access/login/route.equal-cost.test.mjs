@@ -14,7 +14,7 @@ import { createJiti } from "jiti";
  * `verifyCredential`), und die 150-ms-Pause der Route deckte das nicht zu.
  *
  * Der Test misst deshalb nicht die Uhr, sondern die teure primitive Operation
- * selbst: `crypto.scryptSync` wird ersetzt, und jeder Fehlversuch muss genau
+ * selbst: `crypto.scrypt` wird ersetzt, und jeder Fehlversuch muss genau
  * einen Aufruf ausloesen — gegen das echte Konto-Digest bzw. gegen denselben
  * festen Dummy-Digest. Der Patch sitzt auf dem eingebauten Modul, damit er
  * unabhaengig davon greift, welche Modulkopie Store und Route geladen haben.
@@ -25,10 +25,10 @@ const crypto = require("node:crypto");
 const store = require("../../../../bin/web-auth-store.js");
 
 const scryptCalls = [];
-const originalScryptSync = crypto.scryptSync;
-crypto.scryptSync = function patched(secret, salt, keylen, options) {
+const originalScrypt = crypto.scrypt;
+crypto.scrypt = function patched(secret, salt, keylen, options, callback) {
   scryptCalls.push({ secret, salt: Buffer.isBuffer(salt) ? Buffer.from(salt) : salt });
-  return originalScryptSync.call(this, secret, salt, keylen, options);
+  return originalScrypt.call(this, secret, salt, keylen, options, callback);
 };
 
 const jiti = createJiti(import.meta.url, {
@@ -68,7 +68,7 @@ test("unbekannter, deaktivierter und existierender Name zahlen dieselbe scrypt-P
   mkdirSync(process.env.OMP_WEB_HOME_ROOT, { recursive: true, mode: 0o700 });
 
   t.after(() => {
-    crypto.scryptSync = originalScryptSync;
+    crypto.scrypt = originalScrypt;
     for (const key of keys) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];

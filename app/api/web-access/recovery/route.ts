@@ -88,8 +88,12 @@ export async function POST(req: Request) {
   if (body.action === "request") {
     const issued = issueRecoveryCode();
     if (!issued.ok) {
+      const minutes = Math.ceil(issued.retryAfterMs / 60_000);
       return NextResponse.json(
-        { error: "A recovery code was just issued. Check the server console, or wait a moment and try again." },
+        {
+          error: "A recovery code is already pending on the server console and stays valid for about"
+            + ` ${minutes} more minute(s). Read that one, or run \`omp-web --reset-password\` on the server.`,
+        },
         { status: 429, headers: { "Retry-After": String(Math.ceil(issued.retryAfterMs / 1000)) } },
       );
     }
@@ -101,7 +105,7 @@ export async function POST(req: Request) {
   }
 
   if (body.action === "complete") {
-    const result = consumeRecoveryCode(body.code, body.password);
+    const result = await consumeRecoveryCode(body.code, body.password);
     if (result.ok) {
       return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
     }

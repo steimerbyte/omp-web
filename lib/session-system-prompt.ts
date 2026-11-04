@@ -1,7 +1,7 @@
 import { findConfigFile } from "@oh-my-pi/pi-coding-agent/config";
 import { resolvePromptInput } from "@oh-my-pi/pi-coding-agent/system-prompt";
 import { getAgentDir } from "@oh-my-pi/pi-coding-agent";
-import { getProjectTrustStatus } from "./project-trust";
+import { getProjectTrustStatus, isInsideProject, resolveProjectRoot, resolvedPath } from "./project-trust";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
 
 /**
@@ -48,14 +48,21 @@ export interface ResolvedSessionSystemPrompts {
 function discoverPromptFile(
   fileName: string,
   cwd: string,
+  projectRoot: string,
   allowed: { project: boolean; user: boolean },
 ): string | undefined {
+  // A project hit only counts when its *target* is inside the project root, the
+  // same rule as `filterLoads`: `<proj>/.omp/SYSTEM.md` linked to a file
+  // outside used to pull foreign text into the system prompt. Read the resolved
+  // path, not the link — otherwise a link swapped after the check names a
+  // different file than the one that was checked (`resolveAuthorizedPath`).
+  const found = allowed.project ? findConfigFile(fileName, { user: false, cwd }) : undefined;
+  const projectFile = found !== undefined && isInsideProject(found, projectRoot) ? resolvedPath(found) : undefined;
   // `user: true` on its own still scans the project roots (`getConfigDirs`
   // defaults `project` to true), so the user half has to switch the project half
   // off — otherwise an untrusted project's file came back through it.
   return (
-    (allowed.project ? findConfigFile(fileName, { user: false, cwd }) : undefined) ??
-    (allowed.user ? findConfigFile(fileName, { user: true, project: false, cwd }) : undefined)
+    projectFile ?? (allowed.user ? findConfigFile(fileName, { user: true, project: false, cwd }) : undefined)
   );
 }
 
@@ -70,13 +77,14 @@ export async function resolveSessionSystemPrompts(
   identity: WebIdentity | null,
 ): Promise<ResolvedSessionSystemPrompts> {
   const trust = getProjectTrustStatus(cwd, getAgentDir());
+  const projectRoot = resolveProjectRoot(cwd);
   const allowed = {
     project: !(trust.requiresTrust && !trust.trusted),
     user: identity === null || isAdminIdentity(identity),
   };
   const [systemPrompt, appendPrompt] = await Promise.all([
-    resolvePromptInput(discoverPromptFile("SYSTEM.md", cwd, allowed), "system prompt"),
-    resolvePromptInput(discoverPromptFile("APPEND_SYSTEM.md", cwd, allowed), "append system prompt"),
+    resolvePromptInput(discoverPromptFile("SYSTEM.md", cwd, projectRoot, allowed), "system prompt"),
+    resolvePromptInput(discoverPromptFile("APPEND_SYSTEM.md", cwd, projectRoot, allowed), "append system prompt"),
   ]);
   return { systemPrompt, appendPrompt };
 }

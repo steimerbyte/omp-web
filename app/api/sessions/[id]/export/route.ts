@@ -143,7 +143,25 @@ export async function GET(
           "Content-Type": "text/html; charset=utf-8",
           "Content-Disposition": getContentDisposition(fileName, inline),
           "Cache-Control": "no-cache",
-          "Content-Security-Policy": "frame-ancestors 'none'",
+          // P-03: das Dokument ist aktives HTML in der App-Origin. `sandbox`
+          // (ohne `allow-same-origin`) macht es zu einer opaken Origin: ein aus
+          // dem Transkript eingeschleuster Handler laeuft zwar, kann aber
+          // weder Cookies lesen noch die Admin-API mit Credentials rufen
+          // (gemessen: fetch → TypeError, document.cookie → SecurityError).
+          // Die beiden `stencil.so`-Hosts sind der Auslieferungsort des
+          // Viewers; ohne sie meldet der Export "Could not load the session
+          // viewer" (der Deploy-Export laedt ihn extern, nur ein
+          // Source-Checkout inlined ihn). `'unsafe-inline'` deckt das
+          // Theme-Script, die `onerror`-Handler und den Inline-Viewer ab,
+          // `img-src data:` die base64-Anhaenge. `allow-same-origin` darf
+          // nicht dazukommen — es hebt den Sandbox fuer die Origin-Rechte auf.
+          "Content-Security-Policy":
+            "sandbox allow-scripts; "
+            + "default-src 'self'; "
+            + "script-src 'self' 'unsafe-inline' https://build.stencil.so https://stencil.so; "
+            + "img-src 'self' data:; "
+            + "style-src 'self' 'unsafe-inline'; "
+            + "font-src 'self' data:",
           "X-Content-Type-Options": "nosniff",
           "X-Frame-Options": "DENY",
         },

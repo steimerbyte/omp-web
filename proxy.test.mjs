@@ -170,7 +170,7 @@ function lockServer(t) {
   });
 }
 
-test("ein als Navigation erkannter Browser bekommt keinen WWW-Authenticate", (t) => {
+test("ein als Navigation erkannter Browser bekommt keinen WWW-Authenticate", async (t) => {
   // Bricht die Kopplung, bekommt derselbe Aufrufer den 302 nach `/login` UND
   // den Challenge-Header — und damit den nativen Basic-Dialog zurueck, ohne
   // dass jemand es bemerkt. Geprueft wird deshalb die ganze Antwort, nicht nur
@@ -184,7 +184,7 @@ test("ein als Navigation erkannter Browser bekommt keinen WWW-Authenticate", (t)
     ["/api/whoami", { "sec-fetch-site": "same-origin" }],
   ];
   for (const [path, headers] of shapes) {
-    const response = proxy(request(path, headers));
+    const response = await proxy(request(path, headers));
     assert.equal(response.status, 302, `${path} ${JSON.stringify(headers)} muss umgeleitet werden`);
     assert.equal(response.headers.get("location"), `${ORIGIN}/login`);
     assert.equal(
@@ -195,18 +195,18 @@ test("ein als Navigation erkannter Browser bekommt keinen WWW-Authenticate", (t)
   }
 });
 
-test("ein Skript bekommt die 401 mit Challenge, und ein Browser-XHR nicht", (t) => {
+test("ein Skript bekommt die 401 mit Challenge, und ein Browser-XHR nicht", async (t) => {
   // Die Gegenrichtung derselben Kopplung: wer als Skript klassifiziert ist,
   // braucht den Header, sonst authentifiziert er sich nie. Wer Fetch-Metadaten
   // traegt, bekommt ihn nicht — ein XHR, der als Skript durchgeht, darf keinen
   // Dialog ausloesen.
   lockServer(t);
 
-  const curlResponse = proxy(request("/api/whoami"));
+  const curlResponse = await proxy(request("/api/whoami"));
   assert.equal(curlResponse.status, 401);
   assert.equal(curlResponse.headers.get("www-authenticate"), 'Basic realm="omp-web", charset="UTF-8"');
 
-  const xhrResponse = proxy(request("/api/whoami", { "sec-fetch-mode": "cors" }));
+  const xhrResponse = await proxy(request("/api/whoami", { "sec-fetch-mode": "cors" }));
   assert.equal(xhrResponse.status, 401);
   assert.equal(xhrResponse.headers.get("www-authenticate"), null);
 });

@@ -277,8 +277,9 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
   (`--export`), mit Fallback auf das Export-Modul des Pakets. Das Ergebnis landet
   in einer UUID-Datei unter `tmpdir()/omp-web-export` und wird inline oder als
   Attachment ausgeliefert (`Content-Disposition` mit ASCII-Fallback **und**
-  `filename*` UTF-8-Form). Header: `Content-Security-Policy: frame-ancestors 'none'`,
-  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.
+  `filename*` UTF-8-Form). Header: `Content-Security-Policy: sandbox allow-scripts; …`
+  (opake Origin: kein Cookie, kein Credential-Fetch; `allow-same-origin` darf
+  nicht dazukommen), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.
 - **Identität**: keine eigene. `isApiRequestAllowed` ist gesetzt, aber die
   Origin-Achse wird für **benutzerausgelöste Browser-Navigationen** bewusst
   übersprungen (`isUserInitiatedSessionExportNavigation`) — nur bei

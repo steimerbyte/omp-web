@@ -148,6 +148,31 @@ test("ein deklarierter Riesen-Body bekommt 413, ohne dass der Strom gelesen wird
   });
 });
 
+test("ein zweiter request bekommt 429 mit Retry-After und druckt keinen zweiten Code", async (t) => {
+  await withStore(t, async () => {
+    const written = [];
+    const originalWrite = process.stdout.write;
+    process.stdout.write = (chunk) => {
+      written.push(String(chunk));
+      return true;
+    };
+    let first;
+    let second;
+    try {
+      first = await post(JSON.stringify({ action: "request" }));
+      second = await post(JSON.stringify({ action: "request" }));
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 429);
+    assert.ok(Number(second.headers.get("retry-after")) > 0, "Retry-After nennt die Restzeit");
+    // Der Spy ist der einzige Weg: die Route gibt den Code nicht zurueck.
+    assert.equal(written.filter((chunk) => chunk.includes("Recovery code:")).length, 1);
+  });
+});
+
 test("ein kaputtes JSON bleibt 400", async (t) => {
   await withStore(t, async () => {
     const response = await post("{");

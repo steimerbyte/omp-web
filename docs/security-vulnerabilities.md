@@ -1,6 +1,6 @@
 # Sicherheitsbefunde aus dem Audit vom 2026-11-03
 
-Dieses Dokument hält die 21 Datensätze des Audits fest: den Mechanismus, die beobachtete oder aus dem Quelltext abgeleitete Ausnutzbarkeit, den Fix und den Nachweis. Geprüfter Quellstand des Audits war `15a24ff` (v0.22.2). Der Audit lief quelltextbasiert und ohne Ausführung des Ziels; deshalb steht er bei **0 confirmed, 20 needs_validation, 1 rejected** — die Spalte `Impact (Audit)` ist die redaktionelle Rangfolge des Audits, keine gemessene Schwere. Die Verifikation am 2026-11-03 bestätigte 17 Befunde durch Beobachtung, OMP-015 nur aus dem Quelltext und widerlegte OMP-008 und OMP-018 auf dem geprüften Pfad. v0.22.4 (`67d86f5`, Nachlauf `ebf3875`, Release 2026-11-03) behebt alle behebbaren Befunde; OMP-008 bekam keinen Fix, OMP-021 ist kein Befund. Die Abschnitte folgen der ID-Reihenfolge. „Beobachtet“ und „aus Quellanalyse abgeleitet“ sind getrennt; wo keine Beobachtung vorliegt, steht das dort. Zeilennummern beziehen sich auf `ebf3875`, maßgeblich sind die Symbole.
+Dieses Dokument hält die 21 Datensätze des Audits fest: den Mechanismus, die beobachtete oder aus dem Quelltext abgeleitete Ausnutzbarkeit, den Fix und den Nachweis. Geprüfter Quellstand des Audits war `15a24ff` (v0.22.2). Der Audit lief quelltextbasiert und ohne Ausführung des Ziels; deshalb steht er bei **0 confirmed, 20 needs_validation, 1 rejected** — die Spalte `Impact (Audit)` ist die redaktionelle Rangfolge des Audits, keine gemessene Schwere. Die Verifikation am 2026-11-03 bestätigte 17 Befunde durch Beobachtung, OMP-015 nur aus dem Quelltext und widerlegte OMP-008 und OMP-018 auf dem geprüften Pfad. v0.22.4 (`67d86f5`, Nachlauf `ebf3875`, Release 2026-11-03) behebt alle behebbaren Befunde; OMP-008 bekam keinen Fix, OMP-021 ist kein Befund. Die Abschnitte folgen der ID-Reihenfolge. „Beobachtet“ und „aus Quellanalyse abgeleitet“ sind getrennt; wo keine Beobachtung vorliegt, steht das dort. Zeilennummern beziehen sich auf `ebf3875`, maßgeblich sind die Symbole. Der Pentest der öffentlichen Oberfläche vom 2026-11-04 und seine Fixes in v0.22.5 stehen im letzten Abschnitt dieses Dokuments.
 
 ## Status
 
@@ -26,7 +26,14 @@ Dieses Dokument hält die 21 Datensätze des Audits fest: den Mechanismus, die b
 | OMP-018 | Leeres `OMP_WEB_ADMINS` fällt auf die Vorgabenamen zurück | medium | behoben (v0.22.4) | `bin/web-auth-store.js` |
 | OMP-019 | Prüfung und Zugriff sind zwei Pfadauflösungen | low | behoben (v0.22.4) | `lib/file-access.ts` |
 | OMP-020 | Login-Fehlerzeit verrät, ob ein Kontoname existiert | low | behoben (v0.22.4) | `lib/web-auth.ts` |
-| OMP-021 | Tenant-Dateitools umgehen die Ressourcen-Autorisierung | — (verworfen) | verworfen (kein Befund) | — |
+| OMP-021 | Tenant-Dateitools umgehen die Ressourcen-Autorisierung | — (verworfen) | verworfen (kein Befund) |
+
+**Nachtrag v0.22.5.** Der Pentest der öffentlichen Oberfläche vom 2026-11-04
+(PA-01…PA-05, E-01…E-19 sowie die Zusatzbefunde P-01…P-08 der App-Schicht) ist
+im Abschnitt [Pentest der öffentlichen Oberfläche
+(v0.22.5)](#pentest-der-öffentlichen-oberfläche-v0225) am Ende dieses Dokuments
+festgehalten — mit den Code-Fixes, den Betreiber-Schritten, die nicht im Repo
+landen, und den Restrisiken.
 
 ## Methodik
 
@@ -406,3 +413,253 @@ NODE_ENV=test bun test lib/write-access.identity.test.mjs \
 ```
 
 Die beiden Agent-Body-Testdateien (`app/api/agent/agent-body-limit.test.mjs`, `app/api/agent/new/body-limit.test.mjs`) brachen im vollen v0.22.4-Lauf beim Import mit `Setting "extensions" is registered twice` ab; das ist die bekannte Folge einer zweiten jiti-Instanz, kein Produktpfad. Ein Einzellauf wurde für dieses Dokument nicht erhoben; wer die Assertions als Lauf-Ergebnis braucht, führt sie isoliert in einem Prozess aus, in dem die SDK-Registry nicht bereits geladen ist.
+
+## Pentest der öffentlichen Oberfläche (v0.22.5)
+
+Zweiter, unabhängiger Durchgang gegen die **deployte v0.22.4** am 2026-11-04,
+zwei Tage nach dem Audit-Nachtrag oben. Zwei Agenten liefen getrennt: einer
+gegen die App-Schicht (`public-app-report.md`, PA-01…PA-05), einer gegen die
+Kante, DNS-Zone und den öffentlichen IP-Raum (`public-edge-report.md`,
+E-01…E-19). Ein dritter Durchgang auf dem Host (`app-report.md`, P-01…P-08)
+prüfte die authentifizierten Pfade mit geminteten Session-Cookies. Der
+Quellstand war `59cdbea` (v0.22.4); der Fix ist v0.22.5.
+
+### Wie getestet wurde
+
+- **Nur öffentliche Oberfläche**, read-only, **≤ 5 req/s** (gemessen rund
+  3–4/s), kein DoS-, kein Last- und kein Brute-Force-Test. Keine Mutation außer
+  zwei Recovery-Code-Anträgen (`{"action":"request"}`), die der Bericht
+  offenlegt; kein Code wurde eingelöst, das Passwort blieb unverändert.
+- Ziel `https://omp.steimercloud.xyz` (A `77.188.169.116`, PTR
+  `dynamic-077-188-169-116.77.188.pool.telefonica.de`, AS6805) → openresty
+  `192.168.179.153` → agent-pc `192.168.179.57:8788` (Next.js 16.2.12). Die
+  App-Schicht wurde zusätzlich über Loopback auf dem Host gemessen, um den
+  Tunnel nicht mit großen Bodies zu belasten; das LAN selbst (MariaDB, FTP,
+  NPM:81, Dynmap) wurde nicht angefasst.
+- **Was ohne Credentials nicht prüfbar war:** die Cookie-Attribute auf dem
+  Erfolgspfad (nur der Clear-/Logout-Pfad ist von außen sichtbar), fremde
+  Session-IDs, die autorisierten Funktionspfade und ein `limit_req` oberhalb
+  von etwa 3 req/s — der Burst-Test war durch die Vorgabe ausgeschlossen.
+- **Belegumfang:** 72 API-Pfade aus `app/api/**/route.ts` ohne Cookie → alle
+  `401`; 17 Pfad-Normalisierungsvarianten ohne Bypass; 16 fehlgeschlagene
+  Passwort-Prüfungen im App-Bericht (15 auf drei Namen, 1 per Basic) und 24
+  Login- plus 18 Basic-Fehlversuche im Host-Bericht, alle ohne `429`.
+- **Verworfene Beobachtungen:** E-11 (`WWW-Authenticate` geht nur an Clients
+  ohne Fetch Metadata; jeder Browser sendet sie), E-12 (`return 444` ist eine
+  bewusste Entscheidung ohne Sicherheitswirkung), E-14 (zwei 404-Renderer),
+  E-15 (h2 nimmt `Connection:` und 10-KB-Headerlisten; kein
+  Hop-by-Hop-Forwarding beobachtet).
+
+### Befunde der App-Schicht (PA)
+
+| ID | Schwere | Befund | Status v0.22.5 |
+|---|---|---|---|
+| PA-01 | Mittel | Kein Brute-Force-Schutz am Login; `crypto.scryptSync` blockiert den einzigen JS-Thread ~36 ms pro Versuch, auch für unbekannte Namen | **Code behoben** (`verifyDigest` → `crypto.scrypt`); Drosselung offen (Kante) |
+| PA-02 | Niedrig | `X-Forwarded-Proto` aus dem Client steuert das `Secure`-Flag des Session-Cookies | **Code behoben** (`sessionCookieOptions(url)` + `OMP_WEB_TRUST_PROXY=1`); Kanten-Zeile offen |
+| PA-03 | Niedrig | Keine Security-Header, `/login` und `/recover` framebar, `x-powered-by` | **Code behoben** (`next.config.ts`) |
+| PA-04 | Niedrig | `/login` und `/recover` mit `s-maxage=31536000` ein Jahr shared-cachebar | **Code behoben** (`private, no-store`) |
+| PA-05 | Niedrig | Ein offener Recovery-Code wird nach 30 s ersetzt; der am Terminal angezeigte Code ist dann ungültig | **Code behoben** (kein Ersetzen, solange gültig); Verbrennen bleibt offen |
+
+Gemessene Vorher-Werte: `POST /api/web-access/login` → `401` ohne `429` nach 15
+Fehlversuchen auf drei Namen; `DELETE /api/web-access/login` mit
+`X-Forwarded-Proto: http` → `set-cookie: omp_session=; Path=/; Max-Age=0;
+HttpOnly; SameSite=lax` (ohne `Secure`), ohne den Header mit `Secure`; `/login`
+→ nur `strict-transport-security`, `x-powered-by: Next.js`, `x-nextjs-*`,
+Treffer für die fünf Security-Header = **0**, `cache-control:
+s-maxage=31536000`; zwei `{"action":"request"}` im Abstand von 30 s → zwei
+verschiedene `expiresAt` (`1793778667874`, dann `1793778878755`).
+
+### Befunde der Kante und Zone (E)
+
+| ID | Schwere | Befund | Status v0.22.5 |
+|---|---|---|---|
+| E-01 | Mittel | Kein `X-Frame-Options`/`frame-ancestors` — Clickjacking auf der Anmeldeseite | Code (PA-03) + Kante |
+| E-02 | Mittel | Apex liefert über Klartext-HTTP 200 die NPM-Defaultseite | Betreiber: A-Record oder Default-Vhost |
+| E-03 | Mittel | Origin-IP ist per DNS-only-A-Record veröffentlicht (Telefónica-DSL, dynamisch) | Betreiber: Proxy oder Tunnel |
+| E-04 | Mittel | Wildcard `*.steimercloud.xyz` zeigt auf totes Origin (523); jeder Name hat ein gültiges Zertifikat | Betreiber: Wildcard löschen |
+| E-05 | Niedrig | Kein CAA — jede CA darf für Zone und Wildcard ausstellen | Betreiber: CAA nach E-04 |
+| E-06 | Niedrig | `x-powered-by` und `x-nextjs-*` leaken die Herkunft | Code (`poweredByHeader:false`) + Kante (`more_clear_headers`) |
+| E-07 | Niedrig | HSTS `preload` ohne `includeSubDomains` ist für die Preload-Liste wirkungslos | Betreiber: Reihenfolge unten |
+| E-08 | Niedrig | HSTS fehlt auf der 421-Antwort (nginx-Kontext, nicht Upstream) | Betreiber: `always` im richtigen Kontext |
+| E-09 | Niedrig | Prerendertes HTML ein Jahr shared-cachebar (Stale-Chunk-Risiko) | Code (PA-04) |
+| E-10 | Niedrig | Keine Ratenbegrenzung an der Kante (12 Requests in 4,3 s, alle `401`) | Betreiber: `limit_req` |
+| E-11 | Niedrig | `WWW-Authenticate` auf API-401 | verworfen (RFC-9110, beabsichtigt) |
+| E-12 | Niedrig | `absolute-URI` und HTTP/0.9 werden ohne Statuszeile geschlossen | verworfen (bewusstes `return 444`) |
+| E-13 | Niedrig | h2c-Upgrade hängt ≥ 5 s statt abzulehnen | Betreiber optional (`426`) |
+| E-14 | Info | Zwei verschiedene 404-Renderer | verworfen (Kosmetik) |
+| E-15 | Info | h2 akzeptiert `Connection:` und 10-KB-Headerlisten | verworfen (keine Wirkung) |
+| E-16 | Info | Kein DMARC, SPF `~all` | Betreiber: DNS (Mail) |
+| E-17 | Info | Apex hat keinen SAN im Zertifikat (Alert 112) | Betreiber: mit E-02 |
+| E-18 | **Hoch** | TCP/5060 der öffentlichen IP ist der SIP-Stack der FRITZ!Box (`User-Agent: FRITZ!OS`) | Betreiber: Portfreigabe löschen |
+| E-19 | Mittel | TCP/8089 nimmt an und resettet nach dem ersten Byte (tote Freigabe) | Betreiber: Portfreigabe löschen |
+
+Die Web-Kante selbst hat kein Critical/High: kein Beleg für Request
+Smuggling, Host-Header-Injection, Path-Traversal, offenen Redirect oder
+unauthorisierte Datei-Exposition. Der Hoch-Befund liegt neben der Web-Kante auf
+derselben öffentlichen IP (Router-Freigabe). Die TLS-Matrix war sauber (nur
+1.2/1.3), die DNSSEC-Kette vollständig (`ad`-Flag), und alle 72 API-Pfade
+antworteten ohne Cookie mit `401` vor jeder Routing-Entscheidung.
+
+### Code-Fixes in v0.22.5
+
+Ein Commit. Die folgenden Orte sind die primären Diffs.
+
+- **`bin/web-auth-store.js` — asynchrones scrypt (PA-01).** `scryptAsync()`
+  promisifiziert `crypto.scrypt`; `verifyDigest`, `verifyWebPassword` und
+  `consumeRecoveryCode` sind jetzt `async`, `createDigest` bleibt synchron
+  (läuft nur beim Setzen eines Passworts und beim Ausstellen eines Codes). Der
+  Aufwand pro Versuch bleibt bei einem scrypt (N=16384), die Blockade des
+  einzigen JS-Threads entfällt. `lib/web-auth.ts` (`verifyCredential`,
+  `payCredentialCost`, `authorizeWebRequest`) und `proxy.ts` ziehen mit; die
+  Login-Route und ihr Recovery-Pendant awaiten.
+- **`bin/web-auth-store.js` — kein Ersetzen eines gültigen Codes (PA-05).**
+  `issueRecoveryCode` gibt `throttled` mit `retryAfterMs = expiresAt - now`
+  zurück, solange ein `pending`-Code nicht abgelaufen ist; die Route antwortet
+  `429` mit `Retry-After` und nennt die verbleibenden Minuten. Alteinträge ohne
+  `expiresAt` behalten die frühere 30-Sekunden-Regel.
+- **`bin/web-auth-store.js` — Gate-Befund: kein Rückschreiben des alten
+  Snapshots.** Nach dem `await` in `consumeRecoveryCode` schrieb die Funktion
+  den vor dem Warten gelesenen Konfigurationsstand zurück. Ein gleichzeitiger
+  erfolgreicher Consume (oder `omp-web --reset-password`) konnte damit einen
+  verbrauchten Code wieder scharf machen und das neue Passwort überschreiben.
+  Der Fehlversuch wird jetzt gegen `currentConfig(file)` gezählt, wie sie nach
+  dem Warten aussieht, und nur solange sie noch denselben `hash`/`salt` trägt.
+  `lib/web-auth-store.test.mjs` hält den Fall fest.
+- **`lib/web-auth-session.ts` — `Secure` ohne Header (PA-02).**
+  `sessionCookieOptions(url)` liest keinen Request-Header mehr;
+  `secure: protocol === "https:" || process.env.OMP_WEB_TRUST_PROXY === "1"`.
+  Nur `"1"` zählt, nicht `"true"`. Der Grund für den Betreiber-Schalter statt
+  eines zweiten Header-Lesevorgangs: Next baut `req.url` selbst aus
+  `x-forwarded-proto` (`next-server.js:1264-1266`), ein zweiter Lesevorgang
+  wäre nur eine zweite Kopie eines client-kontrollierten Werts.
+- **`next.config.ts` — Header (PA-03/E-01/E-06/PA-04/E-09).**
+  `poweredByHeader: false`; eine `headers()`-Regel mit
+  `Content-Security-Policy`, `X-Frame-Options: SAMEORIGIN`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(),
+  usb=()` für alle Nicht-API-Dokumente (Lookahead `/((?!api(?:/|$)).*)`);
+  `/login` und `/recover` → `Cache-Control: private, no-store`. Die Regel gilt
+  nicht in `next dev` (`'unsafe-eval'` des Dev-Bundles). `frame-ancestors
+  'self'` statt `'none'`, weil die HTML-Vorschau ein `srcDoc`-Dokument rahmt;
+  die API-Routen behalten ihre eigenen CSPs.
+- **`app/api/sessions/[id]/export/route.ts` — Export-Sandbox (P-03).**
+  `Content-Security-Policy: sandbox allow-scripts; …` ohne
+  `allow-same-origin`: der Export ist aktives HTML in der App-Origin, ein aus
+  dem Transkript eingeschleuster Handler läuft, kann aber weder Cookies lesen
+  (`document.cookie` → `SecurityError`) noch die API mit Credentials rufen
+  (`fetch` → `TypeError`). Die beiden `stencil.so`-Hosts bleiben in
+  `script-src`, sonst meldet der Export „Could not load the session viewer".
+- **`app/api/home/route.ts` — Konto-Home (P-08).** Die Route las
+  `os.homedir()` und gab jedem Konto `/home/pi` (gemessen als `sulamith1`),
+  obwohl dessen Home `/home/pi/accounts/sulamith1` ist. Sie liest jetzt die
+  Identität aus den Proxy-Headern und liefert `getUserHome(identity)`; Admin
+  und der Modus `open` behalten `homedir()`, weil `/` keine Home ist.
+- **`lib/session-system-prompt.ts` — Symlink-Containment (P-02, Rest aus
+  OMP-007).** `SYSTEM.md`/`APPEND_SYSTEM.md` liefen über `findConfigFile` und
+  damit an `filterLoads` vorbei: `<proj>/.omp/SYSTEM.md` konnte auf eine Datei
+  außerhalb des Projekts zeigen. Ein Projekt-Treffer zählt jetzt nur, wenn sein
+  aufgelöstes Ziel (`isInsideProject` + `resolvedPath`) innerhalb des
+  Projekt-Roots liegt. Damit ist P-02 geschlossen; P-04 (Recovery-Design),
+  P-05 (`__Host-`-Präfix) und P-06 (prozessweite Provider-Liste) bleiben
+  bewusst ohne Änderung, P-06 steht als offener Eintrag in
+  `docs/known-findings.md`.
+
+### Betreiber-Anhang
+
+Diese Schritte liegen außerhalb des Repos und sind **in dieser Reihenfolge**
+auszuführen. Die Reihenfolge ist Teil der Anweisung: HSTS `includeSubDomains`
+vor dem Wildcard-Abbau würde jeden HTTP-Dienst unter der Zone dauerhaft auf
+HTTPS festnageln, während die Wildcard noch auf ein totes Origin zeigt.
+
+1. **Router (E-18, E-19) — höchste Schwere.** In der FRITZ!Box unter
+   `Internet ▸ Freigaben ▸ Portfreigaben` die Regeln für TCP **5060** und TCP
+   **8089** löschen. Die eigene Telefonie braucht keine eingehende Freigabe;
+   die Registrierung läuft ausgehend. Prüfen (die öffentliche IP ist dynamisch,
+   vorher neu auflösen):
+   `IP=$(dig +short omp.steimercloud.xyz A); nmap -Pn -p 5060,8089 "$IP"` →
+   beide `filtered`/`closed`.
+2. **Kante, openresty auf `192.168.179.153`.** Zuerst die vorhandene
+   Konfiguration finden: `nginx -T | grep -n "server_name
+   omp.steimercloud.xyz" -A40`. Im `http`-Kontext einmal
+   `limit_req_zone $binary_remote_addr zone=omp_auth:10m rate=10r/m;`. Im
+   `omp`-Server-Block:
+   `proxy_set_header X-Forwarded-Proto $scheme;` (PA-02),
+   `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`,
+   `more_clear_headers "X-Powered-By" "x-nextjs-cache" "x-nextjs-prerender"
+   "x-nextjs-stale-time";` (E-06) und
+   `more_set_headers "Strict-Transport-Security: max-age=63072000"
+   "X-Frame-Options: SAMEORIGIN" "X-Content-Type-Options: nosniff"
+   "Referrer-Policy: no-referrer" "Permissions-Policy: camera=(), microphone=(),
+   geolocation=()" "Content-Security-Policy: frame-ancestors 'self'";`
+   (E-01/E-07/E-08). In den bestehenden Locations
+   `= /api/web-access/login` und `= /api/web-access/recovery` je
+   `limit_req zone=omp_auth burst=5 nodelay;` und `limit_req_status 429;`
+   (PA-01/E-10) — sechs Versuche pro Minute, ein Tippfehler bleibt möglich, ein
+   Wörterbuchlauf nicht. Optional E-13: `if ($http_upgrade) { return 426; }`
+   (es gibt keinen WebSocket-Endpunkt, nur `EventSource`). Prüfen und laden:
+   `nginx -t && systemctl reload openresty`; danach `curl -I` gegen `/login`,
+   `/` und einen 404 — `add_header` in einer Location ersetzt **alle**
+   geerbten `add_header`, `more_set_headers` nicht.
+3. **DNS, Zone `steimercloud.xyz` (Cloudflare).** Vorher:
+   `dig +short omp.steimercloud.xyz A` → `77.188.169.116`;
+   `dig +short random123.steimercloud.xyz A` → zwei Cloudflare-IPs (Wildcard).
+   Zuerst **E-04**: den Wildcard-Record `*` (A/AAAA, proxied) löschen; danach
+   `dig +short random123.steimercloud.xyz A` → leer, Status `NXDOMAIN`. Dann
+   **E-02/E-17**: den Apex-A-Record (A, DNS-only) löschen; MX/TXT/DS bleiben
+   unberührt. Danach liefert `http://steimercloud.xyz/` keine Antwort mehr.
+4. **HSTS (E-07/E-08), erst jetzt.** `includeSubDomains` ergänzen und `preload`
+   erst aufnehmen, wenn die Zone sauber ist. Der heutige Header
+   `max-age=63072000; preload` ist ohne `includeSubDomains` für die
+   Preload-Liste wirkungslos; ihn zuerst auf `max-age=63072000` zu kürzen ist
+   ein No-Op für Browser. Der 421 kommt aus nginx selbst, nicht vom Upstream —
+   `always` im 421-erzeugenden Kontext prüfen, nicht annehmen.
+5. **CAA (E-05), nach dem Wildcard-Abbau.** Dann ist Let's Encrypt der einzige
+   verbleibende Aussteller:
+   `steimercloud.xyz. CAA 0 issue "letsencrypt.org"`,
+   `steimercloud.xyz. CAA 0 iodef "mailto:<operator-adresse>"`. CAA ist eine
+   Aussperr-Falle: nach dem Setzen die nächste automatische Ausstellung
+   abwarten (das Origin-Zertifikat läuft am 2027-01-18 ab, erneuert sich aber
+   vorher); bei einem Fehlschlag den Record sofort entfernen.
+6. **DMARC (E-16), unabhängig (Mail-Zone).** Zuerst beobachten:
+   `_dmarc.steimercloud.xyz. TXT "v=DMARC1; p=none; rua=mailto:<postfach>"`.
+   Nach zwei Wochen ohne Fehlalarme auf `p=quarantine`; `p=reject` nicht als
+   ersten Schritt.
+7. **E-03 ist eine Architekturentscheidung, keine Record-Änderung.**
+   Cloudflare-Proxy für `omp` (dann muss die Kante die echte Client-IP aus
+   `CF-Connecting-IP` lesen, und `limit_req $binary_remote_addr` sieht nur
+   Cloudflare-IPs — `real_ip_header CF-Connecting-IP` plus `set_real_ip_from`
+   nötig) **oder** `cloudflared`-Tunnel mit CNAME. Beides ändert die Kante;
+   nicht in derselben Nacht wie der Header-Deploy.
+
+### Restrisiken
+
+- **PA-05, Verbrennen bleibt möglich.** Der Fix schließt das *Ersetzen* eines
+  offenen Codes. Fünf falsche `{"action":"complete"}`-Versuche löschen den
+  offenen Code weiterhin (`consumeRecoveryCode` zählt sie und räumt beim
+  fünften auf — bestand vorher). Die Kanten-Regel aus Schritt 2 drosselt beide
+  Pfade zusammen, aber `burst=5` erlaubt genau diese fünf Versuche in einem
+  Schub. Eine Schließung bräuchte Zustand pro Quelle (Versuche je IP) und ist
+  bewusst nicht Teil dieser Welle.
+- **PA-02 braucht die Kanten-Zeile.** `OMP_WEB_TRUST_PROXY=1` entscheidet nur
+  über das `Secure`-Flag. Fehlt `proxy_set_header X-Forwarded-Proto $scheme;`,
+  baut Next `req.url` weiter aus dem Client-Header; andere URL-abgeleitete
+  Entscheidungen bleiben dann client-beeinflussbar, auch wenn der Cookie
+  korrekt ist. Ohne das Flag auf einem HTTPS-Host fehlt `Secure` ganz.
+- **Kein Rate-Limit im Code.** Die Login-Route drosselt weiterhin nicht; 24
+  Fehlversuche ohne `429` waren messbar. Der Code senkt nur die Blockade, nicht
+  die Versuchszahl. Die Drosselung ist die Kanten-Regel aus Schritt 2; solange
+  `:8788` im LAN oder im Desktop-Build direkt erreichbar ist, greift sie dort
+  nicht.
+- **Kein CSP-Nonce.** `script-src` behält `'unsafe-inline'` (Theme-Bootstrap
+  inline in `app/layout.tsx`, RSC-Bootstrap im prerenderten HTML). Ein Nonce
+  bräuchte einen Proxy-Header plus `'strict-dynamic'`; `frame-ancestors`,
+  `base-uri`, `form-action` und `object-src` greifen vollständig.
+- **Was nach dem Deploy noch zu messen ist.** Beim Schreiben dieses Commits war
+  v0.22.5 noch nicht deployt. Die Abnahmeproben: `curl -sS -D- -o /dev/null`
+  gegen `/login` (fünf Header, `private, no-store`, kein `x-powered-by`),
+  `DELETE /api/web-access/login` mit gefälschtem `X-Forwarded-Proto: http`
+  (`Secure` muss bleiben), `/` → `302 /login`, `systemctl show omp-web -p
+  Environment` (`OMP_WEB_TRUST_PROXY=1`), ein Grep im gebauten Bundle nach
+  `sandbox allow-scripts` und der CSP-Zeichenkette, und ein
+  Browser-Durchklick mit Blick auf die Konsole (CSP-Verstöße). Die Ist-Werte
+  stehen im Release-Bericht vom 2026-11-04.

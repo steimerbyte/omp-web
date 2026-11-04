@@ -225,8 +225,8 @@ const DUMMY_DIGEST: WebAuthDigest = {
 const DUMMY_SECRET = "omp-web-login-dummy-credential";
 
 /** Bezahlt genau eine scrypt-Pruefung, egal welcher Zweig zuvor abgekuerzt hat. */
-function payCredentialCost(): void {
-  verifyWebPassword(DUMMY_SECRET, { policy: { mode: "stored", digest: DUMMY_DIGEST, file: "" } });
+async function payCredentialCost(): Promise<void> {
+  await verifyWebPassword(DUMMY_SECRET, { policy: { mode: "stored", digest: DUMMY_DIGEST, file: "" } });
 }
 
 /**
@@ -244,11 +244,11 @@ function payCredentialCost(): void {
  * Konto. Der Aufrufer kann die drei Faelle nicht unterscheiden, und das soll er
  * auch nicht: jedes andere Verhalten ist eine Oracle-Frage an einen Angreifer.
  */
-export function verifyCredential(
+export async function verifyCredential(
   username: string,
   password: string,
   options: WebAuthStoreOptions = {},
-): WebIdentity | null {
+): Promise<WebIdentity | null> {
   // Die Umgebung traegt das Passwort aus der Geheimnisdatei, nicht aus der
   // Dienstumgebung: `webAuthEnv()` ist die eine Stelle, an der beides
   // zusammenkommt, ohne den Wert in `process.env` zu schreiben.
@@ -269,7 +269,7 @@ export function verifyCredential(
     // braucht; `file` ist hierbei nur ein Platzhalter fuer den Cache-Key und
     // wird nirgends gelesen.
     const policy: WebAuthPolicy = { mode: "stored", digest: account.password, file: resolved.file ?? "" };
-    if (!verifyWebPassword(password, { ...resolved, policy })) return null;
+    if (!(await verifyWebPassword(password, { ...resolved, policy }))) return null;
     // `options` wandert mit: die Admin-Frage liest dieselbe Kontendatei, aus der
     // `findWebAccount` oben gerade das Konto geholt hat. Ohne das wuerde ein
     // Aufrufer mit eigenem `accountsFile` die Rolle aus der Datei *neben* der
@@ -281,24 +281,24 @@ export function verifyCredential(
   if (!secretsEqual(username, legacy)) {
     // Unbekannter oder abgeschalteter Name: genau hier fehlte vorher die
     // scrypt-Rechnung, an der ein existierender Name erkennbar war.
-    payCredentialCost();
+    await payCredentialCost();
     return null;
   }
 
   const policy = resolveWebAuthPolicy(resolved);
   if (policy.mode === "stored") {
     // Echter Digest: `verifyWebPassword` bezahlt die scrypt-Rechnung selbst.
-    if (!verifyWebPassword(password, { ...resolved, policy })) return null;
+    if (!(await verifyWebPassword(password, { ...resolved, policy }))) return null;
   } else if (policy.mode === "environment") {
     // Umgebungs-Passwoerter werden per Hash verglichen, nicht per scrypt; der
     // Fehlschlag zahlt den Preis trotzdem, damit er sich nicht von einem
     // unbekannten Namen unterscheidet.
-    if (!verifyWebPassword(password, { ...resolved, policy })) {
-      payCredentialCost();
+    if (!(await verifyWebPassword(password, { ...resolved, policy }))) {
+      await payCredentialCost();
       return null;
     }
   } else {
-    payCredentialCost();
+    await payCredentialCost();
     return null;
   }
   return { username: legacy, isAdmin: isAdminUsername(legacy, env, resolved) };
@@ -314,10 +314,10 @@ export function verifyCredential(
  * "may this through" still has to look at `.decision`, which means the string
  * cannot be compared by accident.
  */
-export function authorizeWebRequest(
+export async function authorizeWebRequest(
   authorization: string | null,
   options: WebAuthStoreOptions = {},
-): { decision: WebAuthDecision; identity: WebIdentity | null } {
+): Promise<{ decision: WebAuthDecision; identity: WebIdentity | null }> {
   // Dieselbe Regel wie in `verifyCredential`: die Geheimnisdatei kommt in die
   // Optionen, nicht als Default-Argument, damit ein Aufrufer mit eigenem
   // `{ username }` sie nicht wegkuerzt.
@@ -327,7 +327,7 @@ export function authorizeWebRequest(
 
   const credentials = parseBasicCredentials(authorization);
   if (credentials) {
-    const identity = verifyCredential(credentials.username, credentials.password, options);
+    const identity = await verifyCredential(credentials.username, credentials.password, options);
     if (identity) return { decision: "allow", identity };
     // A wrong password against a *locked* server is a failed login. Against an
     // unlocked one it is a request that happens to carry a stale header.

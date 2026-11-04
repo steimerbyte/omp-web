@@ -30,10 +30,11 @@ const PASSWORD = "correct horse battery staple";
 const HOST = "localhost:30141";
 const ORIGIN = `http://${HOST}`;
 
-function withServer(t, run) {
+async function withServer(t, run) {
   const dir = mkdtempSync(join(tmpdir(), "omp-web-proxy-cookie-"));
   const keys = [
     "OMP_WEB_PASSWORD", "OMP_WEB_AUTH_FILE", "OMP_WEB_SESSION_KEY_FILE", "OMP_WEB_SESSIONS_FILE", "OMP_WEB_USERNAME",
+    "OMP_WEB_SECRETS_FILE", "OMP_WEB_TRUST_PROXY",
   ];
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 
@@ -42,6 +43,10 @@ function withServer(t, run) {
   process.env.OMP_WEB_SESSION_KEY_FILE = join(dir, "omp-web-session-key");
   process.env.OMP_WEB_SESSIONS_FILE = join(dir, "omp-web-sessions.json");
   delete process.env.OMP_WEB_USERNAME;
+  // Eine leere Geheimnisdatei, damit ein `OMP_WEB_TRUST_PROXY` aus der echten
+  // /etc/omp-web.env den Test auf einem Server anders ausgehen liesse als hier.
+  process.env.OMP_WEB_SECRETS_FILE = join(dir, "omp-web.env");
+  delete process.env.OMP_WEB_TRUST_PROXY;
 
   t.after(() => {
     for (const key of keys) {
@@ -51,12 +56,12 @@ function withServer(t, run) {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  return run({ dir });
+  return await run({ dir });
 }
 
 /** Wie `proxy.ts` es sieht: ein API-Request mit Cookie, ohne `Authorization`. */
-function request(cookie, extraHeaders = {}) {
-  return new NextRequest(`${ORIGIN}/api/whoami`, {
+function request(cookie, extraHeaders = {}, origin = ORIGIN) {
+  return new NextRequest(`${origin}/api/whoami`, {
     headers: { host: HOST, ...(cookie ? { cookie: `${SESSION_COOKIE_NAME}=${cookie}` } : {}), ...extraHeaders },
   });
 }
@@ -74,9 +79,9 @@ function agedCookie(secondsAgo) {
 }
 
 test("ein frischer Cookie wird nicht erneuert", async (t) => {
-  await withServer(t, () => {
+  await withServer(t, async () => {
     const cookie = agedCookie(60);
-    const response = proxy(request(cookie));
+    const response = await proxy(request(cookie));
     assert.equal(response.status, 200, "die Sitzung gilt");
     assert.deepEqual(response.headers.getSetCookie(), [], "kein Set-Cookie auf einem frischen Cookie");
   });
@@ -86,13 +91,13 @@ test("ein frischer Cookie wird nicht erneuert", async (t) => {
 const dueCookie = () => agedCookie(SESSION_RENEW_AFTER_MS / 1000 + 60);
 
 test("nach der halben Lebenszeit wird genau ein neuer Cookie gesetzt", async (t) => {
-  await withServer(t, () => {
+  await withServer(t, async () => {
     // Aelter als die Haelfte der Lebenszeit, also ist die Erneuerung faellig.
     const cookie = dueCookie();
     const previousIssuedAt = Number(Buffer.from(cookie.split(".")[1], "base64url").toString("utf8"));
     assert.ok(Date.now() - previousIssuedAt > SESSION_RENEW_AFTER_MS, "Vorbedingung: die Erneuerung ist faellig");
 
-    const response = proxy(request(cookie));
+    const response = await proxy(request(cookie));
     assert.equal(response.status, 200, "die Erneuerung aendert den Status nicht");
 
     const headers = response.headers.getSetCookie();
@@ -119,28 +124,34 @@ test("nach der halben Lebenszeit wird genau ein neuer Cookie gesetzt", async (t)
 
     // Der neue Cookie traegt ein frisches `issuedAt` — und deshalb ist der
     // naechste Request wieder still. Das ist die Drosselung, um die es geht.
-    const fresh = proxy(request(renewed));
+    const fresh = await proxy(request(renewed));
     assert.equal(fresh.status, 200, "der erneuerte Cookie authentifiziert");
     assert.deepEqual(fresh.headers.getSetCookie(), [], "und ein frischer Cookie erneuert nicht wieder");
   });
 });
 
-test("hinter HTTPS traegt die Erneuerung Secure", async (t) => {
-  await withServer(t, () => {
-    const response = proxy(request(dueCookie(), { "x-forwarded-proto": "https" }));
+test("die Erneuerung folgt dem Ursprung, nicht dem Client-Header", async (t) => {
+  await withServer(t, async () => {
+    // TLS terminiert vor dem Prozess: der Ursprung ist https.
+    const response = await proxy(request(dueCookie(), {}, `https://${HOST}`));
     const headers = response.headers.getSetCookie();
     assert.equal(headers.length, 1);
     assert.match(headers[0], /Secure/i);
+
+    // Ein Client-Header ist keine zweite Quelle: derselbe http-Ursprung mit
+    // `x-forwarded-proto: https` bekommt kein Secure.
+    const spoofed = await proxy(request(dueCookie(), { "x-forwarded-proto": "https" }));
+    assert.doesNotMatch(spoofed.headers.getSetCookie()[0], /Secure/i);
   });
 });
 
 test("ein Tab, der eine Stunde geschlossen war, ist keine Abmeldung", async (t) => {
-  await withServer(t, () => {
+  await withServer(t, async () => {
     // Der gemeldete Fehler: Handy, Tab zu, 61 Minuten spaeter wieder auf, und
     // `/` schickt nach `/login`. Der Proxy war nie die Ursache — der Browser
     // hatte den Cookie verworfen, weil seine Lebensdauer abgelaufen war. Mit
     // einer Stunde TTL faellt dieser Test an der 401, mit Tagen nicht.
-    const response = proxy(request(agedCookie(61 * 60)));
+    const response = await proxy(request(agedCookie(61 * 60)));
     assert.equal(response.status, 200, "61 Minuten duerfen keine Abmeldung sein");
     // Und weil eine Stunde weit unter der halben Lebensdauer liegt, wird auch
     // nicht neu ausgestellt: kein Schreibzugriff fuer eine blosse Rueckkehr.
@@ -149,7 +160,7 @@ test("ein Tab, der eine Stunde geschlossen war, ist keine Abmeldung", async (t) 
 });
 
 test("ein gueltiger Cookie kauft einem Cross-Site-POST nichts", async (t) => {
-  await withServer(t, () => {
+  await withServer(t, async () => {
     // `sameSite: lax` laesst den Cookie auf einer Top-Level-GET-Navigation
     // mitreisen — das ist der Link in der Mail, und ohne ihn landet ein Handy
     // mit gueltiger Sitzung auf `/login`. Auf einem Cross-Site-POST schickt der
@@ -168,7 +179,7 @@ test("ein gueltiger Cookie kauft einem Cross-Site-POST nichts", async (t) => {
       body: "{}",
     });
 
-    const crossSite = proxy(post(dueCookie(), {
+    const crossSite = await proxy(post(dueCookie(), {
       origin: "https://attacker.example", "sec-fetch-site": "cross-site",
     }));
     assert.equal(crossSite.status, 403, "Cross-Site bleibt abgelehnt, auch mit gueltigem Cookie");
@@ -176,7 +187,7 @@ test("ein gueltiger Cookie kauft einem Cross-Site-POST nichts", async (t) => {
 
     // Die Kontrolle: derselbe POST aus der eigenen Seite kommt durch. Sonst
     // waere die Assertion oben nur die Aussage "POST geht nie".
-    const sameOrigin = proxy(post(dueCookie(), {
+    const sameOrigin = await proxy(post(dueCookie(), {
       origin: ORIGIN, "sec-fetch-site": "same-origin",
     }));
     assert.equal(sameOrigin.status, 200, "der eigene POST bleibt erlaubt");
@@ -184,29 +195,29 @@ test("ein gueltiger Cookie kauft einem Cross-Site-POST nichts", async (t) => {
 });
 
 test("ein abgelehnter Request bekommt kein Set-Cookie", async (t) => {
-  await withServer(t, () => {
-    const response = proxy(request(null));
+  await withServer(t, async () => {
+    const response = await proxy(request(null));
     assert.equal(response.status, 401);
     assert.deepEqual(response.headers.getSetCookie(), [], "sonst verlaengert ein gestohlener Cookie sich durch Klopfen");
   });
 });
 
 test("die ausgenommenen Pfade gleiten nicht", async (t) => {
-  await withServer(t, () => {
+  await withServer(t, async () => {
     // `/login` laeuft bewusst mit `identity === null` durch (proxy.ts:119-124).
     // Wuerde dort gleiten, traege eine oeffentliche Seite einen Set-Cookie —
     // und sie ist im Betrieb teilbar gecacht (`s-maxage`).
     const request = new NextRequest(`${ORIGIN}/login`, { headers: { host: HOST, cookie: `${SESSION_COOKIE_NAME}=${dueCookie()}` } });
-    const response = proxy(request);
+    const response = await proxy(request);
     assert.equal(response.status, 200);
     assert.deepEqual(response.headers.getSetCookie(), [], "kein Set-Cookie auf /login");
   });
 });
 
 test("Basic Auth wird nicht verlaengert: dort gibt es keine Sitzung", async (t) => {
-  await withServer(t, () => {
+  await withServer(t, async () => {
     const basic = `Basic ${Buffer.from(`omp:${PASSWORD}`, "utf8").toString("base64")}`;
-    const response = proxy(request(null, { authorization: basic }));
+    const response = await proxy(request(null, { authorization: basic }));
     assert.equal(response.status, 200);
     assert.deepEqual(response.headers.getSetCookie(), []);
   });

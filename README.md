@@ -160,6 +160,20 @@ There are two ways in, and they answer different questions:
   OMP_WEB_PASSWORD=...
   ```
 
+  **`OMP_WEB_TRUST_PROXY=1` is the one flag that belongs in the unit**, because it
+  is not a secret and it describes the deployment: TLS terminates in front of this
+  port. With it, every `omp_session` cookie carries `Secure`; without it, `Secure`
+  follows the request URL — and Next builds that URL itself from the
+  client-supplied `x-forwarded-proto` header, so on a plain-HTTP port a client can
+  claim HTTPS and the cookie is dropped instead. Do **not** set it when the service
+  is reached over plain HTTP directly (LAN, desktop build): the browser then
+  discards the cookie and the login cannot complete.
+
+  ```bash
+  # in the service unit, only when a TLS proxy sits in front of :8788:
+  Environment=OMP_WEB_TRUST_PROXY=1
+  ```
+
 **One setting decides whether account creation works at all.** Creating an account
 makes a directory for it, and the default parent is `/home`. An unprivileged
 service account cannot write there. Set `OMP_WEB_HOME_ROOT` to somewhere the

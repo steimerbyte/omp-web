@@ -5,6 +5,97 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+## v0.22.5
+
+Released 2026-11-04.
+
+Härtung der öffentlich erreichbaren Oberfläche nach dem Pentest vom 2026-11-04
+gegen die deployte v0.22.4 (`public-app-report.md` PA-01…PA-05,
+`public-edge-report.md` E-01…E-19, `app-report.md` P-01…P-08). Dieser Release
+behebt den Code-Anteil; Kanten-, DNS- und Router-Befunde stehen als
+Betreiber-Schritte in `docs/security-vulnerabilities.md`.
+
+### Anmeldung
+
+- **Ein Fehlversuch blockiert den Server nicht mehr.** Die Prüfung lief über
+  `crypto.scryptSync` und belegte den einzigen JS-Thread rund 36 ms pro Versuch
+  (gemessen: 36,06 ms gegen 0,10 ms für einen unbekannten Namen, der die
+  Rechnung vorher gar nicht bezahlte). Sie läuft jetzt über `crypto.scrypt` im
+  Threadpool. Die Kosten pro Versuch bleiben; die Blockade des Event-Loops
+  entfällt. Der Pentest maß 24 Fehlversuche an der Login-Route und 18 am
+  Basic-Pfad, alle ohne `429` — die Drosselung an der Kante bleibt
+  Betreiber-Aufgabe.
+- **Das `Secure`-Flag folgt nicht mehr dem Client.** Gemessen: ein
+  `DELETE /api/web-access/login` mit `X-Forwarded-Proto: http` lieferte
+  `set-cookie: omp_session=; …; Max-Age=0; HttpOnly; SameSite=lax` — ohne den
+  Header dagegen mit `Secure`. Die Ursache liegt tiefer als der eine
+  Lesevorgang: Next baut `req.url` selbst aus diesem Header. Der Cookie-Helper
+  liest ihn deshalb nicht mehr; `Secure` folgt dem Transport oder dem neuen
+  `OMP_WEB_TRUST_PROXY=1`. **Deploy-Voraussetzung:** auf jedem Host hinter einer
+  TLS-Terminierung muss das Flag gesetzt sein, bevor oder mit diesem Code —
+  ohne es hängt `Secure` wieder an `req.url`. Die Kante muss zusätzlich
+  `proxy_set_header X-Forwarded-Proto $scheme;` setzen.
+- **Ein offener Recovery-Code wird nicht mehr ersetzt.** Gemessen: zwei
+  `{"action":"request"}` im Abstand von 30 s lieferten zwei verschiedene
+  `expiresAt`; der zuerst am Terminal angezeigte Code war damit ungültig.
+  Solange ein Code nicht abgelaufen ist (10 Minuten), antwortet die Route jetzt
+  `429` mit `Retry-After` bis 600.
+- **Gate-Befund:** die Umstellung auf asynchrones scrypt riss in
+  `consumeRecoveryCode` ein Zeitfenster auf — nach dem `await` schrieb die
+  Funktion den vor dem Warten gelesenen Konfigurationsstand zurück und konnte
+  damit einen verbrauchten Code wieder scharf machen oder ein gleichzeitig
+  gesetztes Passwort überschreiben. Der Fehlversuch wird jetzt gegen die Datei
+  gezählt, wie sie nach dem Warten aussieht, und nur solange sie noch denselben
+  Code trägt; `lib/web-auth-store.test.mjs` hält das fest.
+
+### Antwort-Header
+
+- **CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy`,
+  `Permissions-Policy`** auf allen Antworten, die Next ausliefert; gemessen war
+  keiner der fünf vorhanden. `frame-ancestors 'self'` statt `'none'`, weil die
+  Datei-Vorschau same-origin rahmt. `script-src` behält `'unsafe-inline'`: das
+  Theme-Bootstrap steht inline in `app/layout.tsx`, und ein Nonce bräuchte einen
+  Proxy-Header plus `'strict-dynamic'`; beides ist hier nicht ohne Umbau zu
+  haben. Der Header bleibt trotzdem die halbe Miete — `frame-ancestors`,
+  `base-uri`, `form-action` und `object-src` greifen vollständig. Der
+  Lookahead `/((?!api(?:/|$)).*)` lässt die API-Routen ihre eigenen CSPs
+  behalten.
+- **`/login` und `/recover` sind nicht mehr ein Jahr shared-cachebar**
+  (`s-maxage=31536000` → `private, no-store`).
+- **`x-powered-by: Next.js` entfällt** (`poweredByHeader: false`).
+- **Der Session-Export läuft in einer Sandbox** (`sandbox allow-scripts`,
+  ohne `allow-same-origin`): ein aus dem Transkript eingeschleuster Handler
+  läuft zwar, kann aber weder Cookies lesen noch die Admin-API mit Credentials
+  rufen.
+
+### App-Schicht
+
+- **`/api/home` liefert die Home des Kontos**, nicht die des Prozessbenutzers
+  (gemessen: `sulamith1` bekam `/home/pi` statt `/home/pi/accounts/sulamith1`).
+- **`SYSTEM.md` und `APPEND_SYSTEM.md` folgen keinem Symlink mehr aus dem
+  Projekt** (Restrisiko aus OMP-007): ein Projekt-Treffer zählt nur, wenn sein
+  aufgelöstes Ziel innerhalb des Projekt-Roots liegt — dieselbe Regel wie
+  `filterLoads`.
+
+### Deploy
+
+- `OMP_WEB_TRUST_PROXY=1` gehört in die Unit (`Environment=`), nicht in die
+  Secrets-Datei; es ist kein Secret, sondern die Aussage „vor diesem Port
+  terminiert TLS". Auf einem Port ohne TLS-Terminierung gesetzt, verwirft der
+  Browser jeden Cookie — der Login ist dann unmöglich (fail closed, sofort
+  sichtbar).
+- Die Kante muss `X-Forwarded-Proto $scheme` setzen und die fünf Header
+  durchsetzen (Snippets in `docs/security-vulnerabilities.md`). HSTS `preload`
+  ohne `includeSubDomains` ist für die Preload-Liste wirkungslos; es bleibt bis
+  nach dem Wildcard- und Apex-Abbau so.
+
+### Kompatibilität
+
+- `verifyDigest`, `verifyWebPassword` und `consumeRecoveryCode` in
+  `bin/web-auth-store.js` geben jetzt Promises zurück. `verifyCredential`,
+  `authorizeWebRequest` und `proxy()` sind ebenfalls asynchron geworden;
+  `createDigest` bleibt synchron.
+
 ## v0.22.4
 
 Released 2026-11-03.

@@ -102,7 +102,7 @@ function withIdentity(request: NextRequest, identity: WebIdentity | null): NextR
   return NextResponse.next({ request: { headers } });
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isApiRequest = pathname === "/api" || pathname.startsWith("/api/");
   const isTrustedRequest = isApiRequest
@@ -132,7 +132,7 @@ export function proxy(request: NextRequest) {
   // Basic Auth still stands: curl, the reverse proxy, and existing clients all
   // send it. A session cookie is the browser's second door, signed by the same
   // credential — so changing the password kills both at once.
-  const { decision, identity: basicIdentity } = authorizeWebRequest(request.headers.get("authorization"));
+  const { decision, identity: basicIdentity } = await authorizeWebRequest(request.headers.get("authorization"));
 
   // The session cookie is the second door, and it is also where the identity
   // usually comes from: a browser never sends `Authorization`, only the cookie.
@@ -181,7 +181,7 @@ export function proxy(request: NextRequest) {
         response.cookies.set({
           name: SESSION_COOKIE_NAME,
           value: renewed,
-          ...sessionCookieOptions(request.nextUrl, request.headers),
+          ...sessionCookieOptions(request.nextUrl),
         });
       }
     }

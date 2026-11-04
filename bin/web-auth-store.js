@@ -652,6 +652,13 @@ function scryptOptions(params) {
   };
 }
 
+/** Promisified `crypto.scrypt`: derselbe Aufwand, aber auf dem Threadpool. */
+function scryptAsync(secret, salt, keyLength, options) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(secret, salt, keyLength, options, (error, derived) => (error ? reject(error) : resolve(derived)));
+  });
+}
+
 function isPowerOfTwo(value) {
   return Number.isInteger(value) && value > 1 && (value & (value - 1)) === 0;
 }
@@ -683,13 +690,13 @@ function createDigest(secret, params = SCRYPT_PARAMS) {
 }
 
 /** Timing-safe digest comparison. Any malformed input verifies as `false`. */
-function verifyDigest(secret, digest) {
+async function verifyDigest(secret, digest) {
   if (typeof secret !== "string" || !isUsableDigest(digest)) return false;
   try {
     const salt = Buffer.from(digest.salt, "base64");
     const expected = Buffer.from(digest.hash, "base64");
     if (salt.length === 0 || expected.length !== digest.keyLength) return false;
-    const actual = crypto.scryptSync(secret, salt, digest.keyLength, scryptOptions(digest));
+    const actual = await scryptAsync(secret, salt, digest.keyLength, scryptOptions(digest));
     return timingSafeEqual(actual, expected);
   } catch {
     return false;
@@ -894,7 +901,7 @@ function constantTimeStringEqual(actual, expected) {
  * server should let the request through; this answers "are these credentials
  * valid", not "is this request allowed".
  */
-function verifyWebPassword(password, options = {}) {
+async function verifyWebPassword(password, options = {}) {
   if (typeof password !== "string" || password.length === 0) return false;
   const policy = options.policy ?? resolveWebAuthPolicy(options);
 
@@ -905,7 +912,7 @@ function verifyWebPassword(password, options = {}) {
 
   const key = cacheKey(password, digestFingerprint(policy.digest));
   if (readVerificationCache(key)) return true;
-  if (!verifyDigest(password, policy.digest)) return false;
+  if (!(await verifyDigest(password, policy.digest))) return false;
   writeVerificationCache(key);
   return true;
 }
@@ -1391,7 +1398,22 @@ function issueRecoveryCode(options = {}) {
   const config = currentConfig(file);
   const pending = config.recovery;
 
-  if (pending && typeof pending.issuedAt === "number" && now - pending.issuedAt < RECOVERY_REISSUE_INTERVAL_MS) {
+  // Ein offener Code wird nicht ersetzt: er ist bereits auf der Konsole
+  // gestanden, und wer sie sieht, kann ihn lesen. Ein zweiter Antrag darf ihn
+  // weder ungueltig machen noch den Store beschreiben.
+  const pendingAlive = pending
+    && isUsableDigest(pending)
+    && typeof pending.expiresAt === "number"
+    && pending.expiresAt > now;
+  if (pendingAlive) {
+    return { ok: false, reason: "throttled", retryAfterMs: pending.expiresAt - now };
+  }
+
+  // Alteintraege ohne `expiresAt` (vor dieser Fassung geschrieben) behalten die
+  // fruehere 30-Sekunden-Regel; `consumeRecoveryCode` behandelt sie als
+  // `expired` bzw. `no-code`, ein Neuaustellen ist also richtig.
+  if (pending && typeof pending.issuedAt === "number" && typeof pending.expiresAt !== "number"
+    && now - pending.issuedAt < RECOVERY_REISSUE_INTERVAL_MS) {
     return { ok: false, reason: "throttled", retryAfterMs: RECOVERY_REISSUE_INTERVAL_MS - (now - pending.issuedAt) };
   }
 
@@ -1419,7 +1441,7 @@ function issueRecoveryCode(options = {}) {
  * Single-use: the code is cleared whether it succeeded, expired, or ran out of
  * attempts, so a wrong guess can never be retried indefinitely.
  */
-function consumeRecoveryCode(code, password, options = {}) {
+async function consumeRecoveryCode(code, password, options = {}) {
   const file = options.file ?? resolveWebAuthFile(options.env ?? process.env);
   const now = options.now ?? Date.now();
   const config = currentConfig(file);
@@ -1437,12 +1459,24 @@ function consumeRecoveryCode(code, password, options = {}) {
     return { ok: false, reason: "too-many-attempts" };
   }
 
-  if (!verifyDigest(normalizeRecoveryCode(code), pending)) {
-    const remaining = RECOVERY_MAX_ATTEMPTS - attempts - 1;
-    writeWebAuthConfig({
-      ...config,
-      recovery: remaining > 0 ? { ...pending, attempts: attempts + 1 } : undefined,
-    }, file);
+  if (!(await verifyDigest(normalizeRecoveryCode(code), pending))) {
+    // `verifyDigest` yields to the threadpool. In that window a second consume
+    // (or `omp-web --reset-password`) can write the file: a successful consume
+    // clears `recovery` and stores a new password. Writing the pre-await
+    // snapshot back would re-arm the spent code and revert that password, so the
+    // attempt is counted on the file as it is now — and only while it still
+    // holds the entry this check was made against.
+    let remaining = RECOVERY_MAX_ATTEMPTS - attempts - 1;
+    const latest = currentConfig(file);
+    const current = latest.recovery;
+    if (current && isUsableDigest(current) && current.hash === pending.hash && current.salt === pending.salt) {
+      const currentAttempts = Number.isInteger(current.attempts) ? current.attempts : 0;
+      remaining = RECOVERY_MAX_ATTEMPTS - currentAttempts - 1;
+      writeWebAuthConfig({
+        ...latest,
+        recovery: remaining > 0 ? { ...current, attempts: currentAttempts + 1 } : undefined,
+      }, file);
+    }
     return { ok: false, reason: "invalid-code", remainingAttempts: Math.max(remaining, 0) };
   }
 

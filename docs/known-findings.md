@@ -184,7 +184,9 @@ identische Attribute inklusive `Max-Age` und `Expires` — kein Session-Cookie,
 keine Verkuerzung auf dem Erneuerungspfad; ein Browserneustart mit demselben
 Profil landet innerhalb der Lebensdauer auf `/`; ein Neustart des Prozesses
 ebenfalls, weil die Schluesseldatei da ist (`0600`, 44 Byte); `Secure` erscheint
-genau dann, wenn die Anfrage ueber HTTPS kam (`x-forwarded-proto`).
+genau dann, wenn die URL `https:` ist oder der Betreiber
+`OMP_WEB_TRUST_PROXY=1` gesetzt hat (seit v0.22.5; vorher entschied der
+Client-Header `x-forwarded-proto`).
 
 **Warum es wie der Neustart-Befund oben aussah:** beide Symptome sind derselbe
 Text („wieder am Login") und haben verschiedene Ursachen. Der Eintrag oben ist
@@ -199,3 +201,14 @@ steht in `docs/inventory-auth.md`: ein kopierter Cookie ist bis zu 30 Tage eine
 kopierte Sitzung. Die Gegenmittel haengen nicht am Ablaufdatum — Logout dreht die
 Epoche, Passwortwechsel dreht den Schluessel, Schluesseldatei loeschen plus
 Neustart meldet jedes Geraet ab.
+
+**Restrisiko (PA-02, v0.22.5):** `OMP_WEB_TRUST_PROXY=1` ist ein
+Deploy-Schritt, kein Code-Default. Fehlt er, haengt `Secure` an `req.url`, und
+`req.url` baut Next selbst aus `x-forwarded-proto` — also wieder an einem
+Client-Header, solange die Kante ihn nicht selbst auf `$scheme` setzt (und
+direkt auf `:8788` kann sie es gar nicht). Der Schalter gehoert als
+`Environment=OMP_WEB_TRUST_PROXY=1` in die Unit, nicht in die Secrets-Datei: er
+ist kein Secret, sondern die Aussage „vor diesem Port terminiert TLS“. Auf einem
+Port ohne TLS-Terminierung gesetzt, verwirft der Browser jeden Cookie und der
+Login ist unmoeglich (fail closed, sofort sichtbar). `lib/web-auth-session.test.mjs`
+haelt beide Zweige und die Ablehnung von `"true"` (nur `"1"` zaehlt) fest.
