@@ -1,0 +1,52 @@
+# Modellkatalog für Tests: dieselben Modelle, die die Tests nennen, ohne echte
+# Endpunkte und ohne echte Schlüssel (die Tests rufen keinen Provider). Der
+# Schlüssel ist ein Platzhalter, damit der Provider als „verfügbar" gilt —
+# `ModelRegistry.getAvailable()` filtert Provider ohne Auflösungsquelle heraus.
+#
+# `app/api/agent/cold-model-switch.test.mjs` kopiert diese Datei in ein
+# temporäres `PI_CODING_AGENT_DIR`, damit der Test nicht vom persönlichen
+# Katalog des Entwicklers (~/.omp/agent/models.yml) abhängt. Auf einem frischen
+# Rechner fehlt der, und der Test war dort rot ("Model not found").
+#
+# `deepseek-v4.1-flash-1017` steht mit drin, weil der Test es als
+# Ausgangsmodell in das Session-Journal schreibt.
+providers:
+  buds-gateway:
+    api: openai-completions
+    baseUrl: http://127.0.0.1:1/v1
+    apiKey: fixture-not-a-real-key
+    models:
+      - id: qwen3.8-27b
+        name: Fixture
+        reasoning: true
+        input: [text]
+        contextWindow: 262144
+        maxTokens: 32768
+      - id: deepseek-v4.1-flash-1017
+        name: Fixture
+        reasoning: true
+        input: [text]
+        contextWindow: 300000
+        maxTokens: 32768
+  openai:
+    api: openai-completions
+    baseUrl: http://127.0.0.1:1/v1
+    apiKey: fixture-not-a-real-key
+    models:
+      - id: gpt-5
+        name: Fixture
+        reasoning: true
+        input: [text]
+        contextWindow: 128000
+        maxTokens: 16384
+  anthropic:
+    api: anthropic-messages
+    baseUrl: http://127.0.0.1:1
+    apiKey: fixture-not-a-real-key
+    models:
+      - id: claude-opus-5
+        name: Fixture
+        reasoning: true
+        input: [text]
+        contextWindow: 200000
+        maxTokens: 32000

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
+import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
 /**
@@ -32,11 +33,39 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
 });
 
+// Der Modellkatalog kommt aus dem Repo, nicht aus ~/.omp/agent: auf einem
+// frischen Rechner fehlt der persoenliche Katalog, und `set_model` antwortete
+// mit "Model not found" (scan-suite.md §3.4). Das SDK liest
+// PI_CODING_AGENT_DIR beim Import — deshalb steht es hier, vor jedem Import.
+const agentDir = mkdtempSync(join(tmpdir(), "omp-web-cold-agent-"));
+copyFileSync(
+  fileURLToPath(new URL("../../../test/fixtures/agent/models.yml", import.meta.url)),
+  join(agentDir, "models.yml"),
+);
+process.env.PI_CODING_AGENT_DIR = agentDir;
+
 process.env.OMP_WEB_HOME_ROOT = "/home";
 
 const agentRoute = await jiti.import("./[id]/route.ts");
-const { SessionManager } = await jiti.import("@oh-my-pi/pi-coding-agent");
+const { SessionManager, Settings, ModelRegistry, discoverAuthStorage } = await jiti.import("@oh-my-pi/pi-coding-agent");
 const { invalidateSessionListCache } = await jiti.import("@/lib/session-reader");
+
+// Hat eine andere Testdatei das SDK in diesem Prozess schon geladen, ist das
+// env-Set zu spaet (`getAgentDir()` steht dann fest). Der Runtime wird deshalb
+// zusaetzlich direkt auf den Fixture-Katalog gepinnt — derselbe Bau wie
+// `createRuntime()` in lib/omp-runtime.ts, nur mit explizitem Modellpfad.
+const previousRuntime = globalThis.__ompRuntimePromise;
+globalThis.__ompRuntimePromise = (async () => {
+  const settings = await Settings.init({ agentDir });
+  const authStorage = await discoverAuthStorage(agentDir);
+  const modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.yml"));
+  await modelRegistry.refresh("offline");
+  return { agentDir, settings, authStorage, modelRegistry };
+})();
+after(() => {
+  globalThis.__ompRuntimePromise = previousRuntime;
+  rmSync(agentDir, { recursive: true, force: true });
+});
 
 // Der Admin sieht jede Session (`isSessionOwnedBy`), also traegt er den Test
 // ohne eine zweite Besitzregel. Die Besitzfrage selbst ist in

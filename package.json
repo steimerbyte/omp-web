@@ -1,6 +1,6 @@
 {
   "name": "omp-web",
-  "version": "0.22.5",
+  "version": "0.23.0",
   "description": "Web view for the omp (oh-my-pi) coding agent CLI",
   "homepage": "https://github.com/ddallabenetta/omp-web#readme",
   "repository": {
@@ -43,7 +43,14 @@
     "start:lan": "bun run scripts/run-next.mjs start -H 0.0.0.0 -p 30141",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "NODE_ENV=test bun test",
+    "test": "node scripts/test-gate.mjs",
+    "test:fast": "node scripts/test-gate.mjs --fast",
+    "test:unit": "NODE_ENV=test bun test --parallel=8 --timeout=30000 lib hooks",
+    "test:api": "NODE_ENV=test bun test --parallel=8 --timeout=30000 app/api app/login proxy.test.mjs proxy.admin-role.test.mjs proxy.session-cookie.test.mjs next.config.headers.test.mjs",
+    "test:ui": "NODE_ENV=test bun test --parallel=8 --timeout=30000 components",
+    "test:coverage": "NODE_ENV=test bun test --parallel=8 --timeout=30000 --coverage --coverage-reporter=lcov --coverage-dir=coverage",
+    "test:baseline": "node scripts/test-gate.mjs --update-baseline",
+    "verify": "bun run typecheck && node scripts/test-gate.mjs",
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public",
     "desktop:build": "bun scripts/stage-desktop.mjs && bun scripts/build-desktop.mjs",
     "desktop:dev": "tauri dev",

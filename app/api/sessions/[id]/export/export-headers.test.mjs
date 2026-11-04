@@ -1,43 +1,46 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
-import { mock } from "bun:test";
+import { fileURLToPath } from "node:url";
 
 /**
  * Der Session-Export ist aktives HTML in der App-Origin. Der Schutz ist der
  * `sandbox`-Teil der CSP (opaque Origin: kein Cookie, kein Credential-Fetch),
  * nicht die Herkunft — gemessen in Chrome 149 gegen ein echtes Export-Dokument.
  *
- * `exportSession()` startet sonst den omp-CLI als Kindprozess; hier schreibt
- * der Stub die Ausgabedatei, damit der Erfolgszweig ohne SDK laeuft.
+ * `exportSession()` startet sonst den omp-CLI als Kindprozess; die Probe
+ * schreibt die Ausgabedatei, damit der Erfolgszweig ohne SDK laeuft. Sie laeuft
+ * in einem eigenen Prozess, weil `mock.module` prozessweit ist und die Route im
+ * selben Prozess schon von `session-ownership.test.mjs` ausgewertet sein kann
+ * (scan-suite.md §3.1). Der Mock greift dann zu spaet und der Export antwortet
+ * 500 — unabhaengig davon, ob dieser Test zuerst laeuft.
  */
-mock.module("../../session-guard", () => ({ requireSessionAccess: async () => null }));
-mock.module("@/lib/session-reader", () => ({ resolveSessionPath: async () => "/tmp/omp-export-headers-test.jsonl" }));
-mock.module("child_process", () => ({
-  execFile: (_file, args, _options, callback) => {
-    writeFileSync(args[3], "<!doctype html><html><body>export</body></html>");
-    callback(null, { stdout: "", stderr: "" });
-  },
-}));
+const PROBE = fileURLToPath(new URL("./export-headers.probe.mjs", import.meta.url));
 
-const { GET } = await import("./route.ts");
+const output = (() => {
+  try {
+    return execFileSync(process.execPath, ["test", PROBE], {
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "test" },
+      timeout: 30_000,
+      // Bun erbt stderr ohne explizite stdio-Angabe; die Zusammenfassung der
+      // Kindprobe wuerde sonst im Suite-Log stehen.
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    assert.fail(
+      `die Probe ist gescheitert (${error.status}):\n${error.stdout ?? ""}\n${error.stderr ?? ""}`,
+    );
+  }
+})();
+const resultLine = output.split("\n").find((line) => line.startsWith("EXPORT_HEADERS "));
+assert.ok(resultLine, `die Probe hat kein Ergebnis gedruckt:\n${output}`);
+const measured = JSON.parse(resultLine.slice("EXPORT_HEADERS ".length));
 
-async function exportRequest(search) {
-  const response = await GET(
-    new Request(`http://localhost:8788/api/sessions/session-1/export${search}`, {
-      headers: { host: "localhost:8788", "sec-fetch-site": "same-origin" },
-    }),
-    { params: Promise.resolve({ id: "session-1" }) },
-  );
-  return response;
-}
-
-test("der Export traegt den Sandbox und die Viewer-Hosts", async () => {
-  const response = await exportRequest("?inline=1");
-
-  assert.equal(response.status, 200);
+test("der Export traegt den Sandbox und die Viewer-Hosts", () => {
+  assert.equal(measured.inline.status, 200);
   assert.equal(
-    response.headers.get("content-security-policy"),
+    measured.inline.headers.csp,
     "sandbox allow-scripts; "
       + "default-src 'self'; "
       + "script-src 'self' 'unsafe-inline' https://build.stencil.so https://stencil.so; "
@@ -46,17 +49,15 @@ test("der Export traegt den Sandbox und die Viewer-Hosts", async () => {
       + "font-src 'self' data:",
   );
   // `allow-same-origin` wuerde den Sandbox fuer die Origin-Rechte aufheben.
-  assert.ok(!response.headers.get("content-security-policy").includes("allow-same-origin"));
-  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
-  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert.ok(!measured.inline.headers.csp.includes("allow-same-origin"));
+  assert.equal(measured.inline.headers.contentTypeOptions, "nosniff");
+  assert.equal(measured.inline.headers.frameOptions, "DENY");
   // `inline=1` bleibt die bewusste Funktion; der Schutz kommt aus `sandbox`.
-  assert.match(response.headers.get("content-disposition") ?? "", /^inline;/);
+  assert.match(measured.inline.headers.disposition ?? "", /^inline;/);
 });
 
-test("ohne inline=1 bleibt es ein Anhang mit denselben Headern", async () => {
-  const response = await exportRequest("");
-
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-disposition") ?? "", /^attachment;/);
-  assert.match(response.headers.get("content-security-policy") ?? "", /^sandbox allow-scripts;/);
+test("ohne inline=1 bleibt es ein Anhang mit denselben Headern", () => {
+  assert.equal(measured.attachment.status, 200);
+  assert.match(measured.attachment.headers.disposition ?? "", /^attachment;/);
+  assert.match(measured.attachment.headers.csp ?? "", /^sandbox allow-scripts;/);
 });

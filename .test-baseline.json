@@ -1,0 +1,1672 @@
+{
+  "schemaVersion": 1,
+  "unreachable": [
+    {
+      "file": "app/layout.tsx",
+      "reason": "Next-Root-Layout (RSC): wird von Next gerendert, nicht von bun test geladen",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "app/manifest.ts",
+      "reason": "Next-Metadatenroute: wird von Next gerendert, kein Modulimport im Test",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "components/PwaRegistration.tsx",
+      "reason": "Client-Komponente, die nur im Browser registriert (scan-suite.md §5.3)",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "instrumentation.ts",
+      "reason": "Next-Instrumentation-Hook: laeuft beim Serverstart, nicht im Test",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "public/sw.js",
+      "reason": "Service Worker: laeuft im Browser, nicht unter bun test",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/build-desktop.mjs",
+      "reason": "Build-/Deploy-Werkzeug: Aufruf per CLI, kein Modulimport im Test",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/build-updater-json.mjs",
+      "reason": "Build-/Deploy-Werkzeug: Aufruf per CLI, kein Modulimport im Test",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/check-thunderbird-mcp.ts",
+      "reason": "Einmal-Skript fuer die MCP-Registrierung: Aufruf per bun, kein Import",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/coverage-functions.mjs",
+      "reason": "Harness-Werkzeug: wird von Test-Arbeitern per CLI aufgerufen, nicht importiert",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/fetch-bun.mjs",
+      "reason": "Build-Werkzeug: laedt den Bun-Stand fuer den Desktop-Bau, Aufruf per CLI",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/register-minimax-mcp.ts",
+      "reason": "Operator-Skript (live-only): registriert den MCP-Server, Aufruf per bun",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/register-thunderbird-mcp.ts",
+      "reason": "Operator-Skript: registriert den MCP-Server, Aufruf per bun",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/run-next.mjs",
+      "reason": "Start-/Build-Wrapper: wird von `bun run dev|build` als Programm gestartet",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/stage-desktop.mjs",
+      "reason": "Build-/Deploy-Werkzeug: Aufruf per CLI, kein Modulimport im Test",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/sync-version.mjs",
+      "reason": "Release-Werkzeug: setzt Versionen, Aufruf per CLI",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/test-coverage-gate.mjs",
+      "reason": "Harness-Werkzeug: von `bun run test`/CI aufgerufen, von keinem Test importiert",
+      "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/test-gate.mjs",
+      "reason": "Harness-Werkzeug: von `bun run test`/CI aufgerufen, von keinem Test importiert",
+      "since": "2026-11-04"
+    }
+  ],
+  "coverage": {
+    "app/api/agent/[id]/bash-output/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/agent/[id]/events/route.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "app/api/agent/[id]/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/agent/new/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/agent/running/events/route.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "app/api/agent/running/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/auth/all-providers/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/auth/api-key/[provider]/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 3,
+      "uncovered": 2
+    },
+    "app/api/auth/login/[provider]/route.ts": {
+      "functionsFound": 19,
+      "functionsHit": 19,
+      "uncovered": 0
+    },
+    "app/api/auth/logout/[provider]/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 1,
+      "uncovered": 1
+    },
+    "app/api/auth/providers/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/calendar/[id]/route.ts": {
+      "functionsFound": 9,
+      "functionsHit": 9,
+      "uncovered": 0
+    },
+    "app/api/calendar/events/route.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "app/api/calendar/import/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "app/api/calendar/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "app/api/cwd/browse/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/cwd/validate/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/default-cwd/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/display-settings/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/file-actions/[...path]/route.ts": {
+      "functionsFound": 8,
+      "functionsHit": 7,
+      "uncovered": 1
+    },
+    "app/api/file-index/route.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "app/api/files/[...path]/route.ts": {
+      "functionsFound": 40,
+      "functionsHit": 34,
+      "uncovered": 6
+    },
+    "app/api/git/diff/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/git/status/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/home/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/mcp/route.ts": {
+      "functionsFound": 31,
+      "functionsHit": 31,
+      "uncovered": 0
+    },
+    "app/api/model-roles/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "app/api/models-config/catalog/route.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "app/api/models-config/discover/route.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "app/api/models-config/route.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "app/api/models-config/test/route.ts": {
+      "functionsFound": 8,
+      "functionsHit": 7,
+      "uncovered": 1
+    },
+    "app/api/models/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "app/api/plugins/route.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "app/api/project-trust/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "app/api/projects/[...root]/route.ts": {
+      "functionsFound": 13,
+      "functionsHit": 12,
+      "uncovered": 1
+    },
+    "app/api/projects/route.ts": {
+      "functionsFound": 16,
+      "functionsHit": 13,
+      "uncovered": 3
+    },
+    "app/api/projects/sizes/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/quick-phrases/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "app/api/scheduled-settings/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "app/api/scheduled-tasks/[id]/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "app/api/scheduled-tasks/[id]/run/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/scheduled-tasks/route.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "app/api/sessions/[id]/auto-name/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/sessions/[id]/context/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/sessions/[id]/entries/[entryId]/thinking/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 1,
+      "uncovered": 1
+    },
+    "app/api/sessions/[id]/export/route.ts": {
+      "functionsFound": 6,
+      "functionsHit": 1,
+      "uncovered": 5
+    },
+    "app/api/sessions/[id]/route.ts": {
+      "functionsFound": 8,
+      "functionsHit": 7,
+      "uncovered": 1
+    },
+    "app/api/sessions/[id]/state/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/sessions/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 1,
+      "uncovered": 1
+    },
+    "app/api/sessions/session-guard.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/settings/route.ts": {
+      "functionsFound": 21,
+      "functionsHit": 16,
+      "uncovered": 5
+    },
+    "app/api/skills/check/route.ts": {
+      "functionsFound": 4,
+      "functionsHit": 1,
+      "uncovered": 3
+    },
+    "app/api/skills/install/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/skills/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/skills/search/route.ts": {
+      "functionsFound": 9,
+      "functionsHit": 9,
+      "uncovered": 0
+    },
+    "app/api/skills/update/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 1,
+      "uncovered": 2
+    },
+    "app/api/skills/user/[name]/route.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "app/api/skills/user/route.ts": {
+      "functionsFound": 4,
+      "functionsHit": 3,
+      "uncovered": 1
+    },
+    "app/api/stats/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/system-stats/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/terminal/[id]/input/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/terminal/[id]/resize/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/terminal/[id]/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "app/api/terminal/[id]/stream/route.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "app/api/terminal/owner-guard.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/terminal/route.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "app/api/theme/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/updates/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/web-access/login/route.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "app/api/web-access/recovery/route.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "app/api/web-access/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "app/api/web-access/users/route.ts": {
+      "functionsFound": 3,
+      "functionsHit": 2,
+      "uncovered": 1
+    },
+    "app/api/whoami/route.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/api/worktrees/route.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "app/login/page.tsx": {
+      "functionsFound": 10,
+      "functionsHit": 8,
+      "uncovered": 2
+    },
+    "app/page.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "app/recover/page.tsx": {
+      "functionsFound": 10,
+      "functionsHit": 9,
+      "uncovered": 1
+    },
+    "bin/omp-web-options.js": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "bin/omp-web.js": {
+      "functionsFound": 10,
+      "functionsHit": 8,
+      "uncovered": 2
+    },
+    "bin/password-prompt.js": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "bin/runtime.js": {
+      "functionsFound": 9,
+      "functionsHit": 9,
+      "uncovered": 0
+    },
+    "bin/web-auth-store.js": {
+      "functionsFound": 76,
+      "functionsHit": 76,
+      "uncovered": 0
+    },
+    "components/AccessConfig.tsx": {
+      "functionsFound": 19,
+      "functionsHit": 17,
+      "uncovered": 2
+    },
+    "components/AnimationsConfig.tsx": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "components/AppShell.tsx": {
+      "functionsFound": 166,
+      "functionsHit": 73,
+      "uncovered": 93
+    },
+    "components/BranchNavigator.tsx": {
+      "functionsFound": 27,
+      "functionsHit": 19,
+      "uncovered": 8
+    },
+    "components/calendar/calendar-model.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "components/calendar/CalendarEventDialog.tsx": {
+      "functionsFound": 39,
+      "functionsHit": 34,
+      "uncovered": 5
+    },
+    "components/calendar/CalendarImport.tsx": {
+      "functionsFound": 19,
+      "functionsHit": 13,
+      "uncovered": 6
+    },
+    "components/calendar/DayEventsSheet.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "components/calendar/useCalendarText.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "components/CalendarView.tsx": {
+      "functionsFound": 66,
+      "functionsHit": 51,
+      "uncovered": 15
+    },
+    "components/ChatInput.tsx": {
+      "functionsFound": 213,
+      "functionsHit": 137,
+      "uncovered": 76
+    },
+    "components/ChatWindow.tsx": {
+      "functionsFound": 97,
+      "functionsHit": 82,
+      "uncovered": 15
+    },
+    "components/CwdPicker.tsx": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "components/DiffView.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "components/DirectoryPicker.tsx": {
+      "functionsFound": 22,
+      "functionsHit": 22,
+      "uncovered": 0
+    },
+    "components/ExtensionStatusBar.tsx": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "components/FileBrowserDialog.tsx": {
+      "functionsFound": 59,
+      "functionsHit": 57,
+      "uncovered": 2
+    },
+    "components/FileContextMenu.tsx": {
+      "functionsFound": 45,
+      "functionsHit": 44,
+      "uncovered": 1
+    },
+    "components/FileExplorer.tsx": {
+      "functionsFound": 239,
+      "functionsHit": 146,
+      "uncovered": 93
+    },
+    "components/FileIcons.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "components/FileImagePreview.tsx": {
+      "functionsFound": 36,
+      "functionsHit": 36,
+      "uncovered": 0
+    },
+    "components/FileViewer.tsx": {
+      "functionsFound": 92,
+      "functionsHit": 90,
+      "uncovered": 2
+    },
+    "components/FrontmatterCard.tsx": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "components/GradientBorderConfig.tsx": {
+      "functionsFound": 13,
+      "functionsHit": 12,
+      "uncovered": 1
+    },
+    "components/MarkdownBody.tsx": {
+      "functionsFound": 9,
+      "functionsHit": 9,
+      "uncovered": 0
+    },
+    "components/MermaidBlock.tsx": {
+      "functionsFound": 25,
+      "functionsHit": 24,
+      "uncovered": 1
+    },
+    "components/MessageView.tsx": {
+      "functionsFound": 159,
+      "functionsHit": 138,
+      "uncovered": 21
+    },
+    "components/ModelRolesPanel.tsx": {
+      "functionsFound": 17,
+      "functionsHit": 17,
+      "uncovered": 0
+    },
+    "components/models-config-helpers.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "components/ModelsConfig.tsx": {
+      "functionsFound": 222,
+      "functionsHit": 200,
+      "uncovered": 22
+    },
+    "components/motion/animation-mode.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "components/motion/AnimationProvider.tsx": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "components/motion/animations.ts": {
+      "functionsFound": 0,
+      "functionsHit": 0,
+      "uncovered": 0
+    },
+    "components/motion/Enter.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "components/motion/gradient-border-settings.ts": {
+      "functionsFound": 18,
+      "functionsHit": 18,
+      "uncovered": 0
+    },
+    "components/motion/GradientBorder.tsx": {
+      "functionsFound": 15,
+      "functionsHit": 15,
+      "uncovered": 0
+    },
+    "components/motion/hooks.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "components/motion/Pressable.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/motion/Reveal.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/motion/Shimmer.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/motion/Skeleton.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/OmpUpdateIndicator.tsx": {
+      "functionsFound": 17,
+      "functionsHit": 17,
+      "uncovered": 0
+    },
+    "components/OmpWordmark.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/PluginsConfig.tsx": {
+      "functionsFound": 65,
+      "functionsHit": 63,
+      "uncovered": 2
+    },
+    "components/PresentFiles.tsx": {
+      "functionsFound": 8,
+      "functionsHit": 6,
+      "uncovered": 2
+    },
+    "components/projects/ConfirmDialog.tsx": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "components/projects/DashboardTopbar.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/projects/NewProjectDialog.tsx": {
+      "functionsFound": 9,
+      "functionsHit": 9,
+      "uncovered": 0
+    },
+    "components/projects/PriorityFilterBar.tsx": {
+      "functionsFound": 10,
+      "functionsHit": 7,
+      "uncovered": 3
+    },
+    "components/projects/ProjectCard.tsx": {
+      "functionsFound": 13,
+      "functionsHit": 10,
+      "uncovered": 3
+    },
+    "components/projects/ProjectGrid.tsx": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "components/projects/TodoStepper.tsx": {
+      "functionsFound": 4,
+      "functionsHit": 2,
+      "uncovered": 2
+    },
+    "components/ProjectsDashboard.tsx": {
+      "functionsFound": 24,
+      "functionsHit": 13,
+      "uncovered": 11
+    },
+    "components/ProjectTrustDialog.tsx": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "components/PwaRegistration.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "components/QuickPhrasesConfig.tsx": {
+      "functionsFound": 16,
+      "functionsHit": 16,
+      "uncovered": 0
+    },
+    "components/ScheduledTasksSettings.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "components/ScheduledTasksView.tsx": {
+      "functionsFound": 57,
+      "functionsHit": 53,
+      "uncovered": 4
+    },
+    "components/SearchableSelect.tsx": {
+      "functionsFound": 27,
+      "functionsHit": 26,
+      "uncovered": 1
+    },
+    "components/SessionSidebar.tsx": {
+      "functionsFound": 205,
+      "functionsHit": 122,
+      "uncovered": 83
+    },
+    "components/SettingsConfig.tsx": {
+      "functionsFound": 95,
+      "functionsHit": 89,
+      "uncovered": 6
+    },
+    "components/SkillsConfig.tsx": {
+      "functionsFound": 76,
+      "functionsHit": 76,
+      "uncovered": 0
+    },
+    "components/SkillsManagerView.tsx": {
+      "functionsFound": 44,
+      "functionsHit": 41,
+      "uncovered": 3
+    },
+    "components/StatsView.tsx": {
+      "functionsFound": 21,
+      "functionsHit": 21,
+      "uncovered": 0
+    },
+    "components/SubagentPanel.tsx": {
+      "functionsFound": 37,
+      "functionsHit": 33,
+      "uncovered": 4
+    },
+    "components/SystemStatsBadge.tsx": {
+      "functionsFound": 23,
+      "functionsHit": 23,
+      "uncovered": 0
+    },
+    "components/TabBar.tsx": {
+      "functionsFound": 18,
+      "functionsHit": 13,
+      "uncovered": 5
+    },
+    "components/TerminalDropdown.tsx": {
+      "functionsFound": 22,
+      "functionsHit": 22,
+      "uncovered": 0
+    },
+    "components/TerminalViewer.tsx": {
+      "functionsFound": 15,
+      "functionsHit": 15,
+      "uncovered": 0
+    },
+    "components/TurnWrittenFiles.tsx": {
+      "functionsFound": 3,
+      "functionsHit": 2,
+      "uncovered": 1
+    },
+    "components/ui/badge.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/ui/button.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/ui/context-menu.tsx": {
+      "functionsFound": 15,
+      "functionsHit": 15,
+      "uncovered": 0
+    },
+    "components/ui/dialog.tsx": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "components/ui/field.tsx": {
+      "functionsFound": 13,
+      "functionsHit": 13,
+      "uncovered": 0
+    },
+    "components/ui/input.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/ui/kbd.tsx": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "components/ui/label.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/ui/separator.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/ui/tabs.tsx": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "components/ui/tooltip.tsx": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "components/UsersConfig.tsx": {
+      "functionsFound": 20,
+      "functionsHit": 18,
+      "uncovered": 2
+    },
+    "hooks/useAgentSession.ts": {
+      "functionsFound": 163,
+      "functionsHit": 134,
+      "uncovered": 29
+    },
+    "hooks/useAudio.ts": {
+      "functionsFound": 12,
+      "functionsHit": 10,
+      "uncovered": 2
+    },
+    "hooks/useCalendar.ts": {
+      "functionsFound": 14,
+      "functionsHit": 11,
+      "uncovered": 3
+    },
+    "hooks/useDisplaySettings.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "hooks/useDragDrop.ts": {
+      "functionsFound": 5,
+      "functionsHit": 1,
+      "uncovered": 4
+    },
+    "hooks/useI18n.tsx": {
+      "functionsFound": 13,
+      "functionsHit": 12,
+      "uncovered": 1
+    },
+    "hooks/useIsMobile.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "hooks/useKeyboardShortcuts.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "hooks/usePopupPlacement.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "hooks/useProjectSizes.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "hooks/useQuickPhrases.ts": {
+      "functionsFound": 16,
+      "functionsHit": 16,
+      "uncovered": 0
+    },
+    "hooks/useScheduledSettings.ts": {
+      "functionsFound": 6,
+      "functionsHit": 5,
+      "uncovered": 1
+    },
+    "hooks/useScheduledTasks.ts": {
+      "functionsFound": 10,
+      "functionsHit": 9,
+      "uncovered": 1
+    },
+    "hooks/useStats.ts": {
+      "functionsFound": 9,
+      "functionsHit": 8,
+      "uncovered": 1
+    },
+    "hooks/useTheme.ts": {
+      "functionsFound": 25,
+      "functionsHit": 22,
+      "uncovered": 3
+    },
+    "hooks/useViewportHeight.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "instrumentation.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/agent-client.ts": {
+      "functionsFound": 7,
+      "functionsHit": 6,
+      "uncovered": 1
+    },
+    "lib/allowed-roots.ts": {
+      "functionsFound": 10,
+      "functionsHit": 9,
+      "uncovered": 1
+    },
+    "lib/ansi.ts": {
+      "functionsFound": 13,
+      "functionsHit": 12,
+      "uncovered": 1
+    },
+    "lib/atomic-file.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/bash-output.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/bounded-form-data.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "lib/browser-notifications.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "lib/calendar-ics.ts": {
+      "functionsFound": 24,
+      "functionsHit": 24,
+      "uncovered": 0
+    },
+    "lib/calendar-store.ts": {
+      "functionsFound": 13,
+      "functionsHit": 13,
+      "uncovered": 0
+    },
+    "lib/calendar-tool.ts": {
+      "functionsFound": 27,
+      "functionsHit": 27,
+      "uncovered": 0
+    },
+    "lib/calendar.ts": {
+      "functionsFound": 44,
+      "functionsHit": 44,
+      "uncovered": 0
+    },
+    "lib/chat-input-enter.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/chat-lazy-load.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/clipboard.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/cold-model-switch.ts": {
+      "functionsFound": 4,
+      "functionsHit": 2,
+      "uncovered": 2
+    },
+    "lib/compaction-summary.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/custom-ui-terminal.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/directory-browser.ts": {
+      "functionsFound": 15,
+      "functionsHit": 15,
+      "uncovered": 0
+    },
+    "lib/draft-store.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "lib/file-access.ts": {
+      "functionsFound": 9,
+      "functionsHit": 9,
+      "uncovered": 0
+    },
+    "lib/file-actions-tree.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/file-dirent.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/file-explorer-state.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/file-fuzzy.ts": {
+      "functionsFound": 14,
+      "functionsHit": 13,
+      "uncovered": 1
+    },
+    "lib/file-links.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/file-paths.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/file-types.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/file-upload-client.ts": {
+      "functionsFound": 8,
+      "functionsHit": 7,
+      "uncovered": 1
+    },
+    "lib/file-upload.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/format-tokens.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/frontmatter.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/git-changes.ts": {
+      "functionsFound": 16,
+      "functionsHit": 16,
+      "uncovered": 0
+    },
+    "lib/git-safe.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/git-status.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/goal-mode.ts": {
+      "functionsFound": 43,
+      "functionsHit": 42,
+      "uncovered": 1
+    },
+    "lib/http-dispatcher.ts": {
+      "functionsFound": 15,
+      "functionsHit": 14,
+      "uncovered": 1
+    },
+    "lib/i18n/format.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/i18n/messages/de.ts": {
+      "functionsFound": 0,
+      "functionsHit": 0,
+      "uncovered": 0
+    },
+    "lib/i18n/messages/en.ts": {
+      "functionsFound": 0,
+      "functionsHit": 0,
+      "uncovered": 0
+    },
+    "lib/i18n/messages/zh-CN.ts": {
+      "functionsFound": 0,
+      "functionsHit": 0,
+      "uncovered": 0
+    },
+    "lib/i18n/registry.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/image-attachments.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/image-downscale.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/initial-navigation.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/load-policy.ts": {
+      "functionsFound": 14,
+      "functionsHit": 12,
+      "uncovered": 2
+    },
+    "lib/markdown.ts": {
+      "functionsFound": 12,
+      "functionsHit": 12,
+      "uncovered": 0
+    },
+    "lib/message-display.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/model-catalog.ts": {
+      "functionsFound": 47,
+      "functionsHit": 47,
+      "uncovered": 0
+    },
+    "lib/model-discovery-auth.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "lib/model-discovery.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/model-role-selection.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "lib/model-roles.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/model-scope.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/model-switch-queue.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/models-cache.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/normalize.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/npx.ts": {
+      "functionsFound": 8,
+      "functionsHit": 7,
+      "uncovered": 1
+    },
+    "lib/omp-runtime.ts": {
+      "functionsFound": 8,
+      "functionsHit": 6,
+      "uncovered": 2
+    },
+    "lib/omp-theme.ts": {
+      "functionsFound": 16,
+      "functionsHit": 16,
+      "uncovered": 0
+    },
+    "lib/omp-updates.ts": {
+      "functionsFound": 9,
+      "functionsHit": 8,
+      "uncovered": 1
+    },
+    "lib/open-external.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/panel-layout.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "lib/patch.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/path-security.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/popup-placement.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/present-files-probe.ts": {
+      "functionsFound": 8,
+      "functionsHit": 7,
+      "uncovered": 1
+    },
+    "lib/present-files-tool.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "lib/present-files.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/project-size-poll.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "lib/project-size.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/project-tree.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "lib/project-trust.ts": {
+      "functionsFound": 24,
+      "functionsHit": 24,
+      "uncovered": 0
+    },
+    "lib/projects-delete.ts": {
+      "functionsFound": 12,
+      "functionsHit": 12,
+      "uncovered": 0
+    },
+    "lib/projects-guards.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/projects-schema.ts": {
+      "functionsFound": 26,
+      "functionsHit": 26,
+      "uncovered": 0
+    },
+    "lib/projects-sizes.ts": {
+      "functionsFound": 13,
+      "functionsHit": 13,
+      "uncovered": 0
+    },
+    "lib/projects-store.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/provider-listing-runtime.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "lib/provider-listing.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/quick-phrases-store.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/quick-phrases.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/request-body.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "lib/request-identity.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/request-security.ts": {
+      "functionsFound": 16,
+      "functionsHit": 16,
+      "uncovered": 0
+    },
+    "lib/rpc-manager.ts": {
+      "functionsFound": 202,
+      "functionsHit": 149,
+      "uncovered": 53
+    },
+    "lib/runtime-secrets.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "lib/sandbox.ts": {
+      "functionsFound": 11,
+      "functionsHit": 11,
+      "uncovered": 0
+    },
+    "lib/schedule.ts": {
+      "functionsFound": 13,
+      "functionsHit": 13,
+      "uncovered": 0
+    },
+    "lib/scheduled-settings.ts": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "lib/scheduled-task-limits.ts": {
+      "functionsFound": 0,
+      "functionsHit": 0,
+      "uncovered": 0
+    },
+    "lib/scheduled-tasks-http.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/scheduled-tasks-store.ts": {
+      "functionsFound": 37,
+      "functionsHit": 37,
+      "uncovered": 0
+    },
+    "lib/scheduler.ts": {
+      "functionsFound": 20,
+      "functionsHit": 20,
+      "uncovered": 0
+    },
+    "lib/session-archive.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/session-file-references-core.ts": {
+      "functionsFound": 12,
+      "functionsHit": 12,
+      "uncovered": 0
+    },
+    "lib/session-file-references.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/session-path.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/session-reader.ts": {
+      "functionsFound": 42,
+      "functionsHit": 41,
+      "uncovered": 1
+    },
+    "lib/session-row-context-menu.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/session-run-budget.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "lib/session-shell-guard.ts": {
+      "functionsFound": 4,
+      "functionsHit": 4,
+      "uncovered": 0
+    },
+    "lib/session-system-prompt.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/session-timing.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/session-title.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "lib/settings-api.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/skill-lock.ts": {
+      "functionsFound": 13,
+      "functionsHit": 13,
+      "uncovered": 0
+    },
+    "lib/skill-prompts.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/skill-updates.ts": {
+      "functionsFound": 16,
+      "functionsHit": 16,
+      "uncovered": 0
+    },
+    "lib/skills-manager.ts": {
+      "functionsFound": 19,
+      "functionsHit": 18,
+      "uncovered": 1
+    },
+    "lib/skills-service.ts": {
+      "functionsFound": 5,
+      "functionsHit": 4,
+      "uncovered": 1
+    },
+    "lib/slash-display.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/startup-preferences.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "lib/stats.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/subagent-groups.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/system-resources.ts": {
+      "functionsFound": 18,
+      "functionsHit": 16,
+      "uncovered": 2
+    },
+    "lib/tenant-config.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/terminal-input.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/terminal-manager.ts": {
+      "functionsFound": 29,
+      "functionsHit": 25,
+      "uncovered": 4
+    },
+    "lib/test-linkedom.mjs": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "lib/tool-names.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
+    "lib/tool-presets.ts": {
+      "functionsFound": 6,
+      "functionsHit": 6,
+      "uncovered": 0
+    },
+    "lib/turn-written-files.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "lib/vibe-mode.ts": {
+      "functionsFound": 28,
+      "functionsHit": 25,
+      "uncovered": 3
+    },
+    "lib/web-access-body.ts": {
+      "functionsFound": 0,
+      "functionsHit": 0,
+      "uncovered": 0
+    },
+    "lib/web-auth-session.ts": {
+      "functionsFound": 22,
+      "functionsHit": 22,
+      "uncovered": 0
+    },
+    "lib/web-auth.ts": {
+      "functionsFound": 10,
+      "functionsHit": 10,
+      "uncovered": 0
+    },
+    "lib/workspace-memory.ts": {
+      "functionsFound": 13,
+      "functionsHit": 13,
+      "uncovered": 0
+    },
+    "lib/worktree.ts": {
+      "functionsFound": 15,
+      "functionsHit": 15,
+      "uncovered": 0
+    },
+    "lib/write-access.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "next.config.ts": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    },
+    "proxy.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "public/sw.js": {
+      "functionsFound": 8,
+      "functionsHit": 4,
+      "uncovered": 4
+    },
+    "scripts/build-updater-json.mjs": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "scripts/check-thunderbird-mcp.ts": {
+      "functionsFound": 4,
+      "functionsHit": 1,
+      "uncovered": 3
+    },
+    "scripts/fetch-bun.mjs": {
+      "functionsFound": 3,
+      "functionsHit": 3,
+      "uncovered": 0
+    }
+  }
+}
