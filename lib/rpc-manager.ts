@@ -1981,6 +1981,17 @@ function normalizeRpcCwd(cwd: string): string {
   }
 }
 
+/**
+ * The SDK registers every root in the process-global `AgentRegistry` under one
+ * id (`options.agentId ?? parentTaskPrefix ?? MAIN_AGENT_ID`), and omp-web runs
+ * many roots in one process — so each root gets its own key instead of all of
+ * them claiming "Main" last-wins. The id must be `agent://`-safe: no `/` `?`
+ * `#`, and no `:` (a URL parser reads that as a port).
+ */
+export function rootAgentId(sessionId: string): string {
+  return `omp-web-${sessionId.replace(/[^A-Za-z0-9._-]/g, "-")}`;
+}
+
 function getStartingSessionCwds(): Map<string, number> {
   if (!globalThis.__ompStartingSessionCwds) globalThis.__ompStartingSessionCwds = new Map();
   return globalThis.__ompStartingSessionCwds;
@@ -2284,6 +2295,8 @@ export async function startRpcSession(
         });
       const sessionOptions: CreateAgentSessionOptions = {
         cwd: sessionCwd,
+        // A unique registry key per root; see `rootAgentId`.
+        agentId: rootAgentId(sessionId),
         agentDir,
         // Same instance unless a tenant needs the pins (`sessionSettings`); the
         // parent keeps the writes, so preferences still land in this account's

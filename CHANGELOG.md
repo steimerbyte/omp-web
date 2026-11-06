@@ -3,7 +3,20 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
-## Unreleased
+## v0.23.1
+
+Released 2026-11-06.
+
+- **Jede Wurzel-Session behauptet nicht mehr den SDK-Singleton `Main`.** Jede
+  omp-web-Session läuft als Wurzel in *einem* Prozess, und `createAgentSession`
+  registriert jede davon unter derselben Id `Main` in der prozess-globalen
+  `AgentRegistry` (letzte gewinnt) — Subagent-Ergebnisse und Workpools, die an
+  `Main` adressiert waren, konnten so in der Session eines anderen Projekts
+  landen. Jetzt bekommt jede Wurzel ihre eigene Id (`agentId: rootAgentId(...)`
+  in `lib/rpc-manager.ts`). Übrig bleiben zwei Ränder: die `agent://Main`-Prosa
+  des SDK scheitert nun laut („Unknown agent") statt still umzuleiten, und von
+  Platte geladene Subagent-Referenzen, deren `parentId` wörtlich `Main` ist,
+  verlinken nicht mehr.
 
 ## v0.23.0
 

@@ -240,6 +240,21 @@ hooks/
   reimplement the action set; a mismatch shows up as extensions silently doing
   nothing.
 
+### Every root has its own agent id
+`createAgentSession` registers every root in one **process-global**
+`AgentRegistry` under `options.agentId ?? options.parentTaskPrefix ??
+MAIN_AGENT_ID` (`node_modules/@oh-my-pi/pi-coding-agent/src/sdk.ts:2363`), and
+`register()` is last-wins. omp-web runs many roots in one process, so it passes
+`agentId: rootAgentId(sessionId)` (`lib/rpc-manager.ts`, helper next to
+`normalizeRpcCwd`) and a second root can no longer overwrite the first. Parent
+and child links still use the real `parentAgentId`; the vibe owner scope now
+keys by the parent's own session id and its unique agent id
+(`src/vibe/runtime.ts`), so two roots' vibe workers no longer share "Main".
+Residuals: the SDK's own `agent://Main` prose now fails
+loudly ("Unknown agent") instead of silently routing to another project's root,
+and disk-restored subagent refs whose `parentId` is literally `"Main"` no longer
+link.
+
 ### One runtime, many requests (`lib/omp-runtime.ts`)
 omp's CLI builds `Settings` + `AuthStorage` + `ModelRegistry` once per process.
 omp-web does the same and caches them on `globalThis`; a second `AuthStorage`
