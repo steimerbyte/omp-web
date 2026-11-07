@@ -3,6 +3,24 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.24.0
+Released 2026-11-07.
+
+- **Alte Chat-Ausgaben kosten nur noch eine Zeile im DOM.** Antworten, sichtbare
+  Custom-Nachrichten und Befehls-Ausgaben klappen zu einer Zusammenfassungszeile
+  zu, sobald drei jüngere Ausgaben folgen oder sie fünf Minuten alt sind; der
+  Inhalt wird erst beim Aufklappen gemountet. Das gilt auch für den laufenden
+  Turn — die drei neuesten Ausgaben bleiben offen, der streamende Text und
+  Nutzernachrichten klappen nie zu. Die Regel steht rein in
+  `lib/chat-collapse.ts` und ist getestet.
+
+- **Prozessdetails starten immer zugeklappt.** Ein Turn, der ohne Antwort
+  endete (abgebrochen, unterbrochen), öffnete seine Werkzeughistorie bisher von
+  selbst — in einer gemessenen 7,5-MB-Session waren acht aufgeklappte Gruppen
+  88 % der DOM-Knoten der ersten Ansicht. Jetzt ist jede Gruppe eine Zeile und
+  einen Klick entfernt; der laufende Turn bleibt unverändert sichtbar, weil der
+  Live-Schwanz ungruppiert rendert.
+
 ## v0.23.1
 
 Released 2026-11-06.

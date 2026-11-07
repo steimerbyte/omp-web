@@ -129,6 +129,7 @@ app/api/
 
 lib/
   agent-client.ts      typed fetch helper for /api/agent commands
+  chat-collapse.ts     the collapse rule for old transcript output (pure)
   draft-store.ts       local draft persistence helpers
   file-access.ts       allowed file roots for /api/files and worktrees
   file-actions-tree.ts bounded async tree inspect/copy for /api/file-actions
@@ -167,6 +168,7 @@ components/
   AppShell.tsx        layout + URL state + tab management
   SessionSidebar.tsx  session tree + FileExplorer
   ChatWindow.tsx      chat composition + completion sound wrapper
+  CollapsibleMessage.tsx one-line fold for an old chat output
   ChatInput.tsx       input bar + model/role/thinking/tools/compact controls
   MessageView.tsx     renders one message; vibe_* results get a screen wall
   SubagentPanel.tsx   live subagent workers of the current session
@@ -321,6 +323,34 @@ chronological compaction point** — after the kept messages, before the
 post-compaction turns. It is not the LLM context, where the summary comes first.
 `entryIds` is a parallel array to `messages` and is walked locally because omp's
 `buildSessionContext` does not return entry ids.
+
+### Old chat output collapses to one line
+
+Every collapsible output — final answer, standalone assistant message, visible
+`custom` message, `bashExecution` — goes through
+`components/CollapsibleMessage.tsx`. Its `children` are mounted **only while the
+row is open**, which is the whole point: a closed row costs no markdown, no
+diff and no tool card in the DOM. The rule lives in `lib/chat-collapse.ts`
+(`COLLAPSE_AFTER_OUTPUTS = 3`, `COLLAPSE_AFTER_MS = 5 * 60_000`): the three
+newest outputs of the whole rendered list stay open — live tail included, so a
+long run shows the current step and the two before it — while the streaming
+bubble and user messages never collapse. A click wins in both directions for
+the session (`outputOverrides` in `ChatWindow.tsx`). `outputsAfter` is counted
+over collapsible cards only, so a turn full of tool calls inside a
+`ProcessDetailsGroup` takes no slot. `ProcessDetailsGroup` itself always starts
+collapsed, a turn that ended without a final answer included: its children are
+the expensive part (in a measured 7.5 MB session, 8 expanded groups were 88 %
+of the first view's DOM nodes), and a historical turn is one click away. The
+running turn is unaffected because the live tail renders ungrouped.
+`isCollapsibleOutput` excludes `toolResult` because `MessageView` renders those
+inline and returns `null` standalone. The age rule reads a 60 s clock that
+stands still while auto-follow is paused, so no card collapses above the
+viewport while the user reads; new output below still collapses by count, and
+the browser's scroll anchoring covers the height change — do not add a second
+scroll model next to `captureScrollDistance`/`restoreScrollTop`. Do not reach
+for `content-visibility` on the rows either: measured, it cut relayout from
+246.6 ms to 1 ms but shrank `scrollHeight` from 155,567 px to 47,500 px with
+bare intrinsic sizing, which breaks the minimap, the scrollbar and jump targets.
 
 ### ToolCall field normalization
 omp stores toolCall blocks as `{type:"toolCall", id, name, arguments}` but `ToolCallContent` uses `{toolCallId, toolName, input}`. `normalizeToolCalls()` in `lib/normalize.ts` handles this — called in both `session-reader.ts` (file load) and `ChatWindow.handleAgentEvent()` (streaming).

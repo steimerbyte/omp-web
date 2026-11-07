@@ -213,21 +213,20 @@ test.after(() => {
 
 /* ── Prozessdetails ───────────────────────────────────────────────────── */
 
-test("a finished turn folds its process messages, a turn without an answer starts open", { timeout: 30_000 }, async () => {
-  // Ohne laufenden Agenten ist kein Turn der Live-Schwanz; alle drei bekommen
-  // ihre Prozessgruppe.
+test("every turn folds its process messages, including one without a final answer", { timeout: 30_000 }, async () => {
+  // Ohne laufenden Agenten ist kein Turn der Live-Schwanz; beide Tuernen mit
+  // Prozessnachrichten bekommen ihre Gruppe — und beide starten zugeklappt.
   agentState = { running: false };
   const { container, root } = await mountChatWindow();
 
-  // Turn 1 has a final answer, so its process group starts collapsed.
   const groupButtons = [...container.querySelectorAll('button[aria-expanded]')]
     .filter((button) => button.textContent.includes("Process"));
   assert.equal(groupButtons.length, 2, "beide Tuernen mit Prozessnachrichten haben eine Gruppe");
-  const [folded, open] = groupButtons;
-  assert.equal(folded.getAttribute("aria-expanded"), "false");
-  assert.match(folded.textContent, /first answer|Process details|messages/);
-  // Turn 3 has no answer at all: defaultExpanded={!finalAnswerMessage}.
-  assert.equal(open.getAttribute("aria-expanded"), "true");
+  const [folded, withoutAnswer] = groupButtons;
+  for (const button of groupButtons) {
+    assert.equal(button.getAttribute("aria-expanded"), "false", "keine Gruppe startet aufgeklappt");
+  }
+  assert.match(folded.textContent, /Process details/);
 
   await click(folded);
   assert.equal(folded.getAttribute("aria-expanded"), "true");
@@ -237,6 +236,41 @@ test("a finished turn folds its process messages, a turn without an answer start
   // Ein zweiter Klick klappt wieder ein.
   await click(folded);
   assert.equal(folded.getAttribute("aria-expanded"), "false");
+
+  // Der Turn ohne Antwort ist genau einen Klick entfernt: zugeklappt steht
+  // "grep" nicht im DOM, aufgeklappt schon.
+  assert.equal(container.textContent.includes("grep"), false);
+  await click(withoutAnswer);
+  assert.equal(withoutAnswer.getAttribute("aria-expanded"), "true");
+  assert.match(container.textContent, /grep/);
+  await act(async () => { root.unmount(); });
+});
+
+test("an answer is a one-line row; a click unmounts and remounts its body", { timeout: 30_000 }, async () => {
+  agentState = { running: false };
+  const { container, root } = await mountChatWindow();
+
+  // Die Fixture ist von Januar: die erste Antwort ist alt genug fuer die
+  // Altersregel und steht nur als Zeile im DOM, die neueste bleibt offen.
+  const row = container.querySelector('button[aria-controls="output-e3"]');
+  assert.ok(row, "die Zusammenfassungszeile der ersten Antwort fehlt");
+  assert.equal(row.getAttribute("aria-expanded"), "false");
+  assert.match(row.textContent, /first answer/);
+  assert.equal(container.querySelector("#output-e3").innerHTML, "", "zugeklappt steht der Inhalt nicht mehr im DOM");
+
+  const newest = container.querySelector('button[aria-controls="output-e5"]');
+  assert.equal(newest.getAttribute("aria-expanded"), "true", "die neueste Ausgabe klappt nicht zu");
+  assert.match(container.querySelector("#output-e5").innerHTML, /second answer/);
+
+  // Ein Klick des Nutzers gewinnt gegen die Regel und mountet den Inhalt.
+  await click(row);
+  assert.equal(row.getAttribute("aria-expanded"), "true");
+  assert.match(container.querySelector("#output-e3").innerHTML, /first answer/);
+
+  // Und wieder zu: der Inhalt verlaesst den DOM.
+  await click(row);
+  assert.equal(row.getAttribute("aria-expanded"), "false");
+  assert.equal(container.querySelector("#output-e3").innerHTML, "", "zugeklappt steht der Inhalt nicht mehr im DOM");
   await act(async () => { root.unmount(); });
 });
 

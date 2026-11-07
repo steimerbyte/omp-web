@@ -20,6 +20,8 @@ import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks, type DisplayOptions } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { MessageView } from "./MessageView";
+import { CollapsibleMessage } from "./CollapsibleMessage";
+import { isCollapsibleOutput, shouldCollapseOutput, summarizeCollapsedOutput, createOutputClock } from "@/lib/chat-collapse";
 import { AnimatePresence, motion } from "motion/react";
 import { Shimmer } from "./motion/Shimmer";
 import { Skeleton } from "./motion/Skeleton";
@@ -153,8 +155,12 @@ function withAssistantBlocks(
   return next;
 }
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+// Every turn starts folded — also one that ended without a final answer. Its
+// children are the expensive part (a measured long session had 8 expanded
+// tool histories at 88 % of the first view's nodes); a historical turn is one
+// click away, and the running turn renders ungrouped anyway.
+function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { messageCount: number; toolCallCount: number; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+  const [expanded, setExpanded] = useState(false);
   const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
 
@@ -283,6 +289,23 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
   const [visibleCount, setVisibleCount] = useState(VISIBLE_PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
+
+  // --- Collapsible outputs ---
+  // Per entry id: the collapse decision the user picked by hand (true =
+  // closed). It wins over the automatic rule in both directions and survives
+  // streaming re-renders and growing `visibleCount`; ChatWindow remounts per
+  // session, so no reset.
+  const [outputOverrides, setOutputOverrides] = useState<Record<string, boolean>>({});
+  // Coarse clock for the age rule — one tick a minute, never per stream chunk.
+  // It stands still while auto-follow is paused: a card that ages into
+  // "collapsed" above the viewport would move the text the user is reading.
+  // New outputs below still collapse by count; the browser's scroll anchoring
+  // covers the height change, so there is no second scroll model here.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (autoFollowPaused) return;
+    return createOutputClock(setNowMs);
+  }, [autoFollowPaused]);
 
   // IntersectionObserver on the sentinel div at the top of the message list.
   // When it becomes visible, load the next page of older messages.
@@ -647,11 +670,23 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                 );
               };
 
-              const rendered: ReactNode[] = [];
+              // A rendered node plus, when it can be folded, the message the
+              // summary is derived from. `outputsAfter` is counted over this
+              // list — live tail included — so the newest three outputs of the
+              // transcript stay open and everything older is one click away.
+              const rendered: { node: ReactNode; output?: { key: string; message: AgentMessage } }[] = [];
+              const pushMessage = (renderIdx: number, node: ReactNode, message: AgentMessage = messages[renderIdx]) => {
+                rendered.push({
+                  node,
+                  output: isCollapsibleOutput(message)
+                    ? { key: entryIds[renderIdx] ?? `message-${renderIdx}`, message }
+                    : undefined,
+                });
+              };
               for (let idx = 0; idx < messages.length;) {
                 const msg = messages[idx];
                 if (!isGroupAnchor(msg)) {
-                  rendered.push(renderMessage(idx));
+                  pushMessage(idx, renderMessage(idx));
                   idx += 1;
                   continue;
                 }
@@ -664,7 +699,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
 
                 if (finalAssistantIdx === -1) {
                   for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
+                    pushMessage(renderIdx, renderMessage(renderIdx));
                   }
                   idx = endIdx;
                   continue;
@@ -673,13 +708,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                 const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
                 if (isLiveTail) {
                   for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
+                    pushMessage(renderIdx, renderMessage(renderIdx));
                   }
                   idx = endIdx;
                   continue;
                 }
 
-                rendered.push(renderMessage(userIdx));
+                pushMessage(userIdx, renderMessage(userIdx));
 
                 const processIndices: number[] = [];
                 for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
@@ -700,7 +735,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                   const processGroup = (
                     <ProcessDetailsGroup
                       messageCount={processCount}
-                      defaultExpanded={!finalAnswerMessage}
                       t={t}
                       toolCallCount={countToolCalls(messages, visibleProcessIndices, displayOptions) + countToolCallBlocks(finalSplit.processBlocks)}
                     >
@@ -708,11 +742,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                       {finalProcessMessage && renderMessage(finalAssistantIdx, { keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
                     </ProcessDetailsGroup>
                   );
-                  rendered.push(
-                    <div key={`process-group-${userIdx}-${finalAssistantIdx}`}>
-                      {processGroup}
-                    </div>,
-                  );
+                  rendered.push({
+                    node: (
+                      <div key={`process-group-${userIdx}-${finalAssistantIdx}`}>
+                        {processGroup}
+                      </div>
+                    ),
+                  });
                 }
 
                 if (finalAnswerMessage) {
@@ -728,12 +764,22 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                     }
                   }
                   const writtenFiles = extractTurnWrittenFiles(turnContent, toolResultsMap, messageCwd);
-                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage, writtenFiles }));
+                  pushMessage(finalAssistantIdx, renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage, writtenFiles }), finalAnswerMessage);
                 }
                 for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
-                  rendered.push(renderMessage(renderIdx));
+                  pushMessage(renderIdx, renderMessage(renderIdx));
                 }
                 idx = endIdx;
+              }
+              // Count collapsible cards after each item, newest first; cards
+              // inside a ProcessDetailsGroup are not part of this list and take
+              // no slot. The visible window is a suffix, so its numbers are the
+              // same as if only mounted items counted.
+              const outputsAfter = new Array<number>(rendered.length);
+              let seenOutputs = 0;
+              for (let i = rendered.length - 1; i >= 0; i--) {
+                outputsAfter[i] = seenOutputs;
+                if (rendered[i].output) seenOutputs += 1;
               }
               const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
               return (
@@ -743,7 +789,35 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                        {t("chat.loadEarlier", { count: startIndex })}
                     </div>
                   )}
-                  {rendered.slice(startIndex)}
+                  {rendered.slice(startIndex).map((item, offset) => {
+                    const output = item.output;
+                    if (!output) return item.node;
+                    const collapsed = shouldCollapseOutput({
+                      outputsAfter: outputsAfter[startIndex + offset],
+                      ageMs: typeof output.message.timestamp === "number" ? nowMs - output.message.timestamp : null,
+                      hasUserOverride: outputOverrides[output.key] !== undefined,
+                      userOverride: outputOverrides[output.key] ?? false,
+                    });
+                    const summary = summarizeCollapsedOutput(output.message, { t });
+                    const meta: string[] = [];
+                    if (summary.toolNames.length > 0) {
+                      meta.push(`${summary.toolNames.slice(0, 3).join(", ")}${summary.toolNames.length > 3 ? "…" : ""}`);
+                    }
+                    return (
+                      <CollapsibleMessage
+                        key={`output-${output.key}`}
+                        id={`output-${output.key.replace(/[^\w-]/g, "-")}`}
+                        open={!collapsed}
+                        onToggle={() => setOutputOverrides((prev) => ({ ...prev, [output.key]: !collapsed }))}
+                        label={summary.label}
+                        preview={summary.preview}
+                        meta={meta}
+                        timestamp={output.message.timestamp}
+                      >
+                        {item.node}
+                      </CollapsibleMessage>
+                    );
+                  })}
                 </>
               );
             })()}
