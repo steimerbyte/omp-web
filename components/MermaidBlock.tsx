@@ -1,9 +1,9 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { CodeHighlighter } from "./CodeHighlighterLazy";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
@@ -277,7 +277,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
           <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
         </pre>
       ) : (
-        <SyntaxHighlighter
+        <CodeHighlighter
           language={lang || "text"}
           style={isDark ? vscDarkPlus : vs}
           showLineNumbers
@@ -293,7 +293,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
           codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
         >
           {code}
-        </SyntaxHighlighter>
+        </CodeHighlighter>
       )}
     </div>
   );

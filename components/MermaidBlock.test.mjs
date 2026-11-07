@@ -68,11 +68,13 @@ function renderCode(props) {
   );
 }
 
-test("CodeBlock highlights code when not streaming", () => {
+test("CodeBlock renders the plain block before the highlighter chunk arrives", () => {
+  // Statisches Markup ist immer die Fallback-Fassung; die Tokens setzt erst
+  // CodeHighlighterLazy nach dem Mount (components/CodeHighlighter.unit.test.mjs).
   const html = renderCode({ code: "const x = 1;", lang: "javascript" });
 
-  assert.match(html, /class="token/);
-  assert.match(html, /const/);
+  assert.doesNotMatch(html, /class="token/);
+  assert.match(html, /const x = 1;/);
 });
 
 test("CodeBlock renders plain text without tokenization while streaming", () => {

@@ -3,6 +3,20 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.24.2
+Released 2026-11-07.
+
+- **Die Syntax-Hervorhebung lädt erst nach dem ersten Paint.** Der volle
+  Prism-Export von `react-syntax-highlighter` registriert beim Modul-Auswerten
+  rund 200 Refractor-Grammatiken — auf einer 7,5-MB-Session 102 ms der Boot-Task,
+  bezahlt bevor der Session-Fetch überhaupt startet, bei null Code-Blöcken auf
+  dem Schirm. Die drei Aufrufstellen teilen sich jetzt eine lazy Komponente. Ein
+  Boot-Profil misst Navigation→letzter Antworttext 528,9 → 367,4 ms und
+  →gemalt 603,6 → 452,3 ms (−25,1 %), die größte Einzelaufgabe 186 → 60 ms
+  (Median aus 3 Läufen, Chromium 149, 2026-11-07); das initiale Skript-Set
+  schrumpft um 495.746 B. Der Preis: ein Code-Block zeigt so lange Klartext, bis
+  der Chunk da ist — beim ersten Block einer Seite, danach aus dem Cache.
+
 ## v0.24.1
 Released 2026-11-07.
 

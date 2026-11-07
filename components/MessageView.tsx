@@ -1,8 +1,8 @@
 "use client";
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs, vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import { CodeHighlighter } from "./CodeHighlighterLazy";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
@@ -1524,7 +1524,7 @@ function ConsoleOutputPreview({
     <div className={`shell-output-preview${isError ? " is-error" : ""}`}>
       <div className="shell-command-line">
         <span className="shell-command-prompt" aria-hidden="true">$</span>
-        <SyntaxHighlighter
+        <CodeHighlighter
           className="shell-command-code"
           language="bash"
           style={isDark ? vscDarkPlus : vs}
@@ -1549,7 +1549,7 @@ function ConsoleOutputPreview({
           codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
         >
           {command || " "}
-        </SyntaxHighlighter>
+        </CodeHighlighter>
         {local && <span className="shell-local-label">local</span>}
       </div>
 

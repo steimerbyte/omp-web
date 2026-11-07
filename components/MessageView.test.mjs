@@ -79,7 +79,10 @@ test("renders shell blocks as themed terminal content", () => {
   );
 
   assert.match(html, /class="shell-output-preview"/);
-  assert.match(html, /git<\/span>/);
+  // Das Markup ist die Server-/Erst-Render-Fassung: CodeHighlighterLazy zeigt
+  // dort den reinen Block, die Hervorhebung kommt erst mit dem Chunk.
+  assert.doesNotMatch(html, /class="token/);
+  assert.match(html, />git status --short</);
   assert.match(html, /--short/);
   assert.match(html, /Output/);
   assert.match(html, /components\/MessageView\.tsx/);

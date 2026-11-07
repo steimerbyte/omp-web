@@ -176,6 +176,7 @@ components/
   BranchNavigator.tsx in-session branch switcher
   ChatMinimap.tsx     scroll minimap alongside the message list
   MarkdownBody.tsx    markdown renderer
+  CodeHighlighterLazy.tsx the only door to react-syntax-highlighter (a direct import costs 102 ms of Prism grammar registration per boot, measured 2026-11-07)
   ModelsConfig.tsx    modal for providers/auth (opened from sidebar bottom)
   ModelRolesPanel.tsx per-role model assignment inside that modal
   PluginsConfig.tsx   modal for installed omp plugins

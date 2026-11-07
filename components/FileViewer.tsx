@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
-import {
-  Prism as SyntaxHighlighter,
-  createElement as renderSyntaxNode,
-  type SyntaxHighlighterProps,
-} from "react-syntax-highlighter";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
+// Die hast→React-Hilfe des Highlighters liegt in einem eigenen Modul. Aus dem
+// Paket-Root geholt zoege sie `dist/cjs/index.js` mit (Prism + refractor mit
+// jeder Grammatik, ~1.5 MB) in den Start-Chunk; dieser Pfad importiert nur react.
+import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
+import { CodeHighlighter } from "./CodeHighlighterLazy";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import ReactMarkdown from "react-markdown";
@@ -1248,7 +1249,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
             />
           </div>
         ) : (
-          <SyntaxHighlighter
+          <CodeHighlighter
             className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}
             language={language === "text" ? "plaintext" : language}
             style={isDark ? vscDarkPlus : vs}
@@ -1279,7 +1280,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, onMentionL
             wrapLongLines={wrapLines}
           >
             {content}
-          </SyntaxHighlighter>
+          </CodeHighlighter>
         )}
       </div>
     </div>
