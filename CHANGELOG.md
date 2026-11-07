@@ -3,6 +3,15 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.24.1
+Released 2026-11-07.
+
+- **Zugeklappte Zeilen teilen sich einen `Intl.DateTimeFormat`.** Statt pro
+  Zeile und Render einen neuen Formatierer zu bauen — in einer gemessenen
+  7,5-MB-Session 199 Aufrufe pro Render — nutzt `CollapsibleMessage` eine
+  Modulinstanz; ein voller Re-Render des Transkripts fällt dadurch von 13,8 ms
+  auf 7,5 ms (Median, 3×10 Klicks, Chromium 149). Folge-Fix zu v0.24.0.
+
 ## v0.24.0
 Released 2026-11-07.
 

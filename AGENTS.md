@@ -351,6 +351,11 @@ scroll model next to `captureScrollDistance`/`restoreScrollTop`. Do not reach
 for `content-visibility` on the rows either: measured, it cut relayout from
 246.6 ms to 1 ms but shrank `scrollHeight` from 155,567 px to 47,500 px with
 bare intrinsic sizing, which breaks the minimap, the scrollbar and jump targets.
+Every per-row formatter on this path runs once per output on every render —
+measured 199x per render in the 7.5 MB session, where `toLocaleTimeString` cost
+6.3 of a 13.8 ms re-render (Chromium 149, 2026-11-07) — so formatters are
+module-level instances (`TIME_FORMAT` in `CollapsibleMessage.tsx`) and
+`toLocaleTimeString` is banned there.
 
 ### ToolCall field normalization
 omp stores toolCall blocks as `{type:"toolCall", id, name, arguments}` but `ToolCallContent` uses `{toolCallId, toolName, input}`. `normalizeToolCalls()` in `lib/normalize.ts` handles this — called in both `session-reader.ts` (file load) and `ChatWindow.handleAgentEvent()` (streaming).
