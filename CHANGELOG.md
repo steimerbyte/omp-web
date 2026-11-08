@@ -20,11 +20,13 @@ Released 2026-11-08.
   (Status 143), und der `failed)`-Zweig von `omp-web-healthcheck` startete sie
   15 s nach Buildbeginn neu; die Build-Sperre der Unit kollidierte mit dem Build
   des Deploys und `Restart=always` wiederholte das — gemessen am 2026-11-07 auf
-  agent-pc: 10 Restart-Versuche, rund 82 s Downtime statt rund 20 s. Jetzt stoppt
-  der Live-Zweig zuerst den Timer; die Downtime ist damit durch den Build selbst
-  begrenzt. Ein `EXIT`-Trap schaltet den Timer auf jedem Pfad wieder scharf, und
-  eine Bereitschaftsprüfung nach dem Start verhindert, dass dessen sofortiger
-  erster Tick die frische Instanz erneut startet.
+  agent-pc: 10 Restart-Versuche, rund 82 s Downtime. Jetzt stoppt der Live-Zweig
+  zuerst den Timer und schaltet ihn per `EXIT`-Trap auf jedem Pfad wieder scharf;
+  `NRestarts` fiel damit von 10 auf 0, und die Downtime ist die Build-Zeit
+  (69,3 s gemessen am 2026-11-08). Weil das Unit-Drop-in
+  `Wants=omp-web-healthcheck.timer` trägt, zieht jedes `systemctl start` den Timer
+  schon vorher wieder herein: eine sofortige Probe kann die frische Instanz noch
+  einmal starten (gemessen 2026-11-08: 171 ms, `NRestarts` bleibt 0).
 
 ## v0.24.2
 Released 2026-11-07.
