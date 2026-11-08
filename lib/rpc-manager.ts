@@ -40,7 +40,7 @@ import { createWorkerBackedSession, tenantArchiveDir, type WorkerSessionBoundary
 import { resolveBunPath } from "../bin/runtime.js";
 import { EventEmitter } from "node:events";
 import { dirname, join } from "node:path";
-import { unsandboxedTenantWarning } from "./tenant-worker-config";
+import { unsandboxedTenantWarning, tenantProviders } from "./tenant-worker-config";
 import { fileURLToPath } from "node:url";
 import { getUserHome } from "./request-identity";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
@@ -2376,10 +2376,15 @@ async function startWorkerSessionForTenant(
     };
   }
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  // Die Provider dieses Kontos, aus seinem eigenen `models.yml` — nicht der
+  // Bestand des Betreibers. Ohne diese Zeile startete der Worker ohne jede
+  // Zugangsdaten und das SDK brach mit "No default model selected" ab; genau
+  // das war der gemessene Erstlauf (siehe docs/plans/tenant-isolation.md §13).
+  const providers = tenantProviders(identity);
   const acquired = await host.acquire(identity, () => startTenantWorker(identity, {
     bunPath,
     repoRoot: repositoryRoot,
-    providers: [],
+    providers,
   }));
   if ("ok" in acquired && acquired.ok === false) {
     return acquired;

@@ -1,6 +1,8 @@
 import { getRuntimeSecret } from "./runtime-secrets";
 import { getEnvApiKeyName } from "@oh-my-pi/pi-ai/env-api-key";
-import { isAdminIdentity, type WebIdentity } from "./request-identity";
+import { ModelsConfigFile } from "@oh-my-pi/pi-coding-agent/config/models-config";
+import { join } from "node:path";
+import { getUserHome, isAdminIdentity, type WebIdentity } from "./request-identity";
 import type { SandboxFailureReason } from "./sandbox";
 
 /**
@@ -190,6 +192,37 @@ export function buildWorkerEnv(
     out[envName] = value;
   }
   return { env: out, missing };
+}
+
+/**
+ * Die Provider, die das Konto **selbst** konfiguriert hat.
+ *
+ * Die Anforderung ist "die Zugangsdaten dieses Kontos, aufgeloest serverseitig
+ * aus derselben Quelle, die das SDK benutzt". Diese Quelle ist das
+ * `models.yml` des Kontos — seine eigene Datei im eigenen Agent-Verzeichnis
+ * (`lib/tenant-config.ts`), nicht der globale Bestand des Betreibers.
+ *
+ * Gelesen wird mit `ModelsConfigFile.relocate(pfad)`, also mit dem Parser des
+ * SDK: eine eigene YAML-Auswertung waere eine zweite Wahrheit ueber das
+ * Dateiformat, und der Fehler faellt dann erst im Modellaufruf auf. Der
+ * `relocate`-Aufruf liefert eine **eigene** Instanz, die den modulweiten Cache
+ * nicht anfasst; die gecachte Instanz bleibt fuer den Prozesspfad unberuehrt.
+ *
+ * Zurueck kommen die **Namen**, nicht die Schluessel: welcher Wert daraus folgt,
+ * entscheidet `buildWorkerEnv` mit `getEnvApiKeyName`. Damit steht die
+ * Zuordnung Provider → Umgebungsvariable an genau einer Stelle, und sie ist die
+ * des SDK.
+ *
+ * Ein Konto ohne `models.yml` bekommt eine leere Liste — kein Fehler. Es hat
+ * dann keinen Provider, und der Worker scheitert beim ersten Modellaufruf mit
+ * der Meldung des SDK, die genau das sagt. Ein Seeding mit dem Betreiber-Key
+ * waere das Kostenleck aus `lib/tenant-config.ts`.
+ */
+export function tenantProviders(identity: WebIdentity): string[] {
+  const agentDir = join(getUserHome(identity), ".omp", "agent");
+  const providers = ModelsConfigFile.relocate(join(agentDir, "models.yml")).load()?.providers;
+  if (!providers) return [];
+  return Object.keys(providers);
 }
 
 /**
