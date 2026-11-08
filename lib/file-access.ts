@@ -32,6 +32,15 @@ export function isWindowsAbsolutePath(filePath: string): boolean {
  *
  * Sessions are filtered by the same identity that gates the result, so another
  * tenant's cwd never becomes a root here.
+ *
+ * The filter is not enough on its own, and that is why the `cwd` is checked
+ * again below: a session in the requesting account's own archive answers the
+ * ownership question with the `cwd` written **inside** the file, and a tenant
+ * can write that file (its worker has exactly its own home bound). Measured
+ * 2026-11-08: a non-admin wrote `{"type":"session","cwd":"/"}` into its own
+ * sessions directory and `GET /api/files/etc/passwd` answered 200. The
+ * archive reader rejects such a record now, and this second check makes the
+ * root set safe even if a future caller hands over an unfiltered list.
  */
 export async function getAllowedFileRoots(identity: WebIdentity | null): Promise<Set<string>> {
   if (!identity) return new Set<string>();
@@ -44,11 +53,23 @@ export async function getAllowedFileRoots(identity: WebIdentity | null): Promise
 
   const sessions = await listAllSessions({ identity });
   const roots = new Set<string>();
+  // Der zweite Schnitt. Fuer einen Nicht-Admin darf ein `cwd` nur dann Wurzel
+  // werden, wenn er in seinem Home liegt — dieselbe Regel, die
+  // `isSessionOwnedBy` fuer den Prozess-Baum zieht. Ohne diesen Test haengt die
+  // ganze Grenze an der Frage, ob die Session-Liste schon gefiltert ist, und
+  // das ist eine Annahme ueber einen Aufrufer, kein Zustand. Ein Admin behaelt
+  // `/`, deshalb ist die Pruefung fuer ihn eine no-op.
+  const ownHome = identity.isAdmin ? null : normalizeSlashes(getUserHome(identity));
+  const insideOwnHome = (candidate: string): boolean => {
+    if (ownHome === null) return true;
+    const value = normalizeSlashes(candidate);
+    return value === ownHome || value.startsWith(`${ownHome}/`);
+  };
   for (const s of sessions) {
-    if (s.cwd) roots.add(normalizeSlashes(s.cwd));
+    if (s.cwd && insideOwnHome(s.cwd)) roots.add(normalizeSlashes(s.cwd));
     // The project root (main repo shared by all worktrees) is browsable too —
     // the project dropdown lists it even when only worktrees have sessions.
-    if (s.projectRoot) roots.add(normalizeSlashes(s.projectRoot));
+    if (s.projectRoot && insideOwnHome(s.projectRoot)) roots.add(normalizeSlashes(s.projectRoot));
   }
 
   // Also allow ~/omp-cwd-* directories created by the default-cwd endpoint.

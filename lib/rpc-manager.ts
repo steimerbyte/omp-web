@@ -28,6 +28,7 @@ import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
+import { prepareTenantSessionDir, tenantSessionsRoot, tightenTenantSessionTree } from "./tenant-sessions";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
 import { resolveSessionLoads, sessionSettings } from "./load-policy";
 import { loadSessionSkills } from "./skills-service";
@@ -2230,11 +2231,19 @@ export async function startRpcSession(
         await ensureTenantSkillsRegistration(identity);
       } catch { /* the session still runs; the manager reports the problem */ }
     }
+    // Das Session-**Archiv** eines Mandanten liegt in seinem Agent-Verzeichnis
+    // (`lib/tenant-sessions.ts`), auch wenn das Agent-Verzeichnis dieser Session
+    // aus den oben genannten Gruenden das Prozessverzeichnis bleibt. Diese
+    // beiden Pfade sind unabhaengig: der Agent-Ordner traegt `agent.db`,
+    // `models.yml` und die Einstellungen, das Archiv nur die `.jsonl`-Journale.
+    // Fuer einen Admin und fuer den internen Start ohne Konto ist der Ausdruck
+    // `undefined` — genau das bisherige Verhalten.
+    const sessionDir = cwd === undefined ? null : prepareTenantSessionDir(identity, cwd);
     const sessionManager = sessionFile
       ? await SessionManager.open(sessionFile, undefined)
       : (() => {
         if (!cwd) throw new Error("cwd is required for a new session");
-        return SessionManager.create(cwd, undefined);
+        return SessionManager.create(cwd, sessionDir ?? undefined);
       })();
     const sessionCwd = sessionManager.getCwd();
     const finishStartingSession = trackStartingSession(sessionCwd);
@@ -2415,7 +2424,17 @@ export async function startRpcSession(
 
       const realSessionId = inner.sessionId as string;
       const realSessionFile = inner.sessionFile as string | undefined;
-      if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
+      if (realSessionFile) {
+        cacheSessionPath(realSessionId, realSessionFile);
+        // Das SDK legt die `.jsonl` mit `O_CREAT` und der umask des Prozesses
+        // an — gemessen `0644`. Der Pfad allein ist die Grenze, der Modus ist
+        // die zweite Haelfte, deshalb wird hier nachgezogen. Nur fuer den
+        // Mandanten-Baum: das Prozess-Archiv des Admins bleibt unveraendert.
+        const tenantRoot = tenantSessionsRoot(identity);
+        if (tenantRoot !== null && realSessionFile.startsWith(`${tenantRoot}/`)) {
+          tightenTenantSessionTree(realSessionFile.slice(0, realSessionFile.lastIndexOf("/")));
+        }
+      }
 
       wrapper.onDestroy(() => {
         registry.delete(realSessionId);

@@ -1,7 +1,9 @@
 import {
+  FileSessionStorage,
   SessionManager,
   buildSessionContext as ompBuildSessionContext,
   getAgentDir,
+  listAllSessions as listAllSessionsIn,
 } from "@oh-my-pi/pi-coding-agent";
 import { Tokenizer } from "@oh-my-pi/pi-agent-core";
 import type { AgentMessage as OmpAgentMessage } from "@oh-my-pi/pi-agent-core";
@@ -17,6 +19,7 @@ import { sessionPathKey } from "./session-path";
 import { isPathWithinRoots } from "./path-security";
 import { getUserHome, type WebIdentity } from "./request-identity";
 import { resolveProject, type ProjectInfo } from "./worktree";
+import { tenantSessionsRoot } from "./tenant-sessions";
 
 export { getAgentDir };
 
@@ -46,6 +49,20 @@ export function mergeSessionLists(
   // replaces a transient registry snapshot without briefly rendering two rows.
   for (const session of persistedSessions) byId.set(session.id, session);
   return [...byId.values()].sort((a, b) => b.modified.localeCompare(a.modified));
+}
+
+/**
+ * Alle Sessions unter einem **beliebigen** Wurzelverzeichnis.
+ *
+ * `SessionManager.listAll()` liest immer das Prozess-Archiv. Fuer das Archiv
+ * eines Mandanten braucht es dieselbe Auswertung mit einem anderen Wurzelpfad —
+ * `listAllSessions(storage, sessionsRoot)` ist genau das. Ein eigener Dateilauf
+ * hier waere eine zweite Implementierung der Session-Erkennung (Praefix-Scan,
+ * Tail-Scan, Header-Reparatur); der SDK-Aufruf ist dieselbe Regel mit einem
+ * Parameter.
+ */
+async function listAllSessionsInRoot(root: string): Promise<OmpSessionInfo[]> {
+  return listAllSessionsIn(new FileSessionStorage(), root);
 }
 
 async function loadAllSessions(): Promise<SessionInfo[]> {
@@ -100,7 +117,7 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
  *
  * Ein Admin sieht alles, weil sein Konto-Wurzelraum `/` ist.
  */
-function isSessionOwnedBy(session: SessionInfo, identity: WebIdentity): boolean {
+function isSessionOwnedBy(session: Pick<SessionInfo, "cwd">, identity: WebIdentity): boolean {
   if (identity.isAdmin) return true;
   if (!session.cwd) return false;
   return isPathWithinRoots(session.cwd, new Set([getUserHome(identity)]));
@@ -115,10 +132,92 @@ function filterSessionsForIdentity(
   return sessions.filter((session) => isSessionOwnedBy(session, identity));
 }
 
+/**
+ * Die Sessions aus dem **eigenen** Archiv einer Identitaet.
+ *
+ * Warum das nicht in `loadAllSessions` steht: der Scan darueber wird im
+ * `globalThis`-Cache geteilt, und ein mandantenabhaengiger Scan in einem
+ * geteilten Cache waere genau der Fehler, den `listAllSessions` sonst vermeidet
+ * (siehe den Kommentar dort). Diese Quelle ist pro Identitaet verschieden, also
+ * laeuft sie **nach** dem Cache. Der Pfad ist per Konstruktion der eigene — das
+ * Verzeichnis gehoert dem Konto. Der **Inhalt** ist es nicht.
+ *
+ * ### Warum der `cwd` hier gefiltert wird, obwohl das Verzeichnis dem Konto gehoert
+ *
+ * Weil der Mandant die Datei selbst schreiben kann. Sein Worker laeuft in einer
+ * Namespace, in der genau sein Home gebunden ist, und das Archiv liegt darin
+ * (`<home>/.omp/agent/sessions`, 0700). Ein `bash`-Aufruf legt dort also eine
+ * Datei an, deren zweite Zeile die Kopfzeile ist — inklusive `cwd`:
+ *
+ * ```json
+ * {"type":"session","version":3,"id":"<frei erfunden>","cwd":"/"}
+ * ```
+ *
+ * Der `cwd` aus dieser Kopfzeile ist kein Anzeigefeld. `getAllowedFileRoots`
+ * (`lib/file-access.ts:46-49`) nimmt **jeden** `cwd` der Session-Liste als
+ * erlaubte Datei-Wurzel und fragt nicht, wem die Session gehoert. Gemessen am
+ * 2026-11-08 an einem Scratch-Server: ein Nicht-Admin schrieb genau diese
+ * Zeile, danach antwortete `GET /api/files/etc/passwd?type=read` mit **200**
+ * und die 44-Byte-Datei `omp-web-session-key` war lesbar — aus einem Leser
+ * wurde die Faelschung beliebiger Cookies, auch des Admins.
+ *
+ * Deshalb gilt fuer dieses Archiv dieselbe Regel wie fuer den Prozess-Baum
+ * (`isSessionOwnedBy`): ein `cwd` ausserhalb des eigenen Homs macht die Session
+ * fuer diese Identitaet unbrauchbar. Die Datei bleibt liegen (Loeschen waere
+ * eine Loeschung von Daten des Kontos), sie erscheint nur nicht in der Liste
+ * und traegt damit keine Wurzel in `getAllowedFileRoots`.
+ */
+async function tenantArchiveSessions(identity: WebIdentity | null): Promise<SessionInfo[]> {
+  const root = tenantSessionsRoot(identity);
+  // `tenantSessionsRoot` gibt fuer eine fehlende Identitaet `null` — dann gibt
+  // es kein eigenes Archiv. Der zweite Test engt den Typ fuer den Besitzfilter
+  // ein, statt ihn zu behaupten: eine `as`-Behauptung waere hier die einzige
+  // Stelle, an der ein spaeterer Umbau unbemerkt eine Wurzel ohne Konto
+  // durchliesse.
+  if (root === null || identity === null || !existsSync(root)) return [];
+  const fromTenant = (await listAllSessionsInRoot(root))
+    .filter((session) => isSessionOwnedBy(session, identity));
+  // Der Elternbezug wird innerhalb **dieses** Archivs aufgeloest: eine
+  // Session, deren Vorfahr im Prozess-Archiv liegt, verliert den Bezug nicht,
+  // weil `mergeSessionLists` spaeter beide Quellen zusammenfuehrt und der
+  // Vorfahr dort mit seiner echten Id steht.
+  const pathToId = new Map<string, string>();
+  for (const s of fromTenant) pathToId.set(sessionPathKey(s.path), s.id);
+  return fromTenant.map((s) => {
+    cacheSessionPath(s.id, s.path);
+    return {
+      path: s.path,
+      id: s.id,
+      cwd: s.cwd,
+      name: s.title,
+      created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
+      modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
+      messageCount: s.messageCount,
+      firstMessage: s.firstMessage || "(no messages)",
+      parentSessionId: s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined,
+      transient: false,
+    } satisfies SessionInfo;
+  });
+}
+
 export async function listAllSessions(
   options: { force?: boolean; identity?: WebIdentity | null } = {},
 ): Promise<SessionInfo[]> {
   const identity = options.identity ?? null;
+  const visible = await listProcessSessions(options, identity);
+  // Das eigene Archiv kommt **nach** dem geteilten Scan und nach dem
+  // Besitzfilter dazu. Es ist per Konstruktion das Archiv dieses Kontos, kann
+  // also nichts zeigen, was ihm nicht gehoert, und macht den geteilten Cache
+  // nicht mandantenabhaengig.
+  const own = await tenantArchiveSessions(identity);
+  if (own.length === 0) return visible;
+  return mergeSessionLists(own, visible);
+}
+
+async function listProcessSessions(
+  options: { force?: boolean; identity?: WebIdentity | null },
+  identity: WebIdentity | null,
+): Promise<SessionInfo[]> {
   if (options.force) invalidateSessionListCache();
   const generation = globalThis.__ompSessionListGeneration ?? 0;
 
@@ -144,7 +243,7 @@ export async function listAllSessions(
     // scan for the current generation. Returning the stale result here made a
     // refresh race indistinguishable from a successful refresh.
     if ((globalThis.__ompSessionListGeneration ?? 0) !== generation) {
-      return listAllSessions(options);
+      return listProcessSessions(options, identity);
     }
     globalThis.__ompSessionListCache = { data, ts: Date.now() };
     return data;
