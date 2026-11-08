@@ -15,6 +15,35 @@ upstream line — see the Provenance section in the README.
   abgehalten: der Timer feuert 1,4 ms nach `Started`, lange bevor der Loop das
   erste `curl` macht (gemessen 2026-11-08 auf agent-pc), und kostete nur 1,5 s.
 
+- **Mandanten bekommen ein eigenes Session-Archiv, und die Geheimdateien sind in
+  jeder Grenze verdeckt.** Zwei getrennte Änderungen, die zusammen den ersten
+  Schritt aus `docs/plans/tenant-isolation.md` umsetzen:
+
+  Das Archiv eines Nicht-Admins liegt jetzt unter seinem eigenen
+  Agent-Verzeichnis (`<home>/.omp/agent/sessions`) statt im Prozess-Verzeichnis,
+  mit `0700` auf Verzeichnissen und `0600` auf den Transcripts. Gemessen vorher:
+  ein fremdes Transcript lag als `0644` da und ließ sich aus einer
+  Mandanten-Session vollständig lesen. Der Admin bleibt bewusst beim
+  Prozess-Verzeichnis (§9 des Plans). Dazu eine einmalige, idempotente
+  Migration des Bestands: pro Konto ein Bucket-Umzug mit sha256-Listen vor und
+  nach, kein Überschreiben eines vorhandenen Ziels, und ein Bucket mit einer
+  fremden Session bleibt stehen statt halb umzuziehen.
+
+  Die vier Geheimdateien (Secrets, `omp-web-auth.json`,
+  `omp-web-accounts.json`, `omp-web-session-key`) stehen in einer Liste
+  (`lib/secret-mask.ts`) und werden in jeder Grenze verdeckt. Zwei Fehler dabei
+  behoben: die Masken standen **vor** dem Home-Bind und wurden von jedem
+  späteren Mount aufgehoben, und eine Datei unter dem Konto-Home wurde gar nicht
+  maskiert. Gemessen in der echten bwrap-Grenze: `/etc/omp-web.env` 269 B auf
+  dem Host, 0 B in der Grenze; die drei Dateien unter `/home/pi/.omp/agent` sind
+  dort `ENOENT`.
+
+  **Nicht** enthalten und nicht behauptet: der Worker-Prozess pro Mandant (L1).
+  Der Agent läuft weiter im Serverprozess; die Pfad- und Modusgrenze ist keine
+  Prozessgrenze, und ein `bash`-Tool kann weiterhin alles lesen, was dem
+  Dienstbenutzer gehört — außerhalb der verdeckten Dateien. Nicht verifiziert
+  auf einem zweiten Host: nur agent-pc (LXC 101, bubblewrap 0.12.0) gemessen.
+
 ## v0.24.3
 Released 2026-11-08.
 

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync } from "fs";
 import { join } from "path";
 import { getAgentDir, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
