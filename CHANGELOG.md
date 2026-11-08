@@ -3,6 +3,18 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## Unreleased
+
+- **Der Deploy lässt einen vom Operator abgeschalteten Healthcheck aus.** Das
+  Unit-Drop-in zieht den Timer über `Wants=omp-web-healthcheck.timer` bei jedem
+  `systemctl start omp-web.service` wieder herein; war er vor dem Deploy
+  inaktiv, merkt sich das Skript den Zustand und stoppt ihn nach dem Start
+  erneut.
+
+- **Die Bereitschaftsprüfung nach dem Live-Start ist entfallen.** Sie hat nichts
+  abgehalten: der Timer feuert 1,4 ms nach `Started`, lange bevor der Loop das
+  erste `curl` macht (gemessen 2026-11-08 auf agent-pc), und kostete nur 1,5 s.
+
 ## v0.24.3
 Released 2026-11-08.
 
