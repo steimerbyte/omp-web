@@ -192,6 +192,23 @@ and through the routes that exist — not against someone who edits the underlyi
 files. Full threat model, including what this deliberately does *not* protect
 against: [docs/authentication.md](./docs/authentication.md).
 
+**A tenant session runs in its own process.** A non-admin account is hosted by a
+`bwrap` child started through `planSandboxSpawn`, so what is not bound into it
+does not exist there: no `/home`, no sibling accounts, no account store, no
+session key, no service environment. The admin and identity-less internal starts
+stay in the service process, unchanged. Three variables govern it:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OMP_WEB_TENANT_WORKER_MAX` | `4` | Concurrent workers. One per account, started on that account's first agent request and reaped after the idle timeout. Four is not arbitrary: a worker is ~310 MiB resident (~365 MiB peak) and this class of host has 6 cores / 12 GiB, and the cores bind before the memory. Raising it past `64` is refused. |
+| `OMP_WEB_TENANT_WORKER_IDLE_MS` | `300000` | Idle time before a worker is reaped. Values below `10000` are raised to it — a shorter timeout would tear down a worker between two turns of the same conversation. |
+| `OMP_WEB_ALLOW_UNSANDBOXED_TENANT` | unset | `1` puts tenant sessions back into the service process, on purpose, and prints a loud line on **stderr at startup** naming this variable. `SessionInfo.boundary.enforced` is then `false`. For development, or a host where user namespaces are unavailable — not for a multi-user install. |
+
+There is no silent fallback between those states. If the plan is rejected — no
+`bwrap`, user namespaces disabled, a missing home, an unusable account name, an
+unmaskable secrets file — the request fails with `reason`, `detail` and
+`remediation` in the body, and no session is created.
+
 ## The chat
 
 A turn streams into the transcript as it is produced. Tool calls render as their

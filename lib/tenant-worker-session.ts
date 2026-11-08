@@ -1,11 +1,11 @@
-import { chmodSync, existsSync } from "node:fs";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
 import type { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import type { AgentSessionLike, GoalRuntimeLike } from "./omp-types";
 import { getOmpRuntime, getSettingsForIdentity } from "./omp-runtime";
 import { getUserHome, type WebIdentity } from "./request-identity";
-import { prepareTenantSessionDir, tenantSessionsRoot, tightenTenantSessionTree } from "./tenant-sessions";
+import { tenantSessionsRoot, tightenTenantSessionTree } from "./tenant-sessions";
 import type { TenantWorker } from "./tenant-worker";
 
 /**

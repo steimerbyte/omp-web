@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { RpcClient, type RpcAgentProcess } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
-import { planSandboxSpawn, type SandboxFailure, type SandboxPlan } from "./sandbox";
+import { planSandboxSpawn, type SandboxPlan } from "./sandbox";
 import { secretMaskFiles } from "./secret-mask";
 import { getUserHome, type WebIdentity } from "./request-identity";
 import { prepareTenantSessionDir } from "./tenant-sessions";

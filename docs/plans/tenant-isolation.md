@@ -281,9 +281,232 @@ höher.
   Diesen Rest zu schließen braucht einen Modell-Proxy, der den Schlüssel aus
   dem Mandantenprozess heraushält; das ist ein eigener Schnitt und nicht Teil
   von L1.
-- **Ein Worker kostet rund 250–340 MiB und ~1,2 s Start.** Auf diesem Host
-  (6 Kerne, 12 GiB, kein Swap) passen rund 20 Worker mit 50 % Reserve; die
-  Kerne binden vor dem Speicher. Deshalb startet ein Worker **träge** beim
+- **Ein Worker kostet rund 310 MiB RSS (365 MiB Spitze, `VmHWM` am inneren
+  `bun`) und ~1,2 s Start.** Auf diesem Host
+  (6 Kerne, 12 GiB, kein Swap) passen rechnerisch 39 Worker, mit 50 % Reserve
+  und der Spitze statt des Mittelwerts 16; die Kerne binden vor dem Speicher,
+  und die Vorgabe `OMP_WEB_TENANT_WORKER_MAX=4` liegt weit darunter. Deshalb startet ein Worker **träge** beim
   ersten Agent-Request seines Kontos, wird nach einer konfigurierbaren
   Ruhezeit abgeräumt und beim nächsten Request neu gestartet — nicht bei jedem
   Chat und nicht alle Konten gleichzeitig.
+
+---
+
+## 13 Phase 3: was gebaut wurde, was gemessen ist, was offen bleibt
+
+Dieser Abschnitt ist der Nachtrag zu §7–§11. Er beschreibt den **Arbeitsstand
+auf dem Branch `feat/tenant-isolation`**, nicht mehr einen Vorschlag. Alle
+Zahlen sind am 2026-11-08 auf `agent-pc` (LXC 101, Kernel 7.0.14-12-pve,
+bubblewrap 0.12.0, Dienst als `uid=1000(pi)`) gemessen, an einem Scratch-Server
+mit eigener `OMP_WEB_HOME_ROOT`, eigenem Agent-Verzeichnis und eigener
+Secrets-Datei — nicht an der Live-Installation.
+
+### 13.1 Was gebaut ist
+
+**L1, der Worker-Prozess (§7).** Ein Nicht-Admin-Konto wird von einem eigenen
+Kindprozess gehostet, gestartet über `planSandboxSpawn` mit dem
+`planSandboxSpawn`-argv aus §4 plus zwei zusätzlichen `--ro-bind` (das
+`bun`-Binaerprogramm und die `node_modules` des Repos, beide in das Gast-Home).
+Der Host ist das **SDK selbst** im `--mode rpc` (`lib/tenant-worker.ts`), der
+Client der SDK-`RpcClient` — kein nachgebauter Frame-Codec.
+
+Der Schnitt liegt vor jedem SDK-Aufbau in `startRpcSession`
+(`lib/rpc-manager.ts`): `tenantBoundaryPolicy` kennt genau zwei Wege in den
+Serverprozess (kein Mandant, oder `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`), alles
+andere geht in einen Worker, und ein abgelehnter Plan ist ein benannter Fehler.
+
+**Der Provider des Kontos, aus seinem eigenen `models.yml`.** Der erste echte
+Worker-Start scheiterte mit der Meldung des SDK (`No default model selected`),
+weil die Provider-Liste konstant leer war. `tenantProviders(identity)` liest die
+Datei jetzt über `ModelsConfigFile.relocate` — den Parser des SDK, keine zweite
+YAML-Wahrheit. Der Betreiber-Bestand wird **nicht** geerbt; ein Konto ohne
+`models.yml` startet ohne Provider und scheitert erst im Modellaufruf, mit der
+Meldung des SDK.
+
+**Lebenszyklus (§7, Anforderung 4).** Träger Start bei der ersten
+Agent-Anfrage des Kontos, Abräumen nach `OMP_WEB_TENANT_WORKER_IDLE_MS`, harte
+Obergrenze `OMP_WEB_TENANT_WORKER_MAX` mit LRU-Verdrängung, und Ersetzen eines
+gestorbenen Workers. Der letzte Punkt war zuerst falsch: `acquire` gab den Slot
+unbefragt zurück, also bekam nach einem `kill` jede weitere Anfrage denselben
+toten Prozess. Jetzt meldet der Worker seinen Exit selbst
+(`Bun.Subprocess.exited` → `isAlive()`), und `acquire` räumt den toten Slot ab
+und startet neu.
+
+**Sichtbarkeit (Anforderung 6).** `SessionInfo.boundary` trägt `kind`,
+`enforced` und `pid`. `enforced: true` steht dort nur mit gemeldeter PID; der
+In-Process-Pfad meldet `kind: "in-process", enforced: false`.
+
+### 13.2 Die Abnahmetabelle, gemessen
+
+Dieselbe Fassung, drei Läufe des Harness (`scripts/verify-tenant-isolation.mjs`),
+jeweils gegen einen frisch gestarteten Server:
+
+| Modus | Ergebnis | Anmerkung |
+|---|---|---|
+| `probe` | **27 PASS, 0 FAIL, 0 SKIP** (exit 0) | Basisstand auf unverändertem `main`: 6 PASS / 19 FAIL |
+| `fail-closed` | **10 PASS, 0 FAIL, 0 SKIP** (exit 0, 21 N/A) | Server ohne `bwrap` auf dem `PATH`; `reason: "bwrap-missing"` |
+| `opt-out` | **8 PASS, 0 FAIL, 0 SKIP** (exit 0, 22 N/A) | `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`, `6c` belegt die Wirkung |
+
+Die beiden Zeilen `A11` und `A12` sind beim Abschluss des Branches
+dazugekommen; sie zählen in `probe` und sind in den beiden anderen Modi N/A, weil
+dort kein Worker laeuft. Jeder der drei Laeufe braucht einen **frisch gestarteten**
+Server: das Harness reinigt die Homes, aber die Session-Registry des Servers lebt
+im Prozess, und ein zweiter Lauf gegen denselben Prozess misst einen halb
+abgeraeumten Zustand (gemessen: `3d` 755 und `A11` `(deleted)`, beides Artefakte
+des Vorlaufs, nicht des Codes).
+
+Die Zeilen aus §11, mit dem beobachteten Wert im `probe`-Lauf:
+
+| # | Probe | Wert |
+|---|---|---|
+| A1 | `ls <homeRoot>` aus der Mandanten-Session | `No such file or directory` |
+| A2 | fremdes Archiv lesen | `cannot open …: No such file or directory` |
+| A3 | `[ -r <session-key> ]` | `NO` |
+| A4 | Geheimnisse in der Shell | 55 Variablen, **keine** mit `KEY`/`PASSWORD`/`TOKEN`/`SECRET` |
+| A5 | `ls /proc \| grep -c '^[0-9]'` | **2** (Host: 44) |
+| A6 | ausserhalb des Homes schreiben | verweigert (`No such file or directory`) |
+| A11 | Arbeitsverzeichnis des Workers | `readlink /proc/self/cwd`, `/bin/pwd -P` und `$PWD` alle `/home/verifyalpha` |
+| A12 | selbst geschriebene Kopfzeile mit `cwd:"/"` | `/api/files` → `/etc/passwd=403`, `/proc/self/environ=403` |
+| A10 | fremde lesbare Dateien | **0** |
+| 2a | ein Workerprozess pro Mandant | PIDs 1004695 / 1004694, verschiedene Konten |
+| 2b | `/proc/<worker>/root/home` | `["verifyalpha"]` |
+| 2c | `/proc/<worker>/root/home/pi` | `ENOENT` |
+| 2d | Worker-`environ` | **7** Schlüssel, keine Dienstgeheimnisse |
+| 2e | Secrets-Datei in der Grenze | `ENOENT` |
+| 3a | Archiv im Mandanten-Home | 1 Datei, im Dienstverzeichnis 0 |
+| 3d | Verzeichnis-Modus | `700` |
+| 3e | Datei-Modus | `600` |
+| 7 | weltlesbare Mandanten-Datei | **0** von 12 geprüft |
+
+**Der Statuscode einer fehlenden Grenze ist 503, nicht 500.** Eine fehlende
+Grenze ist ein Zustand des Hosts — benannt, behebbar, und beim nächsten Versuch
+vielleicht weg (nach `pacman -S bubblewrap`). Eine 500 sagt „der Server ist
+kaputt" und schickt den Betreiber in die Logs, obwohl `reason` und `remediation`
+im Körper stehen. Der Terminal-Pfad antwortet für dieselbe Ursache seit jeher
+503 (`app/api/terminal/route.ts:97-104`); zwei Routen mit zwei Statuscodes für
+eine Ursache wären ein Widerspruch in der API. Die Abbildung steht an einer
+Stelle (`tenantBoundaryHttpStatus` in `lib/rpc-manager.ts`) und wird von beiden
+Agent-Routen benutzt, weil `POST /api/agent/[id]` denselben Worker startet:
+
+| `reason` | Status | Warum |
+|---|---|---|
+| `bwrap-missing` | **503** | Voraussetzung des Hosts |
+| `userns-disabled` | **503** | Voraussetzung des Hosts |
+| `boundary-unavailable` | **503** | fehlende Datei (Home, SDK-CLI, Bun) |
+| `mask-unavailable` | **503** | Maskierung nicht herstellbar |
+| `unsupported-platform` | 500 | Windows bekommt keine userns durch Wiederholen |
+| `tenant-worker-capacity` | 500 | Betriebsgrenze, kein Zustand des Hosts |
+| `tenant-worker-spawn-failed` | 500 | echter Defekt; 503 löste einen Wiederholungssturm aus |
+
+Der Körper bleibt in allen Fällen `{ error, reason, detail, remediation }`.
+Abnahmezeile `5a` prüft den Status mit, nicht nur „nicht 200": ein 401 wäre
+sonst grün.
+
+A4 ist präzisiert: die ursprüngliche Zeile fragte nach „höchstens 10 Variablen"
+und maß damit das falsche Kriterium. Die Shell **im Worker** sieht 55, weil das
+SDK seine eigenen `NON_INTERACTIVE_ENV`-Defaults hinzufügt (alle Pager auf
+`cat`, `CI=true`, `GIT_TERMINAL_PROMPT=0`, npm/pip-Schalter — keine
+Geheimnisse). Der Vertrag aus §11 lautet „die Shell erbt keine
+Dienstgeheimnisse", und das ist es, was gemessen wird.
+
+### 13.3 Defekte, die die Messung gefunden hat
+
+Die ersten beiden waren nicht im Entwurf, sondern im ersten Lauf; die letzten
+beiden kamen beim Abschluss des Branches dazu und waren **ausnutzbar**:
+
+**Der Modus des Transcripts.** Die Datei einer In-Process-Mandanten-Session war
+`0644`. `persistBashOnlySession` schrieb ohne `mode` und erbte die umask des
+Prozesses; zusätzlich öffnet das SDK die `.jsonl` mit `O_CREAT` **ohne** Modus
+(`session-storage.ts:316-321`), sodass ein `chmod` nach dem Schreiben ein Rennen
+gegen den nächsten Append wäre. Jetzt `mode: 0o600` beim Anlegen **und** ein
+Nachziehen des Mandanten-Baums nach jedem `bash`-Lauf.
+
+**Der Ausstieg, der nichts bewiesen hätte.** `--mode opt-out` war grün, sobald
+die Session startete und die stderr-Zeile existierte. Beides wäre auch dann wahr,
+wenn der Code das Flag ignoriert. Zeile `6c` misst deshalb das Gegenteil der
+A-Zeilen: das fremde Konto **muss** sichtbar sein (gemessen: sichtbar, fremdes
+Archiv lesbar, Session-Key lesbar, 6 fremde lesbare Dateien). Ein Flag, das
+nichts tut, macht den Lauf jetzt rot.
+
+**Das Arbeitsverzeichnis des Workers war `/tmp`.** `bwrap --chdir /home/<name>`
+setzt das cwd des Prozesses; die SDK-CLI fasst es danach wieder an
+(`src/cli/startup-cwd.ts:11-42`: ein Start im Home gilt als „der Benutzer wollte
+ein Projekt, nicht sein Home" und zieht nach `<home>/tmp`, `/tmp` oder
+`/var/tmp` um). Ein Mandant, dessen Arbeitsverzeichnis `/tmp` ist, verliert seine
+Dateien beim Abräumen des Workers und teilt ein welt-beschreibbares Verzeichnis.
+`--allow-home` ist der dokumentierte Ausweg desselben Codes. Gemessen an der CLI
+allein, ein Argument Unterschied: ohne Flag `workingDir=/tmp`, mit Flag das
+Home. Im Worker belegen es drei Proben zugleich — `readlink /proc/self/cwd`,
+`/bin/pwd -P` und `$PWD` (Abnahmezeile `A11`); `$PWD` allein wäre eine
+Behauptung der Shell.
+
+**Eine selbst geschriebene Session-Kopfzeile verschaffte jede Datei-Wurzel.**
+Das Archiv eines Kontos liegt in seinem Home (0700, aber von seiner eigenen Bash
+beschreibbar). Eine Datei darin, deren zweite Zeile
+`{"type":"session","cwd":"/"}` ist, trug ihren `cwd` ungefiltert in
+`getAllowedFileRoots`: der Besitzfilter lief nur über den Prozess-Baum, nicht
+über das Mandanten-Archiv. Gemessen an einem Scratch-Server antwortete danach
+`GET /api/files/etc/passwd?type=read` mit **200**, und dieselbe Route gab die
+44-Byte-Datei `omp-web-session-key` heraus — aus einem Leser wurde die Fälschung
+beliebiger Cookies, auch des Admins. Geschlossen an zwei Stellen: das Archiv
+filtert mit derselben Besitzregel wie der Prozess-Baum, und
+`getAllowedFileRoots` nimmt einen `cwd` für einen Nicht-Admin nur noch als
+Wurzel, wenn er in dessen Home liegt. Zeile `A12` schreibt den Angriff und
+prüft, dass er `403` bekommt.
+
+**Die Session-Kopfzeile nannte den Quellbaum des Betreibers.** Der Server öffnet
+das Transcript mit `SessionManager.open`; ohne `initialCwd` fällt das SDK auf
+`getProjectDir()` zurück — den cwd des Serverprozesses. Gemessen:
+`"cwd":"/home/pi/workspace/omp-web-iso"` in der Kopfzeile einer
+Mandanten-Session, und `/api/sessions` zeigte ihn als `cwd` **und**
+`projectRoot`. Über denselben Wurzel-Pfad wie oben wurde daraus eine erlaubte
+Datei-Wurzel. Jetzt geht der Konto-Pfad als `initialCwd` mit.
+
+### 13.4 Was **nicht** verifiziert ist
+
+- **Nur ein Host.** Alles oben ist auf `agent-pc` (LXC 101, bubblewrap 0.12.0)
+  gemessen. Ob `unprivileged_userns_clone` auf einem anderen Zielhost gesetzt
+  ist, ist offen — bis dahin ist der Betrieb dort **fail-closed**: keine
+  Mandanten-Session. Das ist die richtige Richtung, aber eine Betriebsänderung.
+- **Landlock ist unbelegt** (§6). `/sys/kernel/security` existiert im LXC nicht,
+  `landlock` fehlt in `/proc/self/status`. Kein ABI-Level gemessen, also keine
+  Zusage.
+- **Kein echter Modellaufruf.** Alle Läufe sind modellfrei: `ensure_session` und
+  `bash` gehen über den RPC-Pfad, ohne Turn und ohne Token. Ein vollständiger
+  Chat durch einen Worker ist **nicht** gemessen; die Fixtures benutzen ein
+  Dummy-Modell auf `127.0.0.1:9` (discard), damit ein versehentlicher Aufruf
+  scheitert statt in ein Netz zu gehen.
+- **Der Admin-Pfad ist unverändert**, also auch unverändert ungeschützt (§12).
+- **Kein Deploy.** Nichts davon läuft auf der Live-Installation; der Branch ist
+  lokal, ohne Tag und ohne Push.
+- **Die beiden Grenzverletzungen aus §13.3 sind auf diesem Host belegt** —
+  gegen einen Scratch-Server mit eigener `OMP_WEB_HOME_ROOT`, nicht gegen einen
+  Host ohne User-Namespaces und nicht gegen einen zweiten Host.
+- **Das Test-Gate ist grün**: 3012 Tests, 0 Fehlschläge, 3 Skip, 85,9 % der
+  Funktionen ausgeführt, Gate „bestanden".
+
+### 13.5 Restrisiken
+
+Ein Worker kostet **rund 310 MiB RSS, 365 MiB Spitze** (gemessen am
+2026-11-08 mit `VmHWM`/`VmRSS` aus `/proc/<pid>/status` am inneren `bun`; die
+beiden `bwrap`-Hüllen daneben kosten je ~1,5 MiB) und ~1–1,2 s Start; die Grenze teilt den
+Netzwerk-Stack; **der Mandant kann seinen eigenen Provider-Schlüssel lesen** —
+der Modellaufruf passiert im selben Prozess wie die Tool-Shell, und ohne einen
+Modell-Proxy laesst sich das nicht schliessen —, aber keinen fremden;
+Admin = Host bleibt eine getroffene Entscheidung.
+
+**Die Grenze haengt an User-Namespaces.** Ohne sie startet kein Worker, und
+fail-closed heisst dann: **keine Mandanten-Session auf diesem Host**. Das ist
+die richtige Richtung, aber eine Betriebsaenderung fuer jeden Zielhost, auf dem
+`unprivileged_userns_clone` aus ist.
+
+**Was ausdruecklich NICHT gebaut ist** (aus §6/§7, damit die Liste nicht
+veraltet):
+
+- **L2 (ein Prozess je serverseitigem Kindprozess) ist nicht gebaut.** Der
+  Worker faengt den Agenten; Kindprozesse, die der **Server** startet
+  (MCP-stdio, `task`-Subagenten im Prozesspfad), laufen weiter im Dienstprozess.
+- **L3 (eigene unix-uid je Mandant) ist nicht gebaut.** Alle Konten laufen als
+  `uid=1000(pi)`; 0600 schuetzt deshalb innerhalb des Hosts nichts. Die Grenze
+  kommt allein aus der User-Namespace und dem einen gebundenen Home.
+- **Landlock ist nicht gebaut und nicht gemessen** (siehe oben).

@@ -490,7 +490,8 @@ async function main() {
   }
 
   // --- Konten -------------------------------------------------------------
-  const created = [];
+  // Die angelegten Homes merkt sich `cleanup.createdHomes` (unten), sobald sie
+  // wirklich existieren; eine zweite Liste hier waere eine zweite Wahrheit.
   for (const [username, password] of [
     [opts.tenant, opts.tenantPassword],
     [opts.peerTenant, opts.peerPassword],
@@ -612,7 +613,10 @@ async function main() {
   // --- 2: Worker-Grenze ----------------------------------------------------
   if (!workerRowsApply) {
     for (const id of ["2a", "2b", "2c", "2d", "2e"]) {
-      na(id, "Worker-Grenze", "kein Worker in --mode fail-closed (siehe 5a-d)");
+      // Der Text nennt den Modus, in dem der Lauf steht. Vorher stand hier
+      // fest "--mode fail-closed", und ein opt-out-Lauf behauptete damit
+      // etwas ueber einen Modus, in dem er nicht lief.
+      na(id, "Worker-Grenze", `kein Worker in --mode ${opts.mode} (siehe 5a-d nur in fail-closed)`);
     }
   } else if (mine.length === 0) {
     const why = `${procs.length} RPC-Prozess(e) sichtbar, 0 mit ${opts.tenant} in argv oder HOME`;
@@ -681,7 +685,7 @@ async function main() {
   if (!workerRowsApply) {
     // Ohne Session gibt es kein Archiv; die Frage stellt sich nicht.
     for (const id of ["3a", "3c", "3d", "3e"]) {
-      na(id, "Archiv-Layout", "keine Session in --mode fail-closed (siehe 5a)");
+      na(id, "Archiv-Layout", `keine Session in --mode ${opts.mode} (siehe 5a)`);
     }
   } else if (tenantArchived.length > 0) {
     pass("3a", "Archiv liegt im Mandanten-Home (<root>/<tenant>/.omp/agent/sessions)",
@@ -843,7 +847,7 @@ async function main() {
     const why = opts.mode === "fail-closed"
       ? "keine Session in --mode fail-closed (siehe 5a-d)"
       : "keine Session (siehe 3a)";
-    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A10"]) {
+    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A10", "A11", "A12"]) {
       if (opts.mode === "fail-closed" || opts.mode === "opt-out") na(id, "In-Session-Probe", why);
       else skip(id, "In-Session-Probe", why);
     }
@@ -869,7 +873,7 @@ async function main() {
       `find ${foreignRootOptOut} -type f -readable 2>/dev/null | wc -l`);
     const foreignReadableOptOut = Number(a10.output.trim());
     optOutEvidence.foreignFilesReadable = Number.isNaN(foreignReadableOptOut) ? null : foreignReadableOptOut;
-    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A10"]) {
+    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A10", "A11", "A12"]) {
       na(id, "In-Session-Probe", "Grenze ist in --mode opt-out abgeschaltet; 6c belegt die Wirkung");
     }
   } else {
@@ -955,6 +959,99 @@ async function main() {
     (wrote ? fail : pass)("A6", `Schreiben ausserhalb des eigenen Homes (${opts.homeRoot}) verweigert`,
       a6.ok ? a6.output.trim().slice(0, 100) : `bash -> ${a6.status}`);
 
+    // A11: ist das Arbeitsverzeichnis der Mandant selbst — oder `/tmp`?
+    //
+    // Diese Zeile fehlte, und genau dort sass der Defekt. `bwrap --chdir
+    // /home/<name>` setzt das Verzeichnis des Prozesses; die SDK-CLI fasst es
+    // danach wieder an: `maybeAutoChdir` (`src/cli/startup-cwd.ts:11-42`)
+    // behandelt "startet im Home" als "der Benutzer wollte ein Projekt" und
+    // zieht nach `<home>/tmp`, `/tmp` oder `/var/tmp` um. Gemessen am
+    // 2026-11-08 an der CLI ohne `bwrap`: mit `--allow-home` bleibt das cwd
+    // `/tmp/ti-iso/clihome`, ohne das Flag ist es `/tmp` — im selben Aufruf,
+    // nur ein Argument Unterschied.
+    //
+    // Ein Mandant, dessen Arbeitsverzeichnis `/tmp` ist, verliert seine Dateien
+    // beim Abraeumen des Workers und teilt sich ein welt-beschreibbares
+    // Verzeichnis mit jedem anderen Prozess derselben Namespace. Deshalb wird
+    // hier nicht `bwrap --chdir` geglaubt, sondern **im** Worker gemessen —
+    // und zwar dreifach, weil `$PWD` eine Behauptung der Shell ist, `pwd -P`
+    // eine Abfrage des Kernels und `readlink /proc/self/cwd` die direkte.
+    // Eine Zeile, die nur `$PWD` liest, waere gruen, wenn die Shell luegt.
+    const guestHomeOfTenant = `/home/${opts.tenant}`;
+    const a7 = await tenantShell(opts, alpha.cookie, sessionId,
+      'echo "readlink=$(readlink /proc/self/cwd)"'
+      + '; echo "binpwd=$(/bin/pwd -P)"'
+      + '; echo "pwdvar=$PWD"');
+    const read = (key) => new RegExp(`${key}=([^\\n]*)`).exec(a7.output)?.[1]?.trim() ?? null;
+    const realCwd = read("readlink");
+    const binPwd = read("binpwd");
+    const pwdVar = read("pwdvar");
+    // Drei Aussagen, alle noetig:
+    //   1. das echte cwd ist das Gast-Home des Mandanten (nicht `/tmp`, nicht
+    //      das Home des Hostbenutzers),
+    //   2. `pwd -P` stimmt damit ueberein (kein Symlink-Trick),
+    //   3. `$PWD` sagt dasselbe (die Umgebung luegt nicht — der urspruengliche
+    //      Befund war `PWD=/tmp` bei richtigem cwd; das ist ein eigener Fehler).
+    const cwdOk = realCwd === guestHomeOfTenant
+      && binPwd === guestHomeOfTenant
+      && pwdVar === guestHomeOfTenant;
+    (a7.ok && cwdOk ? pass : fail)("A11", `Arbeitsverzeichnis des Workers ist ${guestHomeOfTenant}`,
+      a7.ok
+        ? `readlink /proc/self/cwd=${JSON.stringify(realCwd)}, /bin/pwd -P=${JSON.stringify(binPwd)}, $PWD=${JSON.stringify(pwdVar)}`
+          + (cwdOk ? "" : realCwd === "/tmp" || realCwd === "/var/tmp"
+            ? " — die SDK-CLI ist aus dem Home nach /tmp umgezogen (maybeAutoChdir ohne --allow-home)"
+            : realCwd !== guestHomeOfTenant
+              ? " — das echte cwd ist nicht das Gast-Home des Mandanten"
+              : " — das cwd stimmt, aber $PWD behauptet etwas anderes (die Umgebung luegt)")
+        : `bash -> ${a7.status}`);
+
+    // A12: kann sich der Mandant mit einer selbst geschriebenen Kopfzeile eine
+    // Datei-Wurzel verschaffen?
+    //
+    // Das ist der Befund, den die Fertigstellung des Branches aufgedeckt hat,
+    // und er war ausnutzbar: das Archiv des Kontos liegt in **seinem** Home
+    // (0700, aber von seiner eigenen Bash beschreibbar). Eine Datei darin,
+    // deren zweite Zeile `{"type":"session","cwd":"/"}` ist, trug ihren `cwd`
+    // ungefiltert in `getAllowedFileRoots` — gemessen antwortete danach
+    // `GET /api/files/etc/passwd?type=read` mit **200**, und dieselbe Route
+    // gab die 44-Byte-Datei `omp-web-session-key` heraus (Admin-Cookies).
+    //
+    // Die Zeile schreibt den Kopfzeilen-Angriff in das **eigene** Archiv und
+    // prueft danach beides: die Wurzel ist nicht da, und die Datei bleibt
+    // verschlossen. Ein Test, der nur die Session-Liste prueft, waere zu
+    // schwach — der Schaden entsteht in `getAllowedFileRoots`.
+    const forgedId = "01a1bbf1-0000-4000-8000-00000000dead";
+    const forgedName = `--a12-forged--/${forgedId}.jsonl`;
+    const forgedWrite = await tenantShell(opts, alpha.cookie, sessionId,
+      `mkdir -p "$HOME/.omp/agent/sessions/--a12-forged--"`
+      + ` && printf '%s\\n' '{"type":"session","version":3,"id":"${forgedId}","timestamp":"2026-11-08T16:00:00.000Z","cwd":"/"}'`
+      + ` > "$HOME/.omp/agent/sessions/${forgedName}"`
+      + ` && echo WROTE || echo DENIED`);
+    if (!/WROTE/.test(forgedWrite.output)) {
+      // Kann der Mandant sein eigenes Archiv nicht beschreiben, ist der Angriff
+      // nicht durchfuehrbar — das ist keine offene Zeile, sondern eine
+      // staerkere Lage. Gemeldet wird sie trotzdem, damit sie sichtbar bleibt.
+      na("A12", "Selbst geschriebene Kopfzeile verschafft keine Wurzel",
+        `Archiv nicht schreibbar: ${forgedWrite.output.trim().slice(0, 90)}`);
+    } else {
+      // Der Wurzel-Cache haelt 5 s (lib/file-access.ts:16); ohne diese Pause
+      // prueft die Zeile den Stand von vor dem Angriff.
+      await new Promise((r) => setTimeout(r, 6_000));
+      const probes = ["/etc/passwd", "/proc/self/environ"];
+      const results = [];
+      for (const target of probes) {
+        const res = await request(opts, `/api/files${target}?type=read`, {}, alpha.cookie);
+        results.push({ target, status: res.status });
+      }
+      const leaked = results.filter((r) => r.status === 200);
+      (leaked.length === 0 ? pass : fail)(
+        "A12", "Selbst geschriebene Kopfzeile verschafft keine Wurzel",
+        `Kopfzeile mit cwd=/ geschrieben, /api/files -> ${results.map((r) => `${r.target}=${r.status}`).join(", ")}`
+        + (leaked.length > 0 ? " — AUSBRUCH: der gefaelschte cwd wurde zur Datei-Wurzel" : "")
+        + ` (Datei: ${forgedName})`,
+      );
+    }
+
     // A10: erreicht A die Dateien der anderen Konten? Gemessen wird dort, wo
     // B's Archiv WIRKLICH liegt — im Home, sonst im Dienstverzeichnis. Ein
     // `find` ueber ein leeres Home waere gruen, ohne etwas zu sagen.
@@ -988,7 +1085,13 @@ async function main() {
     const remediation = agentRes.json?.remediation ?? null;
     (remediation ? pass : fail)("5c", "Fehlerkoerper nennt eine `remediation`",
       remediation === null ? "kein remediation" : JSON.stringify(remediation).slice(0, 120));
-    const after = workersFor(opts.tenant, rpcProcesses() ?? []).length;
+    // Nur Worker, die zu **diesem** Server gehoeren: ihr argv bindet die
+    // Home-Wurzel dieses Laufs. Ohne diese Einschraenkung zaehlt die Zeile die
+    // Worker eines zweiten Scratch-Servers auf demselben Host mit und wird rot,
+    // obwohl dieser Server keinen einzigen gestartet hat (gemessen: 2 fremde
+    // Worker, 5d rot). Das ist ein Fehler der Zeile, nicht des Codes.
+    const after = workersFor(opts.tenant, rpcProcesses() ?? [])
+      .filter(({ argv }) => argv.some((value) => value.includes(opts.homeRoot))).length;
     (after === 0 ? pass : fail)("5d", "Kein ungesandboxter Mandanten-Worker entsteht",
       `${after} Worker fuer ${opts.tenant}`);
   }

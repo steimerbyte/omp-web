@@ -5,6 +5,112 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+- **Ein Mandant wird von einem eigenen Prozess gehostet — die Grenze ist jetzt
+  eine Prozessgrenze, nicht mehr eine Pfadprüfung.** Ein Nicht-Admin-Konto läuft
+  in einem `bwrap`-Kind, gestartet über `planSandboxSpawn` mit dem argv aus
+  `docs/plans/tenant-isolation.md` §4 plus zwei zusätzlichen `--ro-bind` (das
+  `bun`-Binaerprogramm und die `node_modules` des Repos, beide read-only in das
+  Gast-Home). Gehostet wird die Session vom SDK selbst im `--mode rpc`, gefahren
+  über den SDK-`RpcClient` — kein nachgebauter Frame-Codec. Der Admin und
+  identitätslose interne Starts bleiben im Dienstprozess, unverändert.
+
+  Gemessen im Abnahme-Harness (`scripts/verify-tenant-isolation.mjs`) gegen einen
+  Scratch-Server: **27 PASS, 0 FAIL, 0 SKIP**; derselbe Lauf auf unverändertem
+  `main` ergab 6 PASS / 19 FAIL. Aus der Mandanten-Session heraus: `ls <homeRoot>`
+  → `ENOENT`, fremdes Archiv → `ENOENT`, Sitzungsschlüssel → nicht lesbar,
+  `ls /proc` → 2 (Host: 43), 0 fremde lesbare Dateien. Aus dem Host heraus:
+  `/proc/<worker>/root/home` enthält nur das eigene Konto, der Worker-`environ`
+  trägt 7 Schlüssel und keines der Dienstgeheimnisse.
+
+  **Fail-closed, benannt.** Fehlt `bwrap`, ist die User-Namespace aus, fehlt das
+  Konto-Home oder ist die Secrets-Datei nicht maskierbar, endet der Request mit
+  **503** und `reason` + `detail` + `remediation` im Körper, und es entsteht
+  weder Session noch Worker. 503, weil eine fehlende Grenze ein Zustand des
+  Hosts ist und kein Serverfehler — dieselbe Antwort, die
+  `POST /api/terminal` für dieselbe Ursache gibt. Ein echter Fehlschlag
+  (`tenant-worker-spawn-failed`) bleibt bei 500, damit ihn niemand für
+  vorübergehend hält.
+  Der einzige Ausweg ist `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`, der beim Start
+  eine laute Zeile auf **stderr** schreibt und `boundary.enforced` auf `false`
+  setzt. Gemessen: `--mode fail-closed` 10 PASS / 0 FAIL / 21 N/A (`reason:
+  "bwrap-missing"`), `--mode opt-out` 8 PASS / 0 FAIL / 22 N/A, wobei `6c` die
+  Wirkung des Ausstiegs positiv belegt (fremdes Konto, fremdes Archiv und
+  Sitzungsschlüssel sichtbar).
+
+  **Der Arbeitsplatz des Mandanten ist sein Home, nicht `/tmp`.** `bwrap
+  --chdir /home/<name>` allein genügte nicht: die SDK-CLI zieht aus einem
+  Startverzeichnis, das dem Home entspricht, per `maybeAutoChdir` nach `/tmp` um
+  (`src/cli/startup-cwd.ts:11-42`). Mit `--allow-home` bleibt es beim Home —
+  gemessen dreifach im Worker: `readlink /proc/self/cwd`, `/bin/pwd -P` und
+  `$PWD` melden alle `/home/<name>`. Abnahmezeile `A11` prüft das dreifach, weil
+  `$PWD` allein eine Behauptung der Shell ist.
+
+
+  **Lebenszyklus.** Träger Start bei der ersten Agent-Anfrage des Kontos, Abräumen
+  nach `OMP_WEB_TENANT_WORKER_IDLE_MS` (Vorgabe 300 000, Werte unter 10 000
+  werden angehoben), harte Obergrenze `OMP_WEB_TENANT_WORKER_MAX` (Vorgabe 4 —
+  310 MiB RSS / 365 MiB Spitze und ~1,1 s pro Worker, 6 Kerne binden
+  vor 12 GiB) mit
+  LRU-Verdrängung, und ein gestorbener Worker wird ersetzt statt weiter
+  ausgeliefert. `SessionInfo.boundary` meldet `kind`/`enforced`/`pid`;
+  `enforced: true` steht dort nur mit gemeldeter PID.
+
+  **Der Provider kommt aus dem eigenen `models.yml` des Kontos.** Der erste echte
+  Start scheiterte mit `No default model selected`, weil die Provider-Liste
+  konstant leer war. Gelesen wird jetzt über `ModelsConfigFile.relocate`, also mit
+  dem Parser des SDK; der Betreiber-Bestand wird nicht geerbt.
+
+  **Zwei Defekte, die erst die Messung zeigte.** Das Transcript einer
+  In-Process-Mandanten-Session war `0644` — `persistBashOnlySession` schrieb ohne
+  `mode`, und das SDK öffnet die `.jsonl` mit `O_CREAT` ohne Modus; jetzt `0600`
+  beim Anlegen plus Nachziehen nach jedem `bash`-Lauf. Und der Ausstiegsmodus war
+  grün, ohne zu prüfen, ob das Flag überhaupt wirkt; Zeile `6c` misst jetzt das
+  Gegenteil der Abnahmezeilen.
+
+  **Zwei Grenzverletzungen, die beim Abschluss des Branches gefunden und
+  geschlossen wurden — beide waren ausnutzbar.** Sie stehen hier, weil sie nicht
+  im Entwurf standen, sondern im fertigen Code:
+
+  1. *Eine selbst geschriebene Session-Kopfzeile verschaffte jede Datei-Wurzel.*
+     Das Archiv eines Kontos liegt in seinem eigenen Home (0700 — aber von seiner
+     eigenen Bash beschreibbar). Eine Datei darin, deren zweite Zeile
+     `{"type":"session","cwd":"/"}` ist, trug ihren `cwd` ungefiltert in
+     `getAllowedFileRoots` (`lib/file-access.ts`), weil der Besitzfilter nur auf
+     den Prozess-Baum angewandt wurde, nicht auf das Mandanten-Archiv
+     (`lib/session-reader.ts`). Gemessen an einem Scratch-Server: danach
+     antwortete `GET /api/files/etc/passwd?type=read` mit **200**, und dieselbe
+     Route gab die 44-Byte-Datei `omp-web-session-key` heraus — aus einem Leser
+     wurde die Fälschung beliebiger Cookies, auch des Admins. Geschlossen an
+     zwei Stellen: das Archiv filtert seine Sessions jetzt mit derselben
+     Besitzregel wie der Prozess-Baum, und `getAllowedFileRoots` nimmt einen
+     `cwd` für einen Nicht-Admin nur noch als Wurzel, wenn er in seinem Home
+     liegt. Abnahmezeile `A12` schreibt den Angriff und prüft, dass er `403`
+     bekommt; zwei Regressionstests in `lib/session-reader.test.mjs` decken
+     Ursache und Gegenprobe ab.
+  2. *Die Session-Kopfzeile nannte den Quellbaum des Betreibers.* Der Server
+     öffnet das Transcript mit `SessionManager.open`; ohne `initialCwd` fällt das
+     SDK auf `getProjectDir()` zurück — den cwd des Serverprozesses. Gemessen:
+     `"cwd":"/home/pi/workspace/omp-web-iso"` in der Kopfzeile einer
+     Mandanten-Session, und `/api/sessions` zeigte ihn als `cwd` **und**
+     `projectRoot`. Über denselben Wurzel-Pfad wie (1) wurde daraus eine erlaubte
+     Datei-Wurzel. Jetzt geht der Konto-Pfad als `initialCwd` mit; die Kopfzeile
+     nennt das Home des Mandanten.
+
+  **Nicht verifiziert und nicht behauptet:** nur ein Host (agent-pc, LXC 101,
+  bubblewrap 0.12.0) gemessen — ob `unprivileged_userns_clone` auf einem anderen
+  Zielhost gesetzt ist, ist offen, und bis dahin ist der Betrieb dort
+  fail-closed (keine Mandanten-Session); Landlock ist dort unbelegt (kein
+  `/sys/kernel/security`, kein `landlock` in `/proc/self/status`), also keine
+  Zusage; es lief **kein echter Modellaufruf** — alle Zeilen sind modellfrei über
+  `ensure_session` und `bash`, ein vollständiger Chat durch einen Worker ist
+  nicht gemessen; der Mandant kann **seinen eigenen** Provider-Schlüssel lesen
+  (der Modellaufruf passiert im selben Prozess wie die Tool-Shell), aber keinen
+  fremden; der Admin-Pfad bleibt ungeschützt; nichts davon ist deployt, getaggt
+  oder gepusht. Die beiden Grenzverletzungen oben sind auf diesem Host belegt —
+  gegen einen Scratch-Server, nicht gegen einen Host ohne User-Namespaces und
+  nicht gegen einen zweiten Host. Das Test-Gate ist grün (3012 Tests, 0
+  Fehlschläge, 85,9 % der Funktionen ausgeführt).
+
 - **Der Deploy lässt einen vom Operator abgeschalteten Healthcheck aus.** Das
   Unit-Drop-in zieht den Timer über `Wants=omp-web-healthcheck.timer` bei jedem
   `systemctl start omp-web.service` wieder herein; war er vor dem Deploy
