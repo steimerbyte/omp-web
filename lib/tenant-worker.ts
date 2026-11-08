@@ -66,6 +66,16 @@ export interface TenantWorker {
   startedAt: number;
   /** Die Grenzmetadaten fuer die Session-Info. */
   boundary: TenantWorkerBoundary;
+  /**
+   * Laeuft der Prozess noch?
+   *
+   * Ein Worker, der gestorben ist, darf aus der Registry **nicht** weiter
+   * ausgeliefert werden: `acquire` wuerde ihn sonst fuer jede weitere Anfrage
+   * zurueckgeben und jeder Request scheiterte an einer geschlossenen Pipe,
+   * statt den in Anforderung 4 verlangten Neustart zu versuchen. Gemeldet wird
+   * das vom Prozess selbst (`Bun.Subprocess.exited`), nicht geschaetzt.
+   */
+  isAlive(): boolean;
   stop(): Promise<void>;
 }
 
@@ -226,6 +236,10 @@ export async function startTenantWorker(
 
   const argv = planned.argv;
   const spawnRef: { pid: number | undefined } = { pid: undefined };
+  // Der Exit des Prozesses ist das einzige verlaessliche Lebenszeichen: ein
+  // `kill` von aussen (OOM, `bwrap` bricht ab) laesst die Pipe schliessen, ohne
+  // dass der Client etwas davon weiss.
+  const death = { dead: false, exit: Promise.withResolvers<number>() };
   const client = new RpcClient({
     spawn: (agentArgs: string[]): RpcAgentProcess => {
       // `RpcClient` baut seinen eigenen argv (`--mode rpc`, `--provider`, …) und
@@ -245,6 +259,10 @@ export async function startTenantWorker(
         stderr: "pipe",
       });
       spawnRef.pid = spawned.pid;
+      void spawned.exited.then((code: number) => {
+        death.dead = true;
+        death.exit.resolve(code);
+      });
       const stderrChunks: string[] = [];
       void (async () => {
         const reader = (spawned.stderr as ReadableStream<Uint8Array>).getReader();
@@ -320,6 +338,7 @@ export async function startTenantWorker(
     boundary: pid === undefined
       ? { kind: "tenant-worker", enforced: false }
       : { kind: "tenant-worker", enforced: true, pid },
+    isAlive: () => !death.dead,
     async stop() {
       await client.stop().catch(() => {});
     },
@@ -396,8 +415,16 @@ export function createTenantWorkerHost(options: { max?: number; idleMs?: number 
     async acquire(identity, start) {
       const existing = slots.get(identity.username);
       if (existing) {
-        scheduleIdle(identity.username);
-        return existing.worker;
+        // Ein toter Worker wird **nicht** ausgeliefert, sondern abgeraeumt und
+        // neu gestartet. Ohne diese Pruefung liefert `acquire` fuer den Rest der
+        // Prozesslaufzeit einen Prozess mit geschlossener Pipe, und jeder
+        // Request scheitert an derselben Stelle — der in Anforderung 4
+        // verlangte "restart on unexpected death" faende nie statt.
+        if (existing.worker.isAlive()) {
+          scheduleIdle(identity.username);
+          return existing.worker;
+        }
+        await evict(identity.username);
       }
       const inflight = starting.get(identity.username);
       if (inflight) return inflight;

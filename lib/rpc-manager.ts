@@ -1028,13 +1028,34 @@ export class AgentSessionWrapper {
     const content = [header, ...manager.getEntries()]
       .map((entry) => JSON.stringify(entry))
       .join("\n") + "\n";
-    writeFileSync(sessionFile, content, { encoding: "utf8", flag: "wx" });
+    // `mode: 0o600` ist hier **nicht** Deko. Ohne den Modus legt `O_CREAT` die
+    // Datei mit der umask des Prozesses an — gemessen `0644`, also weltlesbar
+    // im Mandanten-Home. Ein spaeteres `chmod` waere ein Rennen gegen den
+    // naechsten Append des SDK; der Modus beim Anlegen schliesst das Fenster.
+    // Gemessen 2026-11-08 an einer In-Process-Mandanten-Session unter
+    // `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`: Zeile 7 des Abnahme-Harness war die
+    // einzige rote, weil dieser Pfad als einziger ohne Modus schrieb.
+    writeFileSync(sessionFile, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
 
     // omp normally delays the first flush until an assistant message exists.
     // A leading shell command has no assistant message, so mark this SDK
     // manager as flushed after writing its own generated entries.
     (manager as unknown as { flushed: boolean }).flushed = true;
     cacheSessionPath(this.inner.sessionId, sessionFile);
+  }
+
+  /**
+   * Den Modus des Mandanten-Archivs nachziehen, falls diese Session eines ist.
+   *
+   * Nur fuer den Mandanten-Baum: das Prozess-Archiv des Admins bleibt
+   * unveraendert, und `tenantSessionsRoot` gibt fuer ihn `null`.
+   */
+  private tightenTenantArchive(): void {
+    const sessionFile = this.inner.sessionFile;
+    if (!sessionFile) return;
+    const tenantRoot = tenantSessionsRoot(this.identity);
+    if (tenantRoot === null || !sessionFile.startsWith(`${tenantRoot}/`)) return;
+    tightenTenantSessionTree(sessionFile.slice(0, sessionFile.lastIndexOf("/")));
   }
 
   onEvent(listener: EventListener): () => void {
@@ -1482,6 +1503,13 @@ export class AgentSessionWrapper {
         try {
           const result = await execution;
           this.persistBashOnlySession();
+          // Nach dem Schreiben nachziehen, nicht nur beim Start: das SDK oeffnet
+          // die `.jsonl` mit `O_CREAT` **ohne** Modus (session-storage.ts:316-321)
+          // und erbt damit die umask des Prozesses. Der Aufruf beim Session-Start
+          // lief, bevor diese Datei existierte, und konnte sie deshalb nicht
+          // erfassen — gemessen 2026-11-08: die Datei einer In-Process-
+          // Mandanten-Session war `0644`.
+          this.tightenTenantArchive();
           return result;
         } finally {
           this.resetIdleTimer();

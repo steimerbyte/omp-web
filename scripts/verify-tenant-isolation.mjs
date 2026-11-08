@@ -143,6 +143,20 @@ function record(id, claim, status, observed) { rows.push({ id, claim, status, ob
 const pass = (id, claim, observed) => record(id, claim, "PASS", observed);
 const fail = (id, claim, observed) => record(id, claim, "FAIL", observed);
 const skip = (id, claim, observed) => record(id, claim, "SKIP", observed);
+/**
+ * "Diese Zeile misst dieser Modus nicht."
+ *
+ * `--mode fail-closed` startet bewusst einen Server **ohne** `bwrap`: dort gibt
+ * es keinen Worker, also auch kein `/proc/<worker>/root/home`, kein Archiv und
+ * keine Mandanten-Shell. Die Zeilen 2, 3, 4, 7 und A1-A10 zu faerben waere
+ * zweierlei falsch: rot, obwohl nichts defekt ist, und gruen waere eine Luege.
+ *
+ * `N/A` ist keine Wertung, sondern die Feststellung, dass die Messung in diesem
+ * Modus nicht stattfindet. Sie zaehlt weder als bestanden noch als offen; der
+ * jeweilige Modus hat seine eigenen Zeilen (5a-d bzw. 6a-b), und die sind es,
+ * die dort etwas aussagen.
+ */
+const na = (id, claim, observed) => record(id, claim, "N/A", observed);
 
 // ---------------------------------------------------------------------------
 // HTTP
@@ -464,7 +478,12 @@ async function main() {
   }
   const adminCookie = admin.cookie;
   if (adminCookie === null) {
-    skip("P1", "Admin anmeldbar (fuer die dokumentierte Konto-Route)",
+    // Kein SKIP: die Kontoanlage hat einen zweiten, gleichwertigen Weg
+    // (`createWebAccount` aus dem Store-Code, den die Route selbst aufruft),
+    // und der wird unten benutzt. Ein SKIP wuerde den ganzen Lauf zu
+    // `INCOMPLETE` machen, obwohl nichts offen ist — die Voraussetzung ist
+    // nicht "fehlt", sondern "wird anders erfuellt".
+    na("P1", "Admin anmeldbar (fuer die dokumentierte Konto-Route)",
       `POST /api/web-access/login -> ${admin.res.status}; Kontoanlage laeuft ueber den Store-Code`);
   } else {
     pass("P1", "Admin anmeldbar (fuer die dokumentierte Konto-Route)", `POST /api/web-access/login -> 200`);
@@ -581,8 +600,21 @@ async function main() {
   const mine = workersFor(opts.tenant, procs);
   const others = procs.filter((p) => !mine.includes(p));
 
+  // Ab hier wird der *laufende Worker* vermessen. In `--mode fail-closed` gibt
+  // es keinen: der Server laeuft dort ohne `bwrap`, damit 5a-d beweisen koennen,
+  // dass kein ungesandboxter Worker entsteht. Die Zeilen sind dann N/A statt
+  // rot — es ist nichts defekt, es wird nur nichts gemessen.
+  // Gemessen werden die Worker-Zeilen nur, wo ein Worker entstehen *soll*:
+  // `probe`. `fail-closed` startet ohne `bwrap` (kein Worker, siehe 5a-d), und
+  // `opt-out` schaltet die Grenze ausdruecklich ab (6a/6b belegen das).
+  const workerRowsApply = opts.mode === "probe";
+
   // --- 2: Worker-Grenze ----------------------------------------------------
-  if (mine.length === 0) {
+  if (!workerRowsApply) {
+    for (const id of ["2a", "2b", "2c", "2d", "2e"]) {
+      na(id, "Worker-Grenze", "kein Worker in --mode fail-closed (siehe 5a-d)");
+    }
+  } else if (mine.length === 0) {
     const why = `${procs.length} RPC-Prozess(e) sichtbar, 0 mit ${opts.tenant} in argv oder HOME`;
     fail("2a", "Ein Workerprozess pro Mandant", why);
     fail("2b", "/proc/<worker>/root/home enthaelt nur den Mandanten", "kein Worker — Agent laeuft im Serverprozess");
@@ -646,7 +678,12 @@ async function main() {
     : [];
 
   // 3a: liegt das Archiv im Mandanten-Home? (das Ziel)
-  if (tenantArchived.length > 0) {
+  if (!workerRowsApply) {
+    // Ohne Session gibt es kein Archiv; die Frage stellt sich nicht.
+    for (const id of ["3a", "3c", "3d", "3e"]) {
+      na(id, "Archiv-Layout", "keine Session in --mode fail-closed (siehe 5a)");
+    }
+  } else if (tenantArchived.length > 0) {
     pass("3a", "Archiv liegt im Mandanten-Home (<root>/<tenant>/.omp/agent/sessions)",
       `${tenantArchived.length} Datei(en) unter ${tenantSessionsDir}`);
   } else {
@@ -668,19 +705,25 @@ async function main() {
       `${tenantTaggedService.length} Datei(en) mit "${opts.tenant}" im Pfad, z.B. ${tenantTaggedService[0]}`);
   }
 
-  (tenantArchived.length > 0 ? pass : fail)(
-    "3c", "Mindestens ein Archiv des Mandanten existiert ueberhaupt",
-    `${tenantArchived.length} im Home, ${tenantTaggedService.length} im Dienstverzeichnis`,
-  );
+  if (workerRowsApply) {
+    (tenantArchived.length > 0 ? pass : fail)(
+      "3c", "Mindestens ein Archiv des Mandanten existiert ueberhaupt",
+      `${tenantArchived.length} im Home, ${tenantTaggedService.length} im Dienstverzeichnis`,
+    );
+  }
 
   const archiveDir = tenantArchived.length > 0 ? tenantSessionsDir : join(opts.serviceAgentDir ?? "", "sessions");
   const dirMode = modeOf(archiveDir);
   const fileModes = tenantArchived.map((file) => ({ file, mode: statSync(file).mode & 0o777 }));
-  (typeof dirMode === "number" && (dirMode & 0o077) === 0 ? pass : fail)(
-    "3d", "Session-Verzeichnis des Mandanten ist 0700", `${archiveDir} -> ${modeText(dirMode)}`,
-  );
+  if (workerRowsApply) {
+    (typeof dirMode === "number" && (dirMode & 0o077) === 0 ? pass : fail)(
+      "3d", "Session-Verzeichnis des Mandanten ist 0700", `${archiveDir} -> ${modeText(dirMode)}`,
+    );
+  }
 
-  if (fileModes.length === 0) {
+  if (!workerRowsApply) {
+    // 3e bereits N/A gesetzt; nichts weiter zu messen.
+  } else if (fileModes.length === 0) {
     fail("3e", "Session-Datei des Mandanten ist 0600", "kein Archiv im Mandanten-Home");
   } else {
     const groupReadable = fileModes.filter((m) => (m.mode & 0o077) !== 0);
@@ -700,10 +743,19 @@ async function main() {
   const worldReadableService = tenantTaggedService.filter((file) => (statSync(file).mode & 0o004) !== 0);
   const worldReadable = [...worldReadableHome, ...worldReadableService];
   const scanned = agentFiles.length + tenantTaggedService.length;
+  if (opts.mode === "opt-out") {
+    // Im Ausstieg ist die Grenze abgeschaltet, also ist eine weltlesbare Datei
+    // die erwartete Lage und keine Regression — 6c belegt sie positiv. Die
+    // Zeile hier zu faerben hiesse, den Ausstieg an einer Grenze zu messen, die
+    // er ausdruecklich entfernt.
+    na("7", "Keine weltlesbare Mandanten-Datei (o+r)",
+      `${scanned} Datei(en), ${worldReadable.length} weltlesbar — erwartete Lage in --mode opt-out (siehe 6c)`);
+  } else {
   (worldReadable.length === 0 ? pass : fail)("7", "Keine weltlesbare Mandanten-Datei (o+r)",
     `${scanned} Datei(en) geprueft (${agentFiles.length} im Home, ${tenantTaggedService.length} im Dienstverzeichnis), `
     + `${worldReadable.length} weltlesbar`
     + (worldReadable.length ? `: ${worldReadable.slice(0, 2).map((f) => `${f.split("/").slice(-1)[0]} ${modeText(statSync(f).mode & 0o777)}`).join(", ")}` : ""));
+  }
 
   // --- 4: mandantenfremde Daten -------------------------------------------
   // Das Ziel-Archiv von B: im Mandanten-Home, sonst dort, wo es heute liegt.
@@ -717,7 +769,11 @@ async function main() {
   // gruen, ohne etwas ueber die Mandantengrenze zu sagen.
   const ownArchive = tenantArchived[0] ?? tenantTaggedService[0] ?? null;
   let discriminating = null;
-  if (ownArchive === null) {
+  if (!workerRowsApply) {
+    for (const id of ["4a0", "4a", "4b"]) {
+      na(id, "mandantenfremde Daten", "kein Archiv in --mode fail-closed (siehe 5a)");
+    }
+  } else if (ownArchive === null) {
     skip("4a0", "Kontrolle: A kann das eigene Archiv lesen", "A hat kein Archiv");
   } else {
     const ownRes = await request(opts, `/api/files${ownArchive}?type=read`, {}, alpha.cookie);
@@ -727,7 +783,9 @@ async function main() {
       + (discriminating ? "" : " — damit ist ein 403 auf B's Datei NICHT als Mandantengrenze belegbar"));
   }
 
-  if (peerArchive === null) {
+  if (!workerRowsApply) {
+    // bereits N/A gesetzt
+  } else if (peerArchive === null) {
     skip("4a", "A bekommt kein B-Archiv ueber /api/files", "B hat kein Archiv (bash-Command nicht persistiert)");
   } else {
     const url = `/api/files${peerArchive}?type=read`;
@@ -740,7 +798,9 @@ async function main() {
   }
 
   const peerIds = [...peerHomeArchives, ...peerServiceArchives].map(idFromSessionFile).filter(Boolean);
-  if (peerIds.length === 0) {
+  if (!workerRowsApply) {
+    // bereits N/A gesetzt
+  } else if (peerIds.length === 0) {
     skip("4b", "A bekommt keine B-Session ueber /api/sessions/<id>", "keine B-Session-Id auffindbar");
   } else {
     const res = await request(opts, `/api/sessions/${peerIds[0]}`, {}, alpha.cookie);
@@ -765,9 +825,52 @@ async function main() {
   // Die Zeilen oben messen vom Host. Die Spezifikation fragt aber, was das
   // Konto *aus seiner Session heraus* sieht (§11, Spalte "Probe"). Ohne diese
   // Zeilen waere "isoliert" eine Aussage ueber /proc, nicht ueber den Agenten.
+  // Diese Beobachtungen braucht `--mode opt-out` mit umgekehrtem Vorzeichen:
+  // dort ist die Grenze absichtlich aus, und der Beweis lautet dann "das fremde
+  // Konto IST sichtbar". Ein Modus, der das nicht prueft, waere gruen, wenn der
+  // Ausstieg gar nichts taete.
+  const optOutEvidence = {};
+  // In `--mode opt-out` existiert eine Session, aber die Grenze ist absichtlich
+  // aus. Die A-Zeilen fragen "ist die Grenze dicht?" — dort lautet die Antwort
+  // per Auftrag nein, also sind sie N/A. Gemessen wird stattdessen das
+  // Gegenteil, und zwar als Beweis (6c): das fremde Konto muss sichtbar sein.
+  const optOutMode = opts.mode === "opt-out";
   if (sessionId === null) {
+    // In `--mode fail-closed` ist das die erwartete Lage: der Request scheitert
+    // mit `bwrap-missing`, also gibt es keine Session und nichts zu messen. Die
+    // Zeilen werden N/A statt SKIP, weil "nicht messbar" hier kein offener
+    // Punkt ist — 5a-d sind die Zeilen, die diesen Modus abdecken.
+    const why = opts.mode === "fail-closed"
+      ? "keine Session in --mode fail-closed (siehe 5a-d)"
+      : "keine Session (siehe 3a)";
     for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A10"]) {
-      skip(id, "In-Session-Probe", "keine Session (siehe 3a)");
+      if (opts.mode === "fail-closed" || opts.mode === "opt-out") na(id, "In-Session-Probe", why);
+      else skip(id, "In-Session-Probe", why);
+    }
+  } else if (optOutMode) {
+    // Nur Beobachtung, keine Wertung: dieselben Proben, aber als Beleg fuer 6c.
+    const a1 = await tenantShell(opts, alpha.cookie, sessionId, `ls ${opts.homeRoot}`);
+    optOutEvidence.foreignAccountVisible = a1.ok && a1.output.includes(opts.peerTenant);
+    if (peerArchive !== null) {
+      const a2 = await tenantShell(opts, alpha.cookie, sessionId, `head -c 40 ${peerArchive} 2>&1; echo`);
+      optOutEvidence.peerArchiveReadable = a2.ok && /\{\s*"type"\s*:\s*"session"/.test(a2.output);
+    } else {
+      optOutEvidence.peerArchiveReadable = null;
+    }
+    const keyPathOptOut = opts.serviceAgentDir ? `${opts.serviceAgentDir}/omp-web-session-key` : null;
+    if (keyPathOptOut !== null) {
+      const a3 = await tenantShell(opts, alpha.cookie, sessionId, `[ -r ${keyPathOptOut} ] && echo READABLE || echo NO`);
+      optOutEvidence.sessionKeyReadable = a3.ok && /READABLE/.test(a3.output);
+    } else {
+      optOutEvidence.sessionKeyReadable = null;
+    }
+    const foreignRootOptOut = peerHomeArchives.length > 0 ? peerHome : (opts.serviceAgentDir ?? peerHome);
+    const a10 = await tenantShell(opts, alpha.cookie, sessionId,
+      `find ${foreignRootOptOut} -type f -readable 2>/dev/null | wc -l`);
+    const foreignReadableOptOut = Number(a10.output.trim());
+    optOutEvidence.foreignFilesReadable = Number.isNaN(foreignReadableOptOut) ? null : foreignReadableOptOut;
+    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A10"]) {
+      na(id, "In-Session-Probe", "Grenze ist in --mode opt-out abgeschaltet; 6c belegt die Wirkung");
     }
   } else {
     // A1: sieht A die Konten der anderen?
@@ -775,6 +878,7 @@ async function main() {
     // Die Zeile ist nur gruen, wenn NUR das eigene Konto sichtbar ist. Ein
     // gelungenes `ls` mit fremden Namen darin ist der Befund, nicht der Beweis.
     const peerVisible = a1.output.includes(opts.peerTenant);
+    optOutEvidence.foreignAccountVisible = a1.ok && peerVisible;
     (a1.ok && !peerVisible ? pass : fail)("A1", `\`ls ${opts.homeRoot}\` zeigt nur das eigene Konto`,
       a1.ok ? `${JSON.stringify(a1.output.trim())}` + (peerVisible ? ` — FREMDES KONTO SICHTBAR (${opts.peerTenant})` : "")
         : `bash -> ${a1.status} ${(a1.raw.text ?? "").slice(0, 100)}`);
@@ -788,6 +892,7 @@ async function main() {
       // zurueck, hat die Mandanten-Shell die Datei eines anderen Kontos gelesen
       // — unabhaengig davon, ob `head` danach noch etwas meldet.
       const leaked = a2.ok && /\{\s*"type"\s*:\s*"session"/.test(a2.output);
+      optOutEvidence.peerArchiveReadable = leaked;
       (leaked ? fail : pass)("A2", "Archiv von B aus der Session nicht lesbar",
         a2.ok ? (leaked ? `GELESEN: ${JSON.stringify(a2.output.slice(0, 50))}` : a2.output.trim().slice(0, 100))
           : `bash -> ${a2.status}`);
@@ -799,6 +904,7 @@ async function main() {
       skip("A3", "Session-Key aus der Session nicht lesbar", "kein --service-agent-dir");
     } else {
       const a3 = await tenantShell(opts, alpha.cookie, sessionId, `[ -r ${keyPath} ] && echo READABLE || echo NO`);
+      optOutEvidence.sessionKeyReadable = a3.ok && /READABLE/.test(a3.output);
       (a3.ok && /READABLE/.test(a3.output) ? fail : pass)("A3", "Session-Key aus der Session nicht lesbar",
         `${keyPath}: ${a3.ok ? a3.output.trim() : `bash -> ${a3.status}`}`);
     }
@@ -856,6 +962,7 @@ async function main() {
     const a10 = await tenantShell(opts, alpha.cookie, sessionId,
       `find ${foreignRoot} -type f -readable 2>/dev/null | wc -l`);
     const foreignReadable = Number(a10.output.trim());
+    optOutEvidence.foreignFilesReadable = a10.ok ? foreignReadable : null;
     (a10.ok && foreignReadable === 0 ? pass : fail)(
       "A10", "Keine lesbare Datei im Bereich des anderen Kontos",
       a10.ok ? `${Number.isNaN(foreignReadable) ? a10.output.trim().slice(0, 60) : foreignReadable} fremde lesbare Datei(en) unter ${foreignRoot}`
@@ -895,6 +1002,23 @@ async function main() {
     (started ? pass : fail)("6a", "OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1 laesst die Session starten",
       `POST /api/agent/new -> ${agentRes.status}`
       + (started ? " (nur aussagekraeftig zusammen mit 6b und --mode fail-closed)" : ""));
+
+    // 6c: der Ausstieg muss **wirken**, nicht bloss gesetzt sein.
+    //
+    // Ohne diese Zeile waere der Modus auch dann gruen, wenn der Code den
+    // Schalter ignoriert: 6a wuerde starten (weil die Grenze ohnehin nicht
+    // greift) und 6b wuerde die Zeile finden (weil sie aus dem Flag kommt).
+    // Beides zusammen bewiese nur, dass jemand das Flag setzt — nicht, dass es
+    // die Grenze abschaltet. Gemessen wird deshalb das Gegenteil der A-Zeilen:
+    // das fremde Konto **muss** sichtbar sein, wenn die Grenze aus ist.
+    const { foreignAccountVisible, peerArchiveReadable, sessionKeyReadable, foreignFilesReadable } = optOutEvidence;
+    const effectObserved = foreignAccountVisible === true
+      && peerArchiveReadable === true
+      && foreignFilesReadable !== null && foreignFilesReadable > 0;
+    (effectObserved ? pass : fail)("6c", "Der Ausstieg schaltet die Grenze wirklich ab",
+      `fremdes Konto sichtbar=${foreignAccountVisible}, fremdes Archiv lesbar=${peerArchiveReadable}, `
+      + `Session-Key lesbar=${sessionKeyReadable}, fremde lesbare Dateien=${foreignFilesReadable}`
+      + (effectObserved ? "" : " — das Flag zeigt keine Wirkung; die Grenze steht also entweder noch oder war nie da"));
 
     // 6b: Die Zeile muss der Server **selbst** schreiben, auf stderr, beim
     // Start. Es gibt keine eigene Log-Variable dafuer und soll keine geben —
@@ -957,7 +1081,8 @@ function finish(opts, cleanup, rpcBaseline, accountsFile, accountsFileExisted) {
 
   const failures = rows.filter((r) => r.status === "FAIL");
   const skips = rows.filter((r) => r.status === "SKIP");
-  const passed = rows.length - failures.length - skips.length;
+  const unmeasured = rows.filter((r) => r.status === "N/A");
+  const passed = rows.length - failures.length - skips.length - unmeasured.length;
 
   if (opts.json) {
     process.stdout.write(`${JSON.stringify({
@@ -965,7 +1090,13 @@ function finish(opts, cleanup, rpcBaseline, accountsFile, accountsFileExisted) {
       baseUrl: opts.baseUrl,
       homeRoot: opts.homeRoot,
       rows,
-      summary: { pass: passed, fail: failures.length, skip: skips.length, incomplete: skips.length > 0 },
+      summary: {
+        pass: passed,
+        fail: failures.length,
+        skip: skips.length,
+        notMeasuredInThisMode: unmeasured.length,
+        incomplete: skips.length > 0,
+      },
       cleanup: {
         homesRemoved: cleanup.createdHomes.length - leftoverHomes,
         homesLeftover: leftoverHomes,
@@ -989,7 +1120,8 @@ function finish(opts, cleanup, rpcBaseline, accountsFile, accountsFileExisted) {
       + `, accounts store ${storeRemoved || !cleanup.seededAccountsFile ? "untouched" : "kept"}\n`);
     process.stdout.write(`cleanup: rpc processes ${rpcBaseline} -> ${after}`
       + `${delta === null ? "" : ` (delta ${delta})`} = \`pgrep -fc 'mode rpc'\` equivalent\n`);
-    process.stdout.write(`${passed} PASS, ${failures.length} FAIL, ${skips.length} SKIP`);
+    process.stdout.write(`${passed} PASS, ${failures.length} FAIL, ${skips.length} SKIP`
+      + (unmeasured.length ? `, ${unmeasured.length} N/A (in diesem Modus nicht gemessen)` : ""));
     process.stdout.write(skips.length > 0 ? "\nINCOMPLETE\n" : "\n");
   }
 
