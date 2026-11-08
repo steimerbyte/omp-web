@@ -135,23 +135,27 @@ cd "$LIVE_DIR"
 # sauberer Lauf kostet 69,3 s (07:40:54.398 -> 07:42:04.043). Die Downtime ist
 # also die Build-Zeit.
 #
-# Nur stoppen, wenn der Timer laeuft: einen vom Operator bewusst
-# abgeschalteten Watchdog soll das Deploy nicht wieder einschalten.
+# Ein vom Operator bewusst abgeschalteter Watchdog bleibt aus: das Unit-
+# Drop-in traegt `Wants=omp-web-healthcheck.timer`, also zieht jedes
+# `systemctl start omp-web.service` den Timer wieder herein. Ist er vor dem
+# Deploy inaktiv, merkt sich das Skript den Zustand und stoppt ihn nach dem
+# Start erneut -- ohne diesen Schritt waere er nach jedem Deploy wieder aktiv.
 #
 # Der EXIT-Trap schaltet den Timer wieder ein, auch auf dem die()-Pfad (der
 # Dienst bleibt dort bewusst gestoppt). `|| true`, damit der Trap den
 # Exit-Code des Skripts nicht verschluckt. Das Skript hat keinen anderen Trap.
 #
-# Rest: das Unit-Drop-in traegt `Wants=omp-web-healthcheck.timer` und
-# `After=...`, also zieht jedes `systemctl start omp-web.service` den Timer
-# wieder herein, bevor der Trap ihn erneut startet. Eine Probe feuert damit
-# sofort und kann die frische Instanz einmal neu starten -- gemessen
+# Rest (host-seitig, im Drop-in): eine Probe des hereingezogenen Timers feuert
+# trotzdem einmal und kann die frische Instanz einmal neu starten -- gemessen
 # 2026-11-08: 1,4 ms nach "Started", Neustart nach 171 ms, NRestarts bleibt 0.
-# Der Hebel dafuer liegt host-seitig im Drop-in, nicht hier.
-if systemctl cat omp-web-healthcheck.timer >/dev/null 2>&1 \
-  && systemctl is-active --quiet omp-web-healthcheck.timer; then
-  sudo -n systemctl stop omp-web-healthcheck.timer
-  trap 'sudo -n systemctl start omp-web-healthcheck.timer || true' EXIT
+healthcheck_off=0
+if systemctl cat omp-web-healthcheck.timer >/dev/null 2>&1; then
+  if systemctl is-active --quiet omp-web-healthcheck.timer; then
+    sudo -n systemctl stop omp-web-healthcheck.timer
+    trap 'sudo -n systemctl start omp-web-healthcheck.timer || true' EXIT
+  else
+    healthcheck_off=1
+  fi
 fi
 
 sudo -n systemctl stop omp-web.service
@@ -159,4 +163,5 @@ rm -rf .next
 "$BUN" run build >/tmp/omp-web-live-build.log 2>&1 \
   || { tail -40 /tmp/omp-web-live-build.log >&2; die "Live-Build fehlgeschlagen, Dienst bleibt gestoppt"; }
 sudo -n systemctl start omp-web.service
+[ "$healthcheck_off" = 1 ] && sudo -n systemctl stop omp-web-healthcheck.timer || true
 log "Live-Instanz neu gestartet"
