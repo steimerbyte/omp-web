@@ -15,6 +15,12 @@ upstream line — see the Provenance section in the README.
   abgehalten: der Timer feuert 1,4 ms nach `Started`, lange bevor der Loop das
   erste `curl` macht (gemessen 2026-11-08 auf agent-pc), und kostete nur 1,5 s.
 
+- **Der heutige Tag glüht im Kalender.** Die Monatszelle und die Kopfzelle des
+  Tages in der Wochen- und Tagesansicht tragen `data-cal-today`; ein
+  Conic-Verlauf aus `var(--accent)` dreht über den bereits registrierten
+  `--bg-angle` in 9 s und liegt unter allem Inhalt der Zelle.
+  `prefers-reduced-motion` bekommt denselben Schein ohne Drehung.
+
 ## v0.24.3
 Released 2026-11-08.
 

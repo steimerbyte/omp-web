@@ -190,6 +190,10 @@ const { CalendarView, visibleEventCount } = await jiti.import("../CalendarView.t
 // schreibt sie nicht noch einmal hin.
 const { deLocale } = await jiti.import("@/lib/i18n/messages/de.ts");
 const deMessages = deLocale.messages;
+// Das Raster und die Monatsrechnung der Ansicht — der Test baut sie nicht
+// nach, er benutzt sie.
+const { buildMonthGrid } = await jiti.import("@/lib/calendar.ts");
+const { shiftMonth, todayDateString } = await jiti.import("../calendar/calendar-model.ts");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -726,6 +730,97 @@ test("das Wochenende ist markiert — Monatskopf, Monatszellen und Wochenansicht
   );
 
   await act(async () => { root.unmount(); });
+});
+
+// ------------------------------- Der heutige Tag traegt einen Schein ------
+
+/**
+ * Der heutige Tag ist genau einmal markiert — in jeder Ansicht.
+ *
+ * Die Markierung ist ein Attribut und keine Klasse, weil sie an *einem* Tag
+ * haengt und nicht an einer Gestalt: der Schein in `app/globals.css` haengt
+ * sich an `[data-cal-today]`, und die Zelle braucht dafuer keine Klasse, die
+ * mit jeder anderen kollidieren koennte.
+ */
+test("der Monat markiert den heutigen Tag genau einmal — und laesst ihn beim Blaettern los", async () => {
+  const { root } = await mount();
+
+  const todayIso = todayDateString();
+  const marked = [...win.document.querySelectorAll("[data-cal-today]")];
+  assert.equal(marked.length, 1, "die Monatsansicht markiert nicht genau einen Tag");
+  assert.equal(marked[0].getAttribute("data-cal-cell"), "true", "die Markierung sitzt nicht in einer Monatszelle");
+  assert.ok(
+    marked[0].textContent.includes(String(today.getDate())),
+    "die markierte Monatszelle zeigt nicht den heutigen Tag",
+  );
+
+  // Einen Monat vor. Im naechsten Raster steht heute nur dann, wenn es in die
+  // fuehrende Woche des Folgemonats faellt — der 1. des Folgemonats ist nicht
+  // immer ein Montag. `buildMonthGrid` ist dieselbe Rechnung, die die Ansicht
+  // benutzt; ein festes „null" waere an bis zu vier Tagen im Monat falsch.
+  const nextButton = win.document.querySelector(`button[aria-label="${deMessages["calendar.next"]}"]`);
+  assert.ok(nextButton, "der Knopf fuer den naechsten Monat fehlt");
+  await act(async () => { nextButton.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const stillVisible = buildMonthGrid(shiftMonth(todayIso, 1)).includes(todayIso);
+  assert.equal(
+    win.document.querySelectorAll("[data-cal-today]").length,
+    stillVisible ? 1 : 0,
+    stillVisible
+      ? "heute steht im naechsten Raster, ist dort aber nicht markiert"
+      : "die Markierung bleibt, obwohl heute nicht mehr im Raster steht",
+  );
+
+  await act(async () => { root.unmount(); });
+});
+
+test("die Wochenansicht markiert den heutigen Tag in der Kopfzeile, nicht in der Stundenspalte", async () => {
+  const { root } = await mount();
+
+  await act(async () => { buttonWith(deMessages["calendar.week"]).click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const marked = [...win.document.querySelectorAll("[data-cal-today]")];
+  assert.equal(marked.length, 1, "die Wochenansicht markiert nicht genau einen Tag");
+  // Die Kopfzelle sitzt in der stehenden Datumszeile; die Stundenspalte
+  // darunter traegt weder `position: sticky` noch eine Spaltenvorlage.
+  const row = marked[0].parentElement;
+  assert.equal(row.style.position, "sticky", "die Markierung sitzt nicht in der stehenden Datumszeile");
+  assert.ok(row.style.gridTemplateColumns.includes("repeat(7,"), "die Datumszeile hat keine sieben Tagesspalten");
+  assert.equal(marked[0].firstElementChild.textContent, `${today.getDate()}.`, "die markierte Kopfzelle zeigt nicht den heutigen Tag");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("der Schein: 9s, --bg-angle, omp-gradient-spin — und reduced motion steht still", async () => {
+  const css = await readFile(new URL("../../app/globals.css", import.meta.url), "utf8");
+
+  // Die Regel dreht den bereits registrierten Winkel in 9s.
+  assert.match(
+    css,
+    /\[data-cal-today\]\s*\{[^}]*animation:\s*omp-gradient-spin\b/,
+    "die Regel animiert nicht omp-gradient-spin",
+  );
+  // Die Zahl 9s steht auch im Kommentar der Regel — hier haelt der Test sie.
+  assert.match(
+    css,
+    /\[data-cal-today\]\s*\{[^}]*var\(--omp-cal-glow-duration,\s*9s\)/,
+    "die Vorgabedauer ist nicht 9s",
+  );
+  // Der Verlauf liest den registrierten Winkel, keine feste Drehung.
+  assert.match(
+    css,
+    /\[data-cal-today\]::before\s*\{[^}]*conic-gradient\([^;]*var\(--bg-angle/,
+    "der Verlauf liest --bg-angle nicht",
+  );
+  // Ein Betriebssystem, das weniger Bewegung will, bekommt denselben Schein
+  // ohne Drehung.
+  assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\[data-cal-today\]\s*\{\s*animation:\s*none;?\s*\}\s*\}/,
+    "reduced motion stellt den Schein nicht still",
+  );
 });
 
 // ------------------------- Uhrzeit im Dialog, aus jeder Ansicht heraus --

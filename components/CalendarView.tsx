@@ -982,6 +982,7 @@ function MonthGrid({
             <div
               key={date}
               data-cal-cell="true"
+              data-cal-today={isToday ? "true" : undefined}
               data-cal-weekend={weekend ? "true" : undefined}
               onClick={() => {
                 // Die Liste oeffnet nur, wenn es etwas zu waehlen gibt — und
@@ -1202,6 +1203,8 @@ function TimeGrid({
   onMove: (event: CalendarEvent, target: MoveTarget) => void;
 }) {
   const t = useCalendarText();
+  /** Der heutige Tag — die Kopfzelle, die der Schein markiert. */
+  const todayDate = todayDateString();
   /** Die Breite der Stundenskala — schmal, wenn der Bildschirm es ist. */
   const axisWidth = compact ? TIME_AXIS_WIDTH_SMALL : TIME_AXIS_WIDTH;
   /**
@@ -1284,6 +1287,7 @@ function TimeGrid({
               return (
                 <div
                   key={date}
+                  data-cal-today={date === todayDate ? "true" : undefined}
                   data-cal-weekend={weekend ? "true" : undefined}
                   style={{
                     padding: compact ? "3px 2px" : "4px 6px",
