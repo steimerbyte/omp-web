@@ -95,6 +95,31 @@ export async function register(): Promise<void> {
     }
   }
 
+  // Der Betriebsausstieg aus der Mandanten-Grenze, **beim Start** und laut.
+  //
+  // Ohne diesen Block entstuende die Warnung erst beim ersten Mandanten-Request
+  // (`lib/rpc-manager.ts`, `logUnsandboxedTenantWarningOnce`), also irgendwann
+  // und vielleicht nie. Der Betreiber entscheidet den Zustand aber hier, beim
+  // Start; die Zeile gehoert deshalb hierher, auf stderr, damit `2>` oder
+  // systemd sie auffaengt.
+  //
+  // Der Text nennt den Variablennamen und die Folge — keinen Mandantennamen:
+  // beim Start ist noch keiner angemeldet, und eine Zeile pro Konto waere das
+  // Rauschen, das die eine wichtige Zeile verdeckt.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    try {
+      const loadWorkerConfig = Function("specifier", "return import(specifier)") as (
+        specifier: string,
+      ) => Promise<{ unsandboxedTenantWarning: (env?: NodeJS.ProcessEnv) => string | null }>;
+      const workerConfigUrl = `file://${encodeURI(process.cwd())}/lib/tenant-worker-config.ts`;
+      const { unsandboxedTenantWarning } = await loadWorkerConfig(workerConfigUrl);
+      const warning = unsandboxedTenantWarning();
+      if (warning !== null) console.warn(warning);
+    } catch (error) {
+      console.error("[tenant-boundary] could not read the opt-out flag:", error);
+    }
+  }
+
   // Der Zeitplaner geplanter Aufgaben. `register` ist der einzige
   // Lebenszyklus-Haken, den Next anbietet — es gibt keinen "beim Beenden" —,
   // also wird er hier gestartet und laeuft, solange der Prozess laeuft.

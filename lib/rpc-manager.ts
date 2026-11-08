@@ -29,6 +29,20 @@ import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
 import { prepareTenantSessionDir, tenantSessionsRoot, tightenTenantSessionTree } from "./tenant-sessions";
+import {
+  createTenantWorkerHost,
+  startTenantWorker,
+  tenantBoundaryPolicy,
+  type TenantWorker,
+  type TenantWorkerHost,
+} from "./tenant-worker";
+import { createWorkerBackedSession, tenantArchiveDir, type WorkerSessionBoundary } from "./tenant-worker-session";
+import { resolveBunPath } from "../bin/runtime.js";
+import { EventEmitter } from "node:events";
+import { dirname, join } from "node:path";
+import { unsandboxedTenantWarning } from "./tenant-worker-config";
+import { fileURLToPath } from "node:url";
+import { getUserHome } from "./request-identity";
 import { isAdminIdentity, type WebIdentity } from "./request-identity";
 import { resolveSessionLoads, sessionSettings } from "./load-policy";
 import { loadSessionSkills } from "./skills-service";
@@ -1900,6 +1914,7 @@ declare global {
   var __ompStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
   var __ompStartingSessionCwds: Map<string, number> | undefined;
   var __ompRunningListeners: Set<(ids: string[]) => void> | undefined;
+  var __ompTenantWorkers: TenantWorkerHost | undefined;
 }
 
 function getRegistry(): Map<string, AgentSessionWrapper> {
@@ -2031,6 +2046,35 @@ function runtimeMessageActivityMs(entry: SessionMessageEntry): number | undefine
 }
 
 /**
+ * Die Grenze einer laufenden Session.
+ *
+ * Gefragt wird die Session selbst, nicht die Registry: der Worker-Pfad haengt
+ * `boundary` an das Objekt (`lib/tenant-worker-session.ts`), der In-Process-Pfad
+ * nicht. Damit gibt es genau eine Quelle, und ein Admin bekommt keine
+ * Behauptung, die er nicht gemessen hat.
+ *
+ * `enforced: true` steht bei einem Worker nur, wenn beide Bedingungen gelten:
+ * `boundary.enforced` aus dem Start **und** eine gemeldete PID. Die Zusage aus
+ * §5/§8 des Plans ("keine Isolation behaupten, die nicht da ist") wird hier
+ * durchgereicht, nicht neu behauptet.
+ */
+function boundaryForSession(session: AgentSessionWrapper): SessionInfo["boundary"] {
+  const boundary = (session.inner as { boundary?: SessionInfo["boundary"] }).boundary;
+  if (!boundary) {
+    // Der In-Process-Pfad: der Admin und der ausdrueckliche Ausstieg. `enforced`
+    // ist hier immer `false`, weil in diesem Prozess jede Grenze eine
+    // Vereinbarung waere; eine PID gibt es nicht, weil es keinen eigenen
+    // Prozess gibt.
+    return { kind: "in-process", enforced: false };
+  }
+  // Ein Worker meldet `enforced: true` nur mit lebender PID — die Zusage aus
+  // §5/§8 des Plans, hier nur durchgereicht und nicht neu behauptet.
+  return boundary.kind === "tenant-worker"
+    ? { kind: "tenant-worker", enforced: boundary.enforced === true && boundary.pid !== undefined, ...(boundary.pid !== undefined ? { pid: boundary.pid } : {}) }
+    : { kind: "in-process", enforced: false };
+}
+
+/**
  * Return live sessions that should be visible in the session list. Pi delays
  * the first JSONL flush until an assistant message exists, so an accepted new
  * prompt must temporarily be described from its in-memory SessionManager.
@@ -2067,6 +2111,7 @@ export function getRpcSessionInfos(identity: WebIdentity | null = null): Session
       if (activityMs !== undefined) lastActivityMs = Math.max(lastActivityMs, activityMs);
     }
 
+    const boundary = boundaryForSession(session);
     sessions.push({
       path: sessionFile ?? "",
       id: header?.id ?? session.sessionId,
@@ -2077,6 +2122,7 @@ export function getRpcSessionInfos(identity: WebIdentity | null = null): Session
       messageCount: messages.length,
       firstMessage: firstUserMessage ? runtimeMessageText(firstUserMessage) || "(no messages)" : "(no messages)",
       transient: !persisted,
+      ...(boundary ? { boundary } : {}),
     });
   }
   return sessions;
@@ -2182,6 +2228,191 @@ export function notifyRunningChange(): void {
 }
 
 /**
+ * Ein Mandanten-Request, der an der Grenze scheitert.
+ *
+ * Drei Felder, weil die Abnahmetabelle A5 genau danach fragt: `reason` (was
+ * fehlt), `detail` (der gemessene Befund) und `remediation` (was zu tun ist).
+ * Ein `Error` mit nur einer Nachricht zwingt die Route, den Grund aus einem
+ * String zu raten — und damit landet er irgendwann nicht mehr im Fehlerkoerper.
+ */
+export class TenantBoundaryError extends Error {
+  readonly reason: string;
+  readonly detail: string;
+  readonly remediation: string;
+
+  constructor(failure: { reason: string; detail: string; remediation: string }) {
+    super(`${failure.reason}: ${failure.detail}`);
+    this.name = "TenantBoundaryError";
+    this.reason = failure.reason;
+    this.detail = failure.detail;
+    this.remediation = failure.remediation;
+  }
+}
+
+/**
+ * Die HTTP-Antwort zu einer fehlenden Grenze.
+ *
+ * **Warum nicht 500.** Ein fehlendes `bwrap` ist kein Serverfehler, sondern ein
+ * Zustand des Hosts: die Voraussetzung ist bekannt, benannt und behebbar. Eine
+ * 500 sagt "der Server ist kaputt" und schickt den Betreiber in die Logs,
+ * obwohl der Grund im Koerper steht und die Abhilfe ein `pacman -S bubblewrap`
+ * ist. Dieselbe Ueberlegung gilt fuer den Terminal-Pfad, der fuer denselben
+ * Zustand seit jeher **503** antwortet (`app/api/terminal/route.ts:97-104`) —
+ * zwei Routen, die fuer dieselbe Ursache zwei verschiedene Statuscodes
+ * schicken, waeren ein Widerspruch in der API.
+ *
+ * `503` heisst ausserdem genau das Richtige: der Dienst ist da, diese eine
+ * Faehigkeit fehlt gerade, und ein spaeterer Versuch kann gelingen (sobald
+ * jemand bwrap installiert hat). `500` behauptet das Gegenteil.
+ *
+ * Die vier Gruende sind **Voraussetzungen des Hosts**: etwas, das auf dieser
+ * Maschine fehlt oder abgeschaltet ist, unabhaengig von diesem Request.
+ * `boundary-unavailable` fasst dabei drei fehlende Dateien zusammen (Home,
+ * SDK-CLI, Bun) — der Grund steht in `detail`, nicht im Status.
+ *
+ * **Nicht dabei**, und warum:
+ * - `unsupported-platform`: Windows hat keine User-Namespaces und bekommt sie
+ *   nicht durch einen erneuten Versuch. Ein `503` wuerde "probier es spaeter
+ *   nochmal" sagen, was hier nie stimmt; das bleibt bei `500`.
+ * - `tenant-worker-capacity`: eine Betriebsgrenze, kein Zustand des Hosts. Der
+ *   Aufrufer kann sie nur durch Warten oder einen Administrationsschritt
+ *   aufloesen — kein "voruebergehend weg" im Sinne von 503.
+ * - `tenant-worker-spawn-failed`: der Plan ging auf, der Prozess starb
+ *   trotzdem. Das ist der eine echte Defekt in dieser Familie, und ihn als
+ *   voruebergehend zu deklarieren luede zu einem Wiederholungssturm ein.
+ */
+const BOUNDARY_STATUS_BY_REASON: Record<string, number> = {
+  "bwrap-missing": 503,
+  "userns-disabled": 503,
+  "boundary-unavailable": 503,
+  "mask-unavailable": 503,
+};
+
+/**
+ * Der Statuscode fuer einen fehlgeschlagenen Worker-Start.
+ *
+ * Unbekannte Gruende fallen auf `500`: ein neuer Grund soll laut auffallen,
+ * nicht stillschweigend als "kommt gleich wieder" durchgehen.
+ */
+export function tenantBoundaryHttpStatus(reason: string): number {
+  return BOUNDARY_STATUS_BY_REASON[reason] ?? 500;
+}
+
+let unsandboxedTenantWarned = false;
+
+/**
+ * Die laute Zeile fuer den Betriebsausstieg — **einmal pro Serverstart**.
+ *
+ * Auf stderr, nicht in eine Datei: es gibt keine Startlogdatei
+ * (`OMP_WEB_STARTUP_LOG` existiert nicht), und systemd faengt stderr des
+ * Dienstes auf. `console.warn` geht nach stderr, `console.log` nach stdout —
+ * deshalb steht hier `console.warn`.
+ *
+ * Einmal pro Prozess, nicht pro Anfrage: der Zustand ist beim Start
+ * entschieden, und eine Zeile pro Request waere Rauschen, das die eine
+ * wichtige Zeile verdeckt.
+ */
+export function logUnsandboxedTenantWarningOnce(env: NodeJS.ProcessEnv = process.env): void {
+  if (unsandboxedTenantWarned) return;
+  const warning = unsandboxedTenantWarning(env);
+  if (warning === null) return;
+  unsandboxedTenantWarned = true;
+  console.warn(warning);
+}
+
+/** Nur fuer Tests: die Einmal-Sperre zuruecksetzen. */
+export function __resetUnsandboxedTenantWarning(): void {
+  unsandboxedTenantWarned = false;
+}
+
+/**
+ * Der Worker eines Kontos, beschafft oder gestartet, und die Session darauf.
+ *
+ * Die Registry ist prozess-global (`globalThis`), wie die Session-Registry
+ * selbst: eine zweite Instanz pro Modul-Laden wuerde bei jedem Reload einen
+ * zweiten Worker fuer dasselbe Konto starten.
+ */
+function getTenantWorkerHost(): TenantWorkerHost {
+  if (!globalThis.__ompTenantWorkers) {
+    globalThis.__ompTenantWorkers = createTenantWorkerHost();
+    // Beim Beenden die Kinder mitnehmen. `die-with-parent` in der Namespace
+    // sorgt dafuer, dass ein hart beendeter Server keine Waisen hinterlaesst;
+    // dieser Haken ist der geordnete Weg fuer den Normalfall.
+    const shutdown = () => {
+      const host = globalThis.__ompTenantWorkers;
+      if (!host) return;
+      for (const entry of host.snapshot()) void host.release(entry.username);
+    };
+    process.once("exit", shutdown);
+    process.once("SIGTERM", shutdown);
+    process.once("SIGINT", shutdown);
+  }
+  return globalThis.__ompTenantWorkers;
+}
+
+interface WorkerSessionStart {
+  identity: WebIdentity;
+  cwd: string;
+  sessionFile: string;
+  sessionId: string;
+  options: RpcSessionStartOptions;
+}
+
+async function startWorkerSessionForTenant(
+  start: WorkerSessionStart,
+): Promise<
+  | { ok: true; session: AgentSessionLike & { boundary: WorkerSessionBoundary }; eventBus: ConstructorParameters<typeof AgentSessionWrapper>[1] }
+  | { ok: false; reason: string; detail: string; remediation: string }
+> {
+  const { identity } = start;
+  const host = getTenantWorkerHost();
+  const bunPath = resolveBunPath();
+  if (bunPath === null) {
+    return {
+      ok: false,
+      reason: "boundary-unavailable",
+      detail: "Bun was not found, so the tenant worker cannot be started.",
+      remediation: "Install Bun (https://bun.sh) or set OMP_WEB_BUN to its absolute path.",
+    };
+  }
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const acquired = await host.acquire(identity, () => startTenantWorker(identity, {
+    bunPath,
+    repoRoot: repositoryRoot,
+    providers: [],
+  }));
+  if ("ok" in acquired && acquired.ok === false) {
+    return acquired;
+  }
+  const worker = acquired as TenantWorker;
+  host.touch(identity.username);
+  try {
+    const session = await createWorkerBackedSession({
+      worker,
+      identity,
+      sessionDir: tenantArchiveDir(identity) ?? join(getUserHome(identity), ".omp", "agent", "sessions"),
+      hostCwd: start.cwd,
+      // Eine bestehende Session wird geoeffnet, eine neue entsteht im Worker.
+      ...(start.sessionFile ? { sessionFile: start.sessionFile } : {}),
+    });
+    // Ein Bus, der nichts abonniert: die Frames kommen aus dem Worker ueber
+    // `client.onEvent`, und der Wrapper haengt sich mit `session.subscribe`
+    // daran. Der Subagent-Bus bleibt damit leer — Subagenten laufen im Worker.
+    const eventBus = new EventEmitter() as unknown as ConstructorParameters<typeof AgentSessionWrapper>[1];
+    return { ok: true, session, eventBus };
+  } catch (error) {
+    // Eine halb aufgebaute Session darf nicht im Registry landen: der Worker
+    // bleibt, aber ohne Session. Der naechste Request baut neu auf.
+    return {
+      ok: false,
+      reason: "tenant-worker-crashed",
+      detail: `The worker for ${identity.username} is running but its session could not be attached: ${String(error)}`,
+      remediation: "Retry the request; if it repeats, restart the service so the worker is respawned.",
+    };
+  }
+}
+
+/**
  * Get or create an AgentSession for the given session.
  * For new sessions (sessionFile === ""), omp generates its own id.
  * New sessions resolve enabledModels before construction so the initial model,
@@ -2222,6 +2453,56 @@ export async function startRpcSession(
     // agent directory. That is the one change that makes a tenant's skills
     // visible without splitting history from credentials.
     const identity = options.identity ?? null;
+
+    // ==========================================================================
+    // Die Grenze: ein Mandant bekommt einen Workerprozess, ein Admin nicht.
+    //
+    // Der Schnitt steht **vor** jedem SDK-Aufbau. Das ist der Punkt, an dem er
+    // wirkt: `createAgentSession` legt den `bash` (eine native Bibliothek) und
+    // die `read`/`write`-Werkzeuge in *diesen* Prozess. Ein Haken nach dem
+    // Aufbau waere zu spaet — die `fs`-Aufrufe sind dann schon hier verankert.
+    //
+    // Was hier **nicht** passiert: ein stiller Rueckfall. `tenantBoundaryPolicy`
+    // kennt genau zwei Wege in den Serverprozess (kein Mandant, oder der
+    // Betreiber hat den Ausstieg gesetzt); alles andere geht in einen Worker,
+    // und ein fehlgeschlagener Plan ist ein benannter Fehler mit `reason` und
+    // `remediation`. Ein Mandant, der wegen eines kaputten Plans still im
+    // Serverprozess landet, waere die schlimmste Variante: gruen im Test,
+    // offen im Betrieb.
+    // ==========================================================================
+    const policy = tenantBoundaryPolicy(identity);
+    if (policy.mode === "worker" && identity !== null) {
+      const workerSession = await startWorkerSessionForTenant({
+        identity,
+        cwd: cwd ?? getUserHome(identity),
+        sessionFile,
+        sessionId,
+        options,
+      });
+      if (!workerSession.ok) {
+        // Der Wurf traegt die drei Felder der Abnahmetabelle A5: was fehlt,
+        // warum, und was zu tun ist. Die Route macht daraus einen Fehlerkoerper.
+        throw new TenantBoundaryError(workerSession);
+      }
+      const wrapper = new AgentSessionWrapper(workerSession.session, workerSession.eventBus);
+      wrapper.setIdentity(identity);
+      wrapper.start();
+      const realSessionId = workerSession.session.sessionId;
+      const realSessionFile = workerSession.session.sessionFile;
+      if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
+      wrapper.onDestroy(() => {
+        registry.delete(realSessionId);
+        forgetSessionOwner(realSessionId);
+      });
+      registry.set(realSessionId, wrapper);
+      setSessionOwner(realSessionId, options.owner ?? "");
+      return { session: wrapper, realSessionId };
+    }
+    if (policy.mode === "in-process" && policy.reason === "opted-out") {
+      // Einmal pro Serverstart, nicht pro Anfrage: die Warnung ist ein
+      // Betriebszustand, kein Ereignis.
+      logUnsandboxedTenantWarningOnce();
+    }
     const agentDir = getAgentDir();
     if (identity) {
       // Idempotent registration; also creates the tenant's skills directory.
@@ -2331,11 +2612,15 @@ export async function startRpcSession(
         // waehrend der Kalender an der Identitaet haengt, die diese Sitzung
         // geoeffnet hat.
         customTools: [makePresentFilesTool(), ...makeCalendarTools({ identity: options.identity })],
-        // Die einzige Grenze, die der Agent-`bash` ueberhaupt bekommen kann: das
-        // SDK sandboxt seinen Shell nicht (§5 des Scans), aber ein
-        // `tool_call`-Haken darf blocken — und `extensions` wird pro Sitzung
-        // gebunden, Subagenten erben die Fabrik. Ohne Identitaet ist die
-        // Sitzung intern (kein Konto), dann bleibt es beim bisherigen Verhalten.
+        // Die zweite Schneide. Die eigentliche Grenze fuer ein Nicht-Admin-Konto
+        // ist der Worker-Prozess (`lib/tenant-worker.ts`): was dort nicht
+        // gebunden ist, existiert nicht. Dieser Haken bleibt trotzdem, weil er
+        // nichts kostet und weil er der einzige ist, wenn der Betreiber
+        // `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1` setzt. Das SDK sandboxt seinen
+        // Shell nicht (§5 des Scans), aber ein `tool_call`-Haken darf blocken —
+        // und `extensions` wird pro Sitzung gebunden, Subagenten erben die
+        // Fabrik. Ohne Identitaet ist die Sitzung intern (kein Konto), dann
+        // bleibt es beim bisherigen Verhalten.
         ...(options.identity ? { extensions: [makeSessionShellGuard(options.identity)] } : {}),
         // `restrictToolNames` drops `customTools` entirely unless this is set —
         // the SDK filters `options.customTools` to `[]` when a session is

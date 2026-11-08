@@ -6,7 +6,7 @@ import { allowFileRoot, getAllowedFileRoots, isExistingFilePathAllowed } from "@
 import { getRequestIdentity } from "@/lib/request-identity";
 import { isWritePathAllowed } from "@/lib/write-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
-import { startRpcSession } from "@/lib/rpc-manager";
+import { startRpcSession, TenantBoundaryError, tenantBoundaryHttpStatus } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import {
   MAX_AGENT_REQUEST_BODY_BYTES,
@@ -156,9 +156,22 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
+      // Eine Grenze, die einen Request abweist, nennt Grund und Abhilfe. Ohne
+      // diese drei Felder muesste der Aufrufer den Grund aus einem String
+      // raten — und ein Betreiber mit kaputtem userns erfuehre nie, was fehlt
+      // (`docs/plans/tenant-isolation.md` §11 A5).
+      ...(error instanceof TenantBoundaryError
+        ? { reason: error.reason, detail: error.detail, remediation: error.remediation }
+        : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
-    }, { status: 500 });
+    }, {
+      // Eine fehlende Grenze ist ein Zustand des Hosts, kein Serverfehler: 503
+      // statt 500, wie im Terminal-Pfad. Der Koerper bleibt unveraendert.
+      status: error instanceof TenantBoundaryError
+        ? tenantBoundaryHttpStatus(error.reason)
+        : 500,
+    });
   }
 }

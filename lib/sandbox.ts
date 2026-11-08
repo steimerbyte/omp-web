@@ -51,7 +51,8 @@ export type SandboxFailureReason =
   | "admin-home"
   | "bad-username"
   | "cwd-outside-home"
-  | "mask-unavailable";
+  | "mask-unavailable"
+  | "bad-extra-bind";
 
 export interface SandboxFailure {
   ok: false;
@@ -96,6 +97,22 @@ export interface SandboxOptions {
    * Shell der Weg zum Admin-Passwort.
    */
   maskFiles?: string[];
+  /**
+   * Zusaetzliche read-only Bind-Mounts, als `[hostPfad, guestPfad]`.
+   *
+   * Fuer den Agent-Worker (Plan §7 L1) und **nur** dafuer: `bun` liegt unter
+   * `/home/pi` und die SDK-Abhaengigkeiten unter dem Repo — beide sind nicht
+   * gebunden, weil die Grenze absichtlich ein einzelnes Home ist. Der Worker
+   * braucht sie trotzdem, also wird genau das hineingelegt, was er zum Starten
+   * braucht, und nicht mehr.
+   *
+   * Read-only und ohne `--dev-bind`: der Worker soll die Laufzeit *benutzen*,
+   * nicht schreiben. Ein Gast-Pfad muss absolut und unterhalb des Gast-Homes
+   * liegen; alles andere wird mit `bad-extra-bind` abgelehnt, weil ein Bind auf
+   * `/etc` oder `/` genau die Grenze wieder aufmachen wuerde, die diese Datei
+   * baut.
+   */
+  extraBinds?: Array<[host: string, guest: string]>;
 }
 
 const SANDBOX_HOME = "/home";
@@ -418,6 +435,38 @@ export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
   // directory`, weil das Home dort als `/home/<name>` haengt.
   const sandboxedCwd = mapCwdIntoSandbox(options.cwd, home, options.username);
   argv.push("--bind", home, `${SANDBOX_HOME}/${options.username}`);
+
+  // Zusaetzliche read-only Binds fuer den Agent-Worker. Sie stehen **nach** dem
+  // Home-Bind und **vor** den Masken, weil eine Maske auf einer Datei innerhalb
+  // eines dieser Binds sonst wieder ueberschrieben wuerde.
+  //
+  // Der Gast-Pfad wird geprueft, nicht bloss uebernommen: ein Ziel wie `/etc`
+  // oder `/` wuerde einen Host-Pfad ueber die Grenze legen, und genau das ist
+  // der Fehler, den diese Funktion verhindert, indem sie dafuer kein Argument
+  // kennt — bis jetzt. Deshalb ist die Regel explizit: absolut, unter dem
+  // Gast-Home, kein `..`.
+  for (const [hostPath, guestPath] of options.extraBinds ?? []) {
+    if (typeof hostPath !== "string" || !hostPath.startsWith("/") || !existsSync(hostPath)) {
+      return {
+        ok: false,
+        reason: "bad-extra-bind",
+        detail: `Extra bind source ${String(hostPath)} must be an absolute existing path.`,
+        remediation: "Point the worker at a path that exists on the host, or start it without that mount.",
+      };
+    }
+    const guestHome = `${SANDBOX_HOME}/${options.username}`;
+    const guest = typeof guestPath === "string" ? guestPath : "";
+    if (!guest.startsWith("/") || guest.split("/").includes("..")
+      || !(guest === guestHome || guest.startsWith(`${guestHome}/`))) {
+      return {
+        ok: false,
+        reason: "bad-extra-bind",
+        detail: `Extra bind target ${String(guestPath)} must be an absolute path inside ${guestHome}.`,
+        remediation: "Mount worker files under the tenant's guest home; anything else reopens the boundary this plan builds.",
+      };
+    }
+    argv.push("--ro-bind", hostPath, guest);
+  }
 
   // Die Masken kommen **nach** jedem Bind, dessen Pfad sie verdecken sollen.
   // Das ist die zweite Haelfte derselben Regel wie oben: `--ro-bind /etc /etc`

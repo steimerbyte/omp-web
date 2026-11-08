@@ -5,7 +5,14 @@ import { isPathInUserHome, isPathWithinRoots } from "./path-security";
 import { getUserHome, type WebIdentity } from "./request-identity";
 
 /**
- * Die eine Grenze, die der Agent-`bash` einer Mandanten-Sitzung bekommt.
+ * Die **zweite** Grenze, die der Agent-`bash` einer Mandanten-Sitzung bekommt.
+ *
+ * Die **erste und eigentliche** Grenze ist der Worker-Prozess
+ * (`lib/tenant-worker.ts`): ein Nicht-Admin-Konto laeuft in einem eigenen
+ * `bwrap`-Kind, und was dort nicht gebunden ist, existiert nicht. Dieser Haken
+ * ist die zweite Schneide, aus zwei Gruenden: er kostet nichts, und er greift
+ * auch dann, wenn der Betreiber den Betriebsausstieg
+ * `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1` gesetzt hat — dann ist er die einzige.
  *
  * Das SDK 18.14.0 hat **keine** Sandbox fuer sein `bash`-Tool
  * (`SHELL-ISOLATION-SCAN.md` §5): weder `CreateAgentSessionOptions` noch
@@ -23,8 +30,9 @@ import { getUserHome, type WebIdentity } from "./request-identity";
  * ausdruecklich vergebene Wurzel.
  *
  * Was das **nicht** ist: eine Sandbox. Ein `cd /` im Kommandotext sieht der
- * Haken nicht — er sieht den Aufruf, nicht die Shellsprache. Das bleibt offen,
- * bis das SDK einen Spawn-Haken anbietet; es steht so in `docs/inventory-tools.md`.
+ * Haken nicht — er sieht den Aufruf, nicht die Shellsprache. Das ist der Grund,
+ * warum die Grenze nicht hier gebaut wird, sondern um den Prozess; die Messung
+ * dazu steht in `docs/plans/tenant-isolation.md` §3.
  *
  * Die gemessene Grenze (18.14.0): das Parameter-Schema des `bash`-Werkzeugs ist
  * `{command, timeout}` — es gibt **kein** `cwd` im Aufruf. `BashToolInput`
