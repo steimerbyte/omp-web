@@ -112,6 +112,19 @@ export function prepareTenantSessionDir(
   const dir = tenantSessionDirForCwd(identity, cwd);
   if (dir === null) return null;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // Zwei Verzeichnisse, nicht eins: `mkdir --recursive` legt auch den
+  // `sessions/`-Elternpfad an, und `mode` gilt nur fuer das letzte Segment.
+  // Gemessen auf dem Testserver: der Bucket kam als 0700, `sessions/` als 0755
+  // heraus. Der Elternpfad ist Teil des Archivs (§9: „Archiv unter
+  // `<tenantAgentDir>/sessions` (0700)"), und ein 0755-Elternpfad verraet die
+  // Bucket-Namen, die den cwd eines Kontos tragen.
+  const root = tenantSessionsRoot(identity);
+  if (root !== null) {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    try {
+      chmodSync(root, 0o700);
+    } catch { /* siehe unten */ }
+  }
   // `mode` wirkt nur beim Anlegen. Ein Bucket, den das SDK vorher mit 0755
   // angelegt hat, bliebe sonst der Welt zugaenglich, obwohl der Pfad jetzt
   // richtig ist.

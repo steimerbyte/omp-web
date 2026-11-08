@@ -270,3 +270,20 @@ höher.
 - **Admin = Host.** Bleibt so, ist dokumentiert und bleibt eine Entscheidung.
   Die Änderung macht nur den Weg dorthin nicht mehr zu einem Dateizugriff aus
   einer Mandanten-Session.
+- **Der Mandant kann seinen eigenen Provider-Key lesen.** Der Modellaufruf
+  passiert im selben Prozess wie der Tool-Shell (der Shell ist eine native
+  Bibliothek, §3), also muss die Anmeldeinformation dieses Kontos in der
+  Umgebung des Workers stehen — und ein `env` in einem Tool-Aufruf sieht sie
+  damit. Die Grenze verhindert weiterhin, dass er *fremde* Schlüssel sieht:
+  der Worker bekommt die Allowlist **plus genau die Provider-Zugangsdaten, die
+  seine eigene Session braucht**, und nichts davon (`BRAVE_API_KEY`,
+  `PARALLEL_API_KEY`, `OMP_WEB_PASSWORD`, Sitzungsschlüssel) steht daneben.
+  Diesen Rest zu schließen braucht einen Modell-Proxy, der den Schlüssel aus
+  dem Mandantenprozess heraushält; das ist ein eigener Schnitt und nicht Teil
+  von L1.
+- **Ein Worker kostet rund 250–340 MiB und ~1,2 s Start.** Auf diesem Host
+  (6 Kerne, 12 GiB, kein Swap) passen rund 20 Worker mit 50 % Reserve; die
+  Kerne binden vor dem Speicher. Deshalb startet ein Worker **träge** beim
+  ersten Agent-Request seines Kontos, wird nach einer konfigurierbaren
+  Ruhezeit abgeräumt und beim nächsten Request neu gestartet — nicht bei jedem
+  Chat und nicht alle Konten gleichzeitig.
