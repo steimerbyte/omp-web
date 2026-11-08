@@ -125,9 +125,33 @@ rsync -a --delete \
 
 log "Dateien kopiert, baue Live-Instanz neu"
 cd "$LIVE_DIR"
+
+# Der Watchdog-Timer muss waehrend des Rebuilds stillstehen. Ein bewusstes
+# `systemctl stop omp-web.service` hinterlaesst die Unit als "failed"
+# (status=143, "Failed with result 'exit-code'"), und der failed)-Zweig von
+# omp-web-healthcheck.sh startet sie deshalb neu -- mitten in den laufenden
+# Build, dessen Build-Guard dann auf Nexts Build-Lock laeuft. Gemessen
+# 2026-11-07: 10 Restart-Versuche, ~82 s Downtime statt ~20 s.
+#
+# Der EXIT-Trap schaltet den Timer wieder ein, auch auf dem die()-Pfad (der
+# Dienst bleibt dort bewusst gestoppt). `|| true`, damit der Trap den
+# Exit-Code des Skripts nicht verschluckt. Das Skript hat keinen anderen Trap.
+if systemctl cat omp-web-healthcheck.timer >/dev/null 2>&1; then
+  sudo -n systemctl stop omp-web-healthcheck.timer
+  trap 'sudo -n systemctl start omp-web-healthcheck.timer || true' EXIT
+fi
+
 sudo -n systemctl stop omp-web.service
 rm -rf .next
 "$BUN" run build >/tmp/omp-web-live-build.log 2>&1 \
   || { tail -40 /tmp/omp-web-live-build.log >&2; die "Live-Build fehlgeschlagen, Dienst bleibt gestoppt"; }
 sudo -n systemctl start omp-web.service
+# Ein `systemctl start` auf diesen Timer feuert sofort (sein OnBootSec=30 liegt
+# beim Start immer in der Vergangenheit, gemessen 2026-11-08) -- der Trap loest
+# also direkt einen Healthcheck aus. Erst warten, bis der Listener antwortet
+# (~2 s gemessen), sonst restarten wir die eben gestartete Instanz selbst.
+for _ in $(seq 1 30); do
+  curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${LIVE_PORT}/" && break
+  sleep 1
+done
 log "Live-Instanz neu gestartet"

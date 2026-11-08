@@ -18,11 +18,15 @@ import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
 const LazyHighlighter = lazy(() => import("./CodeHighlighter").then((mod) => ({ default: mod.CodeHighlighter })));
 
 /** Derselbe Block ohne Hervorhebung: gleicher Text, gleiches Element, gleiche Box. */
-function PlainCode({ className, customStyle, codeTagProps, PreTag, CodeTag, children }: SyntaxHighlighterProps) {
+function PlainCode({ className, customStyle, codeTagProps, PreTag, CodeTag, children, wrapLongLines }: SyntaxHighlighterProps) {
   return createElement(
     PreTag ?? "pre",
     { className, style: customStyle },
-    createElement(CodeTag ?? "code", { style: codeTagProps?.style }, children),
+    createElement(
+      CodeTag ?? "code",
+      { ...codeTagProps, style: { whiteSpace: wrapLongLines ? "pre-wrap" : "pre", ...codeTagProps?.style } },
+      children,
+    ),
   );
 }
 

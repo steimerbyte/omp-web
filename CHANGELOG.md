@@ -3,6 +3,29 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.24.3
+Released 2026-11-08.
+
+- **Der Klartext-Fallback der Syntax-Hervorhebung behält das Umbruchverhalten
+  ab dem ersten Render.** Solange der asynchrone Chunk mit dem Highlighter noch
+  unterwegs ist, setzt die Fallback-Komponente jetzt `white-space` aus
+  `wrapLongLines` (`pre` bzw. `pre-wrap`) und reicht `codeTagProps` samt
+  `className` durch — ein `style` des Aufrufers gewinnt. Vorher zeigte der
+  Umbruchmodus der Datei-Vorschau überlaufende Zeilen, bis der 609-KB-Chunk
+  eintraf. Drei Assertions decken `pre`, `pre-wrap` und den überschreibenden
+  Aufrufer ab.
+
+- **Der Deploy-Watchdog steht während des Live-Rebuilds still.** Ein bewusstes
+  `systemctl stop omp-web.service` hinterlässt die Unit als `failed`
+  (Status 143), und der `failed)`-Zweig von `omp-web-healthcheck` startete sie
+  15 s nach Buildbeginn neu; die Build-Sperre der Unit kollidierte mit dem Build
+  des Deploys und `Restart=always` wiederholte das — gemessen am 2026-11-07 auf
+  agent-pc: 10 Restart-Versuche, rund 82 s Downtime statt rund 20 s. Jetzt stoppt
+  der Live-Zweig zuerst den Timer; die Downtime ist damit durch den Build selbst
+  begrenzt. Ein `EXIT`-Trap schaltet den Timer auf jedem Pfad wieder scharf, und
+  eine Bereitschaftsprüfung nach dem Start verhindert, dass dessen sofortiger
+  erster Tick die frische Instanz erneut startet.
+
 ## v0.24.2
 Released 2026-11-07.
 

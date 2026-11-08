@@ -60,6 +60,35 @@ test("vor dem Nachladen steht der reine Block mit demselben Text im Markup", () 
   assert.ok(markup.includes("const answer: number = 42;"), "der Text fehlt im Fallback");
 });
 
+test("der Fallback setzt weissen Raum und Klassen wie der Highlighter auf das code-Element", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodeHighlighter, { language: "ts", style: vs, codeTagProps: { className: "wrap-me" } }, CODE),
+  );
+  assert.ok(markup.includes("white-space:pre"), `ohne wrapLongLines kein pre: ${markup}`);
+  assert.ok(markup.includes('class="wrap-me"'), `codeTagProps.className fehlt: ${markup}`);
+});
+
+test("der Fallback bricht mit wrapLongLines um (pre-wrap wie im echten Highlighter)", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodeHighlighter, { language: "ts", style: vs, wrapLongLines: true }, CODE),
+  );
+  assert.ok(markup.includes("white-space:pre-wrap"), `mit wrapLongLines kein pre-wrap: ${markup}`);
+});
+
+test("codeTagProps.style gewinnt gegen den Standard (whiteSpace nowrap)", () => {
+  for (const wrapLongLines of [false, true]) {
+    const markup = renderToStaticMarkup(
+      React.createElement(
+        CodeHighlighter,
+        { language: "ts", style: vs, wrapLongLines, codeTagProps: { style: { whiteSpace: "nowrap" } } },
+        CODE,
+      ),
+    );
+    assert.ok(markup.includes("white-space:nowrap"), `Aufrufer-Stil verloren (wrapLongLines=${wrapLongLines}): ${markup}`);
+    assert.ok(!markup.includes("white-space:pre-wrap"), `Standard gewinnt (wrapLongLines=${wrapLongLines}): ${markup}`);
+  }
+});
+
 test("der Fallback folgt PreTag/CodeTag (Shell-Zeile rendert span statt pre)", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodeHighlighter, { language: "bash", style: vs, PreTag: "span", CodeTag: "span" }, "bun run verify"),
