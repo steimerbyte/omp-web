@@ -10,6 +10,7 @@ import {
   allowUnsandboxedTenant,
   buildWorkerEnv,
   isTenantWorkerIdentity,
+  logRefusedProviders,
   resolveWorkerIdleMs,
   resolveWorkerMax,
   workerGuestPaths,
@@ -169,6 +170,10 @@ export function planTenantWorker(
   prepareTenantSessionDir(identity, hostHome);
 
   const workerEnv = buildWorkerEnv(identity, options.providers ?? [], env);
+  // Die Absage wird hier geschrieben, nicht im Aufrufer: `planTenantWorker` ist
+  // der Ort, an dem die Namen zu Werten werden, und eine zweite Stelle mit
+  // derselben Schleife waere eine zweite Wahrheit ueber die Freigabe.
+  logRefusedProviders(identity, workerEnv.refused);
   const plan = planSandboxSpawn({
     home: hostHome,
     username: identity.username,

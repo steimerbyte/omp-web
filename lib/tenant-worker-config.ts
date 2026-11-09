@@ -133,6 +133,32 @@ export function isTenantWorkerIdentity(identity: WebIdentity | null): identity i
 }
 
 /**
+ * Die Provider, fuer die der Betreiber seinen eigenen Schluessel freigibt.
+ *
+ * `OMP_WEB_TENANT_PROVIDER_GRANT` ist eine kommagetrennte Liste von
+ * Provider-Namen (`brave,parallel`). Leer oder ungesetzt heisst **nichts** —
+ * die Vorgabe ist keine Freigabe, sondern keine.
+ *
+ * Warum es diese Variable ueberhaupt gibt: der Name eines Providers ist die
+ * Angabe des **Mandanten** (`models.yml` in seinem Home), der Wert waere der
+ * des **Betreibers** (seine Geheimnisdatei). Ohne diese Trennung schreibt ein
+ * Mandant `providers: { brave: … }` in seine eigene Datei und bekommt
+ * `BRAVE_API_KEY` des Betreibers in seine Umgebung — gemessen und ausgenutzt:
+ * `curl -H "authorization: Bearer $BRAVE_API_KEY"` zu einem beliebigen Host.
+ * Ein Name ist eine Absicht, ein Schluessel ist ein Recht; die Freigabe ist
+ * der Punkt, an dem der Betreiber das Recht vergibt.
+ */
+export function resolveProviderGrant(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const raw = env.OMP_WEB_TENANT_PROVIDER_GRANT;
+  if (typeof raw !== "string" || raw.trim().length === 0) return new Set();
+  return new Set(
+    raw.split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+/**
  * Die Umgebung fuer einen Mandanten-Worker.
  *
  * `PATH`, `LANG`, `TZ` und die drei Identitaetsvariablen. `HOME`/`USER`/
@@ -140,16 +166,31 @@ export function isTenantWorkerIdentity(identity: WebIdentity | null): identity i
  * trotzdem, damit der Aufrufer eine vollstaendige Karte sieht und ein fehlender
  * `HOME` nicht als "erben" gelesen wird.
  *
- * Dazu genau die Zugangsdaten der Provider, die `providers` nennt, und nur
- * dann, wenn ein Wert aufloesbar ist. Ein Provider ohne aufloesbaren Schluessel
- * fuehrt zu einem Eintrag in `missing`, nicht zu einem leeren `--setenv`:
+ * **Zugangsdaten kommen nur aus einer ausdruecklichen Freigabe.** `providers`
+ * sind die Namen, die der Mandant selbst konfiguriert hat; ein Wert wird nur
+ * fuer einen Namen eingesetzt, den `OMP_WEB_TENANT_PROVIDER_GRANT` zusaetzlich
+ * nennt. Ohne Freigabe bleibt die Umgebung leer, und der Mandant benutzt den
+ * `apiKey`, der in **seinem** `models.yml` steht — das SDK liest ihn aus dem
+ * Gast-Home, also ohne dass dieser Prozess ihn kennt. Ein Provider, dessen Name
+ * nicht freigegeben ist, landet in `refused` (mit Logzeile); ein freigegebener
+ * Name ohne aufloesbaren Wert landet in `missing`, nicht als leeres `--setenv`:
  * `KEY=` waere ein gesetzter, aber falscher Wert und wuerde den Fehler vom
  * Start in den ersten Modellaufruf verschieben.
+ *
+ * **Der Wert steht danach im argv des Workers.** `bwrap --setenv NAME WERT`
+ * traegt ihn in `/proc/<leader>/cmdline`, und das ist fuer jeden Leser dieses
+ * Hosts sichtbar — fuer die Dauer des Worker-Lebens. Die Freigabe ist deshalb
+ * eine Entscheidung ueber einen lesbaren Wert, nicht nur ueber einen
+ * funktionierenden. (Der Mandant selbst sieht ihn ohnehin in seiner `env`; das
+ * ist der Zweck der Freigabe. Der Unterschied ist, dass ohne Freigabe gar kein
+ * Betreiber-Schluessel in diesem Prozessbaum existiert.)
  */
 export interface WorkerEnv {
   env: Record<string, string>;
-  /** Provider, fuer die kein Schluessel aufloesbar war — der Aufrufer entscheidet. */
+  /** Freigegebene Provider, fuer die kein Schluessel aufloesbar war. */
   missing: Array<{ provider: string; envName: string | undefined }>;
+  /** Provider des Mandanten ohne Freigabe — nichts eingesetzt, Logzeile geschrieben. */
+  refused: string[];
 }
 
 export function buildWorkerEnv(
@@ -176,10 +217,25 @@ export function buildWorkerEnv(
   out.PI_CODING_AGENT_DIR = `${guestHome}/.omp/agent`;
 
   const missing: WorkerEnv["missing"] = [];
+  const refused: string[] = [];
+  const grant = resolveProviderGrant(env);
   for (const provider of new Set(providers)) {
     const envName = getEnvApiKeyName(provider);
     if (envName === undefined) {
-      missing.push({ provider, envName: undefined });
+      // Ohne Zuordnung Provider → Umgebungsvariable gibt es keinen Weg, auf dem
+      // ein Betreiber-Schluessel in dieses Kind kaeme; `local` ist genau so ein
+      // Name. Hier zu warnen waere Rauschen, das die eine Zeile verdeckt, auf
+      // die es ankommt. Als `missing` gemeldet wird er trotzdem, weil der
+      // Aufrufer wissen soll, dass dieser Name keinen Wert bekommt.
+      if (grant.has(provider)) missing.push({ provider, envName: undefined });
+      continue;
+    }
+    // Die Freigabe steht **vor** der Aufloesung: ohne sie wird der Wert nicht
+    // einmal gelesen. Ein `getRuntimeSecret` mit anschliessendem Verwerfen
+    // waere derselbe Weg mit einem zusaetzlichen Schritt, in dem der Wert
+    // schon im Prozess steht.
+    if (!grant.has(provider)) {
+      refused.push(provider);
       continue;
     }
     // Die Datei schlaegt die Umgebung (dieselbe Regel wie `getRuntimeSecret`):
@@ -191,7 +247,24 @@ export function buildWorkerEnv(
     }
     out[envName] = value;
   }
-  return { env: out, missing };
+  return { env: out, missing, refused };
+}
+
+/**
+ * Die Absage an einen Mandanten, dessen Provider nicht freigegeben ist.
+ *
+ * Eine Zeile pro abgelehntem Namen, auf stderr: der Betreiber soll sehen, dass
+ * ein Mandant einen Schluessel angefordert hat, den er nicht bekommt — ohne
+ * diese Zeile sieht die Ablehnung wie ein Konfigurationsfehler des Mandanten
+ * aus, und niemand erfaehrt von dem Versuch.
+ */
+export function logRefusedProviders(identity: WebIdentity, refused: readonly string[]): void {
+  for (const provider of refused) {
+    console.warn(
+      `[tenant-boundary] ${identity.username} names provider "${provider}", which OMP_WEB_TENANT_PROVIDER_GRANT `
+      + `does not grant. No operator key is injected for it; the tenant's own models.yml apiKey (if any) is used.`,
+    );
+  }
 }
 
 /**
@@ -217,12 +290,27 @@ export function buildWorkerEnv(
  * dann keinen Provider, und der Worker scheitert beim ersten Modellaufruf mit
  * der Meldung des SDK, die genau das sagt. Ein Seeding mit dem Betreiber-Key
  * waere das Kostenleck aus `lib/tenant-config.ts`.
+ *
+ * Eine **kaputte** Datei ebenfalls — aber nicht stumm. `load()` liefert fuer
+ * einen Syntax- oder Validierungsfehler `null`, also dieselbe Antwort wie fuer
+ * "Datei fehlt"; der Unterschied ist fuer die Diagnose entscheidend, weil der
+ * Mandant sonst einen Worker ohne Provider bekommt und die Ursache nirgends
+ * steht. Deshalb wird der Fehler mit dem Pfad geloggt (der Parser des SDK
+ * schreibt seine eigene Warnung ohne Pfad in der Zeile).
  */
 export function tenantProviders(identity: WebIdentity): string[] {
   const agentDir = join(getUserHome(identity), ".omp", "agent");
-  const providers = ModelsConfigFile.relocate(join(agentDir, "models.yml")).load()?.providers;
-  if (!providers) return [];
-  return Object.keys(providers);
+  const file = join(agentDir, "models.yml");
+  const loaded = ModelsConfigFile.relocate(file).tryLoad();
+  if (loaded.status === "error") {
+    console.warn(
+      `[tenant-boundary] ${identity.username}: ${file} could not be parsed `
+      + `(${loaded.error?.message ?? "unknown error"}); this worker starts with no provider from that file.`,
+    );
+    return [];
+  }
+  if (loaded.status === "not-found" || !loaded.value?.providers) return [];
+  return Object.keys(loaded.value.providers);
 }
 
 /**
