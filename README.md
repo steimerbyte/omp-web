@@ -204,6 +204,9 @@ stay in the service process, unchanged. Three variables govern it:
 | `OMP_WEB_TENANT_WORKER_IDLE_MS` | `300000` | Idle time before a worker is reaped. Values below `10000` are raised to it — a shorter timeout would tear down a worker between two turns of the same conversation. |
 | `OMP_WEB_TENANT_PROVIDER_GRANT` | unset | Comma-separated provider names (`brave,parallel`). The **only** path by which a provider a tenant names in its own `models.yml` may be resolved against the operator's secret store; with it unset or empty nothing is resolved, and every such name is refused with one log line per name. See the paragraph below the table for what a grant exposes. |
 | `OMP_WEB_ALLOW_UNSANDBOXED_TENANT` | unset | `1` puts tenant sessions back into the service process, on purpose, and prints a loud line on **stderr at startup** naming this variable. `SessionInfo.boundary.enforced` is then `false`. For development, or a host where user namespaces are unavailable — not for a multi-user install. |
+| `OMP_WEB_TENANT_ARCHIVE_MIGRATION` | `apply` | How the startup migration of existing session archives runs. `dry-run` moves nothing and logs the buckets it would move; `apply` moves each non-admin bucket into its own account's archive and hashes it before and after. |
+
+The archive migration runs once per server start, after the runtime exists: it moves each non-admin account's existing bucket out of the process agent directory into that account's own archive, logs one line per bucket and one summary line, moves nothing on the next start, and refuses to take the server down if it fails — a `dry-run` moves nothing and names the buckets it would have moved.
 
 **A provider name is a tenant's intent, a key is the operator's right.** The
 `providers:` block of a tenant's `models.yml` is a file that tenant writes, so a

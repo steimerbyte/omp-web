@@ -34,6 +34,16 @@ type SecretsModule = {
   inheritedSecretNames: () => string[];
 };
 
+/**
+ * Die Archiv-Migration, wie `instrumentation.ts` sie laden kann.
+ *
+ * Nur der Typ, aus demselben Grund wie bei den anderen beiden Modulen: ein
+ * statischer Import zoege das Session-Archiv samt SDK in das Edge-Bundle.
+ */
+type ArchiveMigrationModule = {
+  runTenantArchiveMigrationAtStartup: () => unknown;
+};
+
 export async function register(): Promise<void> {
   // Keep the Node-only undici graph out of Next's browser/edge instrumentation
   // bundles. Node 22 can load this local TypeScript module directly.
@@ -142,6 +152,33 @@ export async function register(): Promise<void> {
       startScheduler();
     } catch (error) {
       console.error("[scheduler] could not be started:", error);
+    }
+  }
+
+  // Die einmalige Migration der vorhandenen Session-Archive.
+  //
+  // `lib/tenant-session-migration.ts` zieht das Archiv eines Nicht-Admins aus
+  // dem Prozess-Verzeichnis in seinen eigenen Agent-Ordner. Das Modul gab es
+  // vorher schon, aufgerufen hat es niemand: der Betreiber haette beim Upgrade
+  // auf die in `CHANGELOG.md` zugesagte Migration gewartet, und der Bestand
+  // waere liegen geblieben, ohne dass es irgendwo aufgefallen waere. Der Start
+  // ist der einzige Zeitpunkt, an dem sie ohne Request laufen kann.
+  //
+  // Wie beim Zeitplaner: der Aufruf darf nicht werfen. Ein gescheiterter Umzug
+  // ist ein Befund im Log, ein Server, der deswegen nicht startet, ein Ausfall.
+  // Wiederholt laeuft er nicht — die Migration ist idempotent (ein zweiter Lauf
+  // findet nichts mehr), und die Funktion selbst haelt zusaetzlich einen
+  // Prozess-Guard. `OMP_WEB_TENANT_ARCHIVE_MIGRATION=dry-run` verschiebt nichts.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    try {
+      const loadMigration = Function("specifier", "return import(specifier)") as (
+        specifier: string,
+      ) => Promise<ArchiveMigrationModule>;
+      const migrationUrl = `file://${encodeURI(process.cwd())}/lib/tenant-session-migration.ts`;
+      const { runTenantArchiveMigrationAtStartup } = await loadMigration(migrationUrl);
+      runTenantArchiveMigrationAtStartup();
+    } catch (error) {
+      console.error("[archive-migration] could not be started:", error);
     }
   }
 }

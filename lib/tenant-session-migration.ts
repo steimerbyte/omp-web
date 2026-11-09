@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "fs";
 import { join, relative } from "path";
+import { listWebAccounts } from "../bin/web-auth-store.js";
 import { isAdminIdentity, getUserHome, type WebIdentity } from "./request-identity";
 import { readSessionRecord } from "./session-reader";
 import { isPathWithinRoots } from "./path-security";
@@ -283,7 +284,10 @@ export function migrateSessionArchive(
 
   const manifestDir = options.manifestDir ?? join(toRoot, "..", "migration");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const manifests = options.dryRun
+  // Kein Manifest ohne Bucket. `writeManifest` legt sein Verzeichnis an, und ein
+  // Lauf, der nichts gefunden hat, darf im Konto nichts anlegen — beim Start
+  // waere das sonst jeder Start, auch auf einer frischen Installation.
+  const manifests = options.dryRun || buckets.length === 0
     ? { before: null, after: null }
     : {
       before: writeManifest(manifestDir, `${stamp}-before`, buckets),
@@ -323,4 +327,108 @@ export function migrateAllSessionArchives(
   options: { dryRun?: boolean; manifestDir?: string } = {},
 ): { results: SessionArchiveMigrationResult[] } {
   return { results: identities.map((identity) => migrateSessionArchive(identity, options)) };
+}
+
+/** Was ein Startlauf getan hat — die Zahlen, die er auch protokolliert. */
+export interface TenantArchiveMigrationRun {
+  dryRun: boolean;
+  moved: number;
+  files: number;
+  skipped: number;
+  /** Die Buckets, die umgezogen sind (bei `dryRun`: umgezogen waeren). */
+  buckets: string[];
+}
+
+declare global {
+  /**
+   * `globalThis` und nicht eine Modulvariable: der Dev-Server laedt Module bei
+   * jeder Aenderung neu, und eine Modulvariable waere danach leer — der zweite
+   * `register()`-Aufruf liefe die Migration ein zweites Mal.
+   */
+  var __ompWebTenantArchiveMigrationStarted: boolean | undefined;
+}
+
+/**
+ * Die Migration beim Start des Servers, einmal pro Prozess.
+ *
+ * ### Warum sie hier und nicht beim ersten Request steht
+ *
+ * `CHANGELOG.md` sagt dem Betreiber eine einmalige Migration seines Bestands zu.
+ * Ein Aufruf, den niemand macht, ist diese Zusage nicht: er wuerde beim Upgrade
+ * nie laufen, und der Bestand bliebe im Prozess-Archiv liegen, ohne dass es
+ * irgendwo auffiele. `instrumentation.ts` ist der einzige Ort, der beim Start
+ * laeuft; er ruft diese Funktion.
+ *
+ * ### Was sie nicht tut
+ *
+ * Ein Admin wird gar nicht erst gefragt: sein Archiv **ist** das Prozess-Archiv
+ * (`lib/tenant-sessions.ts`), eine Migration waere dort eine Bewegung auf sich
+ * selbst. Eine Identitaet wird deshalb nicht erfunden — die Kontenliste liefert
+ * sie, samt Rolle.
+ *
+ * `OMP_WEB_TENANT_ARCHIVE_MIGRATION=dry-run` verschiebt nichts und nennt die
+ * Buckets, die es taete. Das ist der Blick vor dem Upgrade.
+ *
+ * ### Warum sie nicht werfen darf
+ *
+ * Dieselbe Begruendung wie beim Zeitplaner in `instrumentation.ts`: ein
+ * gescheiterter Umzug ist ein Befund, ein Server, der deswegen nicht startet,
+ * ist ein Ausfall. Ein Fehler wird zu **einer** Zeile auf stderr und die
+ * Funktion gibt `null` zurueck; der Aufrufer muss nichts pruefen.
+ */
+export function runTenantArchiveMigrationAtStartup(): TenantArchiveMigrationRun | null {
+  if (globalThis.__ompWebTenantArchiveMigrationStarted) return null;
+  globalThis.__ompWebTenantArchiveMigrationStarted = true;
+
+  const dryRun = (process.env.OMP_WEB_TENANT_ARCHIVE_MIGRATION ?? "").trim().toLowerCase() === "dry-run";
+  const buckets: string[] = [];
+  let moved = 0;
+  let files = 0;
+  let skipped = 0;
+
+  try {
+    const accounts = listWebAccounts();
+    // `unreadable` ist kein leeres Ergebnis: eine kaputte Kontendatei wuerde
+    // hier still zu "0 zu migrieren" und der Betreiber erfuehre nie, dass sein
+    // Bestand liegen geblieben ist.
+    if (accounts.status === "unreadable") {
+      console.error(`[archive-migration] the account list at ${accounts.file} could not be read; no session archive was migrated.`);
+      return null;
+    }
+
+    for (const account of accounts.accounts) {
+      // Die Rolle wird durchgereicht, nicht am Aufrufer entschieden: `migrate-
+      // SessionArchive` ist die Stelle, die einen Admin ablehnt, und eine
+      // zweite Kopie dieser Regel hier waere eine zweite Wahrheit.
+      const identity: WebIdentity = { username: account.username, isAdmin: account.isAdmin };
+      const result = migrateSessionArchive(identity, { dryRun });
+      if ("ok" in result) continue;
+      for (const bucket of result.buckets) {
+        const count = `${bucket.files} file${bucket.files === 1 ? "" : "s"}`;
+        if (bucket.moved) {
+          console.log(`[archive-migration] ${bucket.bucket} -> ${account.username} (${count})`);
+          buckets.push(bucket.bucket);
+          moved += 1;
+          files += bucket.files;
+          continue;
+        }
+        // Ein nicht umgezogenes Bucket bekommt seine Zeile mit Grund: "skipped 1"
+        // ohne Namen waere die Zahl, nach der der Betreiber fragt.
+        if (bucket.skipReason === "dry run") {
+          console.log(`[archive-migration] would move ${bucket.bucket} -> ${account.username} (${count})`);
+          buckets.push(bucket.bucket);
+        } else {
+          console.log(`[archive-migration] skipped ${bucket.bucket} -> ${account.username}: ${bucket.skipReason}`);
+        }
+        skipped += 1;
+      }
+    }
+  } catch (error) {
+    console.error("[archive-migration] failed; session archives were not migrated:", error);
+    return null;
+  }
+
+  const mode = dryRun ? " (dry run, nothing was moved)" : "";
+  console.log(`[archive-migration] moved ${moved} buckets, ${files} files, skipped ${skipped}${mode}`);
+  return { dryRun, moved, files, skipped, buckets };
 }
