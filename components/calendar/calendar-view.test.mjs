@@ -732,15 +732,15 @@ test("das Wochenende ist markiert — Monatskopf, Monatszellen und Wochenansicht
   await act(async () => { root.unmount(); });
 });
 
-// ------------------------------- Der heutige Tag traegt einen Schein ------
+// --------------------------------- Der heutige Tag traegt einen Rahmen -----
 
 /**
  * Der heutige Tag ist genau einmal markiert — in jeder Ansicht.
  *
  * Die Markierung ist ein Attribut und keine Klasse, weil sie an *einem* Tag
- * haengt und nicht an einer Gestalt: der Schein in `app/globals.css` haengt
- * sich an `[data-cal-today]`, und die Zelle braucht dafuer keine Klasse, die
- * mit jeder anderen kollidieren koennte.
+ * haengt und nicht an einer Gestalt: der Glow-Rahmen in `app/globals.css`
+ * haengt sich an `[data-cal-today]`, und die Zelle braucht dafuer keine
+ * Klasse, die mit jeder anderen kollidieren koennte.
  */
 test("der Monat markiert den heutigen Tag genau einmal — und laesst ihn beim Blaettern los", async () => {
   const { root } = await mount();
@@ -791,36 +791,6 @@ test("die Wochenansicht markiert den heutigen Tag in der Kopfzeile, nicht in der
   assert.equal(marked[0].firstElementChild.textContent, `${today.getDate()}.`, "die markierte Kopfzelle zeigt nicht den heutigen Tag");
 
   await act(async () => { root.unmount(); });
-});
-
-test("der Schein: 9s, --bg-angle, omp-gradient-spin — und reduced motion steht still", async () => {
-  const css = await readFile(new URL("../../app/globals.css", import.meta.url), "utf8");
-
-  // Die Regel dreht den bereits registrierten Winkel in 9s.
-  assert.match(
-    css,
-    /\[data-cal-today\]\s*\{[^}]*animation:\s*omp-gradient-spin\b/,
-    "die Regel animiert nicht omp-gradient-spin",
-  );
-  // Die Zahl 9s steht auch im Kommentar der Regel — hier haelt der Test sie.
-  assert.match(
-    css,
-    /\[data-cal-today\]\s*\{[^}]*var\(--omp-cal-glow-duration,\s*9s\)/,
-    "die Vorgabedauer ist nicht 9s",
-  );
-  // Der Verlauf liest den registrierten Winkel, keine feste Drehung.
-  assert.match(
-    css,
-    /\[data-cal-today\]::before\s*\{[^}]*conic-gradient\([^;]*var\(--bg-angle/,
-    "der Verlauf liest --bg-angle nicht",
-  );
-  // Ein Betriebssystem, das weniger Bewegung will, bekommt denselben Schein
-  // ohne Drehung.
-  assert.match(
-    css,
-    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\[data-cal-today\]\s*\{\s*animation:\s*none;?\s*\}\s*\}/,
-    "reduced motion stellt den Schein nicht still",
-  );
 });
 
 // ------------------------- Uhrzeit im Dialog, aus jeder Ansicht heraus --

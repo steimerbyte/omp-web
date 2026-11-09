@@ -3,6 +3,15 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## Unreleased
+
+- **Der heutige Tag im Kalender trägt einen Rahmen statt eines drehenden
+  Scheins.** Der Conic-Verlauf füllte die ganze Zelle; seine Drehung wanderte
+  als Keil unter Tageszahl und Terminen hindurch und las sich als Bewegung der
+  Zelle, nicht als Markierung des Tages. Jetzt liegt ein 1-px-Ring aus
+  `var(--accent)` auf der Zellkante plus ein weicher Schein nach außen —
+  statisch, ohne Animation und ohne `prefers-reduced-motion`-Sonderfall.
+
 ## v0.25.0
 Released 2026-11-09.
 

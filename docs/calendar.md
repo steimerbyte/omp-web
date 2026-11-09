@@ -400,10 +400,10 @@ damit ein Wochenendtag im aktuellen Monat nicht wie ein fremder aussieht.
 Theme-Variablen statt Farbwerten, aus demselben Grund wie überall sonst:
 `applyOmpPalette` schreibt sie zur Laufzeit um.
 
-Der heutige Tag trägt zusätzlich einen langsam umlaufenden Schein aus
-`var(--accent)` (`[data-cal-today]`), der in der Monatszelle und in der
-Kopfzelle der Wochen- und Tagesansicht sitzt und bei `prefers-reduced-motion`
-stillsteht.
+Der heutige Tag trägt zusätzlich einen Glow-Rahmen aus `var(--accent)`
+(`[data-cal-today]`), der in der Monatszelle und in der Kopfzelle der Wochen-
+und Tagesansicht sitzt. Ein 1-px-Ring auf der Zellkante plus ein weicher Schein
+nach außen; nichts bewegt sich, damit Tageszahl und Termine ruhig bleiben.
 
 #### Die Terminliste eines Tages
 

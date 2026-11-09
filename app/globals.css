@@ -1936,58 +1936,26 @@ html[data-omp-animations="off"] .omp-gradient-border::before {
   }
 }
 
-/* Der heutige Tag im Kalender.
+/* Der heutige Tag im Kalender: ein stehender Glow-Rahmen.
  *
- * Der Schein ist derselbe Dreh wie der Ring am Eingabefeld: `--bg-angle` ist
- * oben schon als Winkel registriert und `omp-gradient-spin` dreht ihn, also
- * braucht der Kalender weder eine eigene Animation noch eine eigene
- * Eigenschaft. Ein Element traegt `data-cal-today` — die Monatszelle oder die
- * Kopfzelle des Tages in der Wochen- und Tagesansicht.
- *
- * 9s statt der 2.4s des Rings: dort liest die Drehung als Taetigkeit, solange
- * der Agent arbeitet. Ein Kalender steht still, und dieselbe Bewegung in
- * diesem Tempo waere ein Spinner, kein Licht. Die Zahl haelt
- * `components/calendar/calendar-view.test.mjs` fest.
+ * Vorher lag ein Conic-Verlauf im Zellhintergrund und drehte ueber
+ * `--bg-angle`. Ein Verlauf deckt die ganze Zelle, also wanderte ein Keil
+ * unter Tageszahl und Terminen hindurch — man sah die Flaeche atmen, nicht den
+ * Tag markiert. Jetzt sitzt die Markierung auf der Zellkante und der Inhalt
+ * bleibt unbewegt. Ein Element traegt `data-cal-today` — die Monatszelle oder
+ * die Kopfzelle des Tages in der Wochen- und Tagesansicht.
  *
  * Nur `var(--accent)` und `color-mix`: `applyOmpPalette` schreibt die
  * Variablen zur Laufzeit um, ein Farbwert waere im naechsten Theme falsch.
  *
- * `z-index: -1` mit `isolation: isolate`: die Zelle wird ein eigener
- * Stapelkontext, der Schein liegt damit ueber ihrem eigenen Hintergrund und
- * unter allem Inhalt (Tageszahl, Termine). Die Raender der Zelle liegen
- * ausserhalb ihres Innenabstands, `inset: 0` erreicht sie also nicht — der
- * Monatszelle genuegt ihr vorhandenes `overflow: hidden`, die Kopfzelle
- * braucht keins.
- *
- * Bei `prefers-reduced-motion` steht der Schein still. Bei abgeschalteten
- * Animationen friert der Block am Dateiende die Drehung nach 1 ms bei 360deg
- * ein — dasselbe Bild wie 0deg, also derselbe Schein ohne Bewegung. */
+ * `box-shadow` gehoert dem Element selbst, nicht einem Pseudo-Element:
+ * `overflow: hidden` der Monatszelle schneidet nur Nachfahren ab, der Schein
+ * nach aussen bleibt also sichtbar. Der Ring liegt als `inset` unter der
+ * Rasterkante (`border-right`/`-bottom`) statt sie zu verschieben. */
 [data-cal-today] {
-  position: relative;
-  isolation: isolate;
-  animation: omp-gradient-spin var(--omp-cal-glow-duration, 9s) linear infinite;
-}
-
-[data-cal-today]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: conic-gradient(
-    from var(--bg-angle, 0deg),
-    transparent 0deg,
-    color-mix(in srgb, var(--accent) 18%, transparent) 90deg,
-    color-mix(in srgb, var(--accent) 30%, transparent) 150deg,
-    color-mix(in srgb, var(--accent) 18%, transparent) 210deg,
-    transparent 300deg 360deg
-  );
-}
-
-@media (prefers-reduced-motion: reduce) {
-  [data-cal-today] {
-    animation: none;
-  }
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent),
+    0 0 10px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /* The shimmer wash.
