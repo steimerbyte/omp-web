@@ -96,7 +96,7 @@ Gemessen, denselben Plan für `samuel` ausgeführt (58 argv-Einträge):
 | `ls /home/pi` | `No such file or directory` — Dienst-Home, Session-Archiv aller Konten und Code sind nicht vorhanden |
 | `ls /home/pi/accounts` | `No such file or directory` — Geschwisterkonten sind nicht vorhanden |
 | `env \| wc -l` | **6** (Allowlist) |
-| `ls /proc \| grep -c '^[0-9]'` | **4** PIDs statt aller Prozesse des Hosts |
+| `ls /proc \| grep -c '^[0-9]'` | **4** PIDs — die der eigenen PID-Namespace, nicht die des Hosts |
 | `id` | `uid=1000(pi)` — die Namespace ändert die uid nicht, sie nimmt nur die Pfade weg; das ist der Punkt |
 
 Kosten: 20 Starts in 75 ms, also **3,8 ms** pro Spawn (Namespace-Aufbau; die
@@ -114,17 +114,24 @@ Eine Grenze, ein Primitiv, um **den Prozess**, der einem Konto gehört.
 
 | | sichtbar | nicht vorhanden |
 |---|---|---|
-| Dateien | eigenes Home, Systemverzeichnisse read-only, eigenes tmpfs | fremde Homes, Dienst-Agent-Verzeichnis, Session-Archiv anderer Konten, Konto-Store, Sitzungsschlüssel, Geheimnisdatei |
+| Dateien | eigenes Home, Systemverzeichnisse read-only, eigenes tmpfs | fremde Homes, Dienst-Agent-Verzeichnis, Session-Archiv anderer Konten; Konto-Store, Auth-Datei und Sitzungsschlüssel (`ENOENT`, weil kein Bind sie zeigt), Geheimnisdatei (leer überdeckt, weil sie unter dem `/etc`-Bind liegt) |
 | Umgebung | Allowlist (PATH, LANG, TERM, HOME, USER, LOGNAME, …) | geerbte Prozessumgebung (Provider-Schlüssel, Passwort) |
 | Prozesse | eigener Prozessbaum | Prozesse des Dienstes und anderer Konten |
 | Pfade | Guest-Pfade (`/home/<name>/…`) | Host-Pfade (`/home/pi/accounts/<name>/…`) |
 
-Zwei Regeln machen den Unterschied zur Prüfung:
+Drei Regeln machen den Unterschied zur Prüfung:
 
 1. **Die Grenze wird nicht geprüft, sie wird gemountet.** Ein Pfad, der nicht
    gebunden ist, ist `ENOENT` — es gibt keinen Fehlerpfad, auf dem eine falsche
    Entscheidung zu einem Lesezugriff wird.
-2. **Ohne Grenze kein Lauf.** Fehlt `bwrap`, ist die User-Namespace aus, fehlt
+2. **Eine Maske ist nur nötig, wo ein Bind den Pfad sonst zeigt.** `/etc` ist
+   als Ganzes gebunden, weil eine Shell ohne `/etc/ld.so.cache` und
+   `/etc/passwd` nicht brauchbar ist — die Geheimnisdatei ist dort also
+   **vorhanden** und wird von einer leeren Datei überdeckt. Alles, was unter
+   keinem Bind liegt (Dienst-Agent-Verzeichnis, Konto-Store, Sitzungsschlüssel),
+   wird nicht überdeckt, sondern **existiert nicht**: `ENOENT` ist die stärkere
+   Zusage, weil eine Maske den Pfad wenigstens noch zeigt.
+3. **Ohne Grenze kein Lauf.** Fehlt `bwrap`, ist die User-Namespace aus, fehlt
    das Konto-Home oder ist der Kontoname unbrauchbar, endet der Lauf mit
    benanntem Grund und Abhilfe — nie mit einem ungesandboxten Lauf.
 
@@ -174,7 +181,8 @@ export interface ExecBoundary {
   kind: "bwrap" | "landlock";
   home: string;                 // Host-Pfad des Kontos (existiert, geprüft)
   guestHome: string;            // Pfad INNERHALB der Grenze
-  maskFiles?: string[];         // Dateien, die /dev/null bekommen
+  maskFiles?: string[];         // Dateien, die eine leere Datei überdeckt —
+                                // nur nötig, wo ein Bind den Pfad sonst zeigt
   env: Record<string, string>;  // Allowlist; ersetzt die geerbte Umgebung
 }
 
@@ -209,7 +217,7 @@ Fünf Garantien, jede mit einem Test:
 | Heute | Problem | Vorschlag |
 |---|---|---|
 | Session-Archiv liegt in `<Prozess-Agent-Dir>/sessions/-<cwd-bucket>/*.jsonl`, Modus **0644** | Inhalt eines Kontos liegt außerhalb seines Homes und ist maschinenweit lesbar (§1) | Archiv unter `<tenantAgentDir>/sessions` (0700); `getAgentDir()` nur für den Admin. `lib/load-policy.ts:255` löst den Besitzer-Pfad schon so auf |
-| `omp-web-accounts.json`, `omp-web-session-key`, `omp-web.env` liegen unter `/home/pi/.omp/agent` (0600, **gleiche uid**) | §1: lesbar aus jedem Agent-Bash; der Schlüssel erlaubt Admin-Cookies | aus dem Konto-Pfad herausnehmen (root-owned, z. B. `/etc/omp-web/`) **und** in der Grenze per `maskFiles` verdecken. Die Terminal-Sandbox maskiert sie schon (`lib/terminal-manager.ts:224`) — der Agent-Pfad nicht |
+| `omp-web-accounts.json`, `omp-web-auth.json`, `omp-web-session-key` liegen unter `/home/pi/.omp/agent` (0600, **gleiche uid**), `omp-web.env` unter `/etc/omp-web.env` | §1: lesbar aus jedem Agent-Bash; der Schlüssel erlaubt Admin-Cookies | aus dem Konto-Pfad herausnehmen (root-owned, z. B. `/etc/omp-web/`). Zwei verschiedene Schnitte, je nach Pfad: die drei Dateien im Agent-Verzeichnis liegen unter **keinem** Bind — sie sind in der Grenze nicht vorhanden (`ENOENT`), das ist die stärkere Zusage und braucht keine Maske. `omp-web.env` liegt unter dem `/etc`-Bind und ist damit **vorhanden** — der Pfad existiert also, anders als die drei Dateien im Agent-Verzeichnis; lesbar ist sie heute nur deshalb nicht, weil sie `root:root 0600` gehört und der Mandant nicht root ist. Gehört sie dem Dienstbenutzer (die Installation erlaubt das), hilft der Modus nicht, weil die Namespace die uid nicht ändert — deshalb `maskFiles`, das sie mit einer leeren Datei überdeckt. Zieht man die Store-Dateien wie in §10 vorgeschlagen nach `/etc/omp-web/`, liegen auch sie unter dem `/etc`-Bind und brauchen dann dieselbe Maske. Die Terminal-Sandbox reicht die Liste schon durch (`lib/terminal-manager.ts:224`) — der Agent-Pfad nicht |
 | `cwd` ist ein Host-Pfad | Der Agent sieht Pfade, die in der Grenze nicht existieren | `cwd` intern als Guest-Pfad führen, Host-Pfad nur an der API-Kante |
 
 ## 10 Migration
@@ -224,8 +232,9 @@ Fünf Garantien, jede mit einem Test:
 3. **Admin bleibt global.** Ein Admin *ist* das Prozesskonto
    (`lib/tenant-config.ts:25`); ihm eine eigene Grenze zu geben, würde seinen
    Provider-Schlüssel verschwinden lassen. Mindestens aber muss der
-   Sitzungsschlüssel auch für ihn maskiert werden — ein Admin-Token ist heute
-   der Host.
+   Sitzungsschlüssel auch aus seiner Grenze herausbleiben — ein Admin-Token ist heute
+   der Host; er liegt unter keinem Bind und ist dort `ENOENT`, eine Maske braucht
+   es dafür nicht.
 4. **`OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`** als ausdrücklicher Ausstieg, mit
    Startwarnung. Vorgabe: fail-closed.
 
@@ -281,12 +290,15 @@ höher.
   Diesen Rest zu schließen braucht einen Modell-Proxy, der den Schlüssel aus
   dem Mandantenprozess heraushält; das ist ein eigener Schnitt und nicht Teil
   von L1.
-- **Ein Worker kostet rund 310 MiB RSS (365 MiB Spitze, `VmHWM` am inneren
-  `bun`) und ~1,2 s Start.** Auf diesem Host
-  (6 Kerne, 12 GiB, kein Swap) passen rechnerisch 39 Worker, mit 50 % Reserve
-  und der Spitze statt des Mittelwerts 16; die Kerne binden vor dem Speicher,
-  und die Vorgabe `OMP_WEB_TENANT_WORKER_MAX=4` liegt weit darunter. Deshalb startet ein Worker **träge** beim
-  ersten Agent-Request seines Kontos, wird nach einer konfigurierbaren
+- **Ein Worker kostet rund 265 MiB RSS, 364 MiB Spitze (`VmRSS 271524 kB`,
+  `VmHWM 372868 kB` aus `/proc/<pid>/status` am inneren `bun`) und ~1,2 s
+  Start.** Auf diesem Host (6 Kerne, 12 GiB, kein Swap) passen auf den
+  Ruhewert gerechnet 46 Worker; mit 50 % Reserve und der Spitze statt des
+  Ruhewerts sind es 16. Die Kerne binden vor dem Speicher, und die Vorgabe
+  `OMP_WEB_TENANT_WORKER_MAX=4` liegt weit darunter. Geplant wird die Grenze
+  auf der **Spitze**, nicht auf dem Ruhewert: vier Worker sind ~1,4 GiB, nicht
+  die ~1,0 GiB, die der Ruhewert nahelegt. Deshalb startet ein Worker **träge**
+  beim ersten Agent-Request seines Kontos, wird nach einer konfigurierbaren
   Ruhezeit abgeräumt und beim nächsten Request neu gestartet — nicht bei jedem
   Chat und nicht alle Konten gleichzeitig.
 
@@ -363,7 +375,7 @@ Die Zeilen aus §11, mit dem beobachteten Wert im `probe`-Lauf:
 | A2 | fremdes Archiv lesen | `cannot open …: No such file or directory` |
 | A3 | `[ -r <session-key> ]` | `NO` |
 | A4 | Geheimnisse in der Shell | 55 Variablen, **keine** mit `KEY`/`PASSWORD`/`TOKEN`/`SECRET` |
-| A5 | `ls /proc \| grep -c '^[0-9]'` | **2** (Host: 44) |
+| A5 | `ls /proc \| grep -c '^[0-9]'` | **2** — nur der eigene Prozessbaum; der Host zeigt zur selben Zeit die Einträge aller laufenden Prozesse, eine Zahl, die mit der Laufzeit schwankt und deshalb hier nicht als Wert steht |
 | A6 | ausserhalb des Homes schreiben | verweigert (`No such file or directory`) |
 | A11 | Arbeitsverzeichnis des Workers | `readlink /proc/self/cwd`, `/bin/pwd -P` und `$PWD` alle `/home/verifyalpha` |
 | A12 | selbst geschriebene Kopfzeile mit `cwd:"/"` | `/api/files` → `/etc/passwd=403`, `/proc/self/environ=403` |
@@ -372,7 +384,7 @@ Die Zeilen aus §11, mit dem beobachteten Wert im `probe`-Lauf:
 | 2b | `/proc/<worker>/root/home` | `["verifyalpha"]` |
 | 2c | `/proc/<worker>/root/home/pi` | `ENOENT` |
 | 2d | Worker-`environ` | **7** Schlüssel, keine Dienstgeheimnisse |
-| 2e | Secrets-Datei in der Grenze | `ENOENT` |
+| 2e | Secrets-Datei in der Grenze | nicht lesbar: `ENOENT`, wenn sie unter keinem Bind liegt; unter dem `/etc`-Bind wird sie mit einer leeren Datei überdeckt (0 Byte) |
 | 3a | Archiv im Mandanten-Home | 1 Datei, im Dienstverzeichnis 0 |
 | 3d | Verzeichnis-Modus | `700` |
 | 3e | Datei-Modus | `600` |
@@ -487,9 +499,11 @@ Datei-Wurzel. Jetzt geht der Konto-Pfad als `initialCwd` mit.
 
 ### 13.5 Restrisiken
 
-Ein Worker kostet **rund 310 MiB RSS, 365 MiB Spitze** (gemessen am
-2026-11-08 mit `VmHWM`/`VmRSS` aus `/proc/<pid>/status` am inneren `bun`; die
-beiden `bwrap`-Hüllen daneben kosten je ~1,5 MiB) und ~1–1,2 s Start; die Grenze teilt den
+Ein Worker kostet **rund 265 MiB RSS, 364 MiB Spitze** (nachgemessen am
+laufenden Worker: `VmRSS 271524 kB`, `VmHWM 372868 kB` aus `/proc/<pid>/status`
+am inneren `bun`; die beiden `bwrap`-Hüllen daneben kosten je ~1,5 MiB) und
+~1–1,2 s Start. Vier Worker planen damit auf der Spitze (~1,4 GiB), nicht auf
+dem Ruhewert (~1,0 GiB). Die Grenze teilt den
 Netzwerk-Stack; **der Mandant kann seinen eigenen Provider-Schlüssel lesen** —
 der Modellaufruf passiert im selben Prozess wie die Tool-Shell, und ohne einen
 Modell-Proxy laesst sich das nicht schliessen —, aber keinen fremden;
