@@ -510,3 +510,18 @@ veraltet):
   `uid=1000(pi)`; 0600 schuetzt deshalb innerhalb des Hosts nichts. Die Grenze
   kommt allein aus der User-Namespace und dem einen gebundenen Home.
 - **Landlock ist nicht gebaut und nicht gemessen** (siehe oben).
+
+**Die Namespace-Probe (`lib/tenant-namespace-probe.ts`) misst die Grenze, statt
+sie aus der PID zu schliessen.** Sie beweist, dass die Mount-Namespace des
+Workers das Dienst-Home wirklich verbirgt: ab der gemeldeten PID — auf diesem
+Host der äussere `bwrap`, dessen `/proc/<pid>/root` noch dem Host entspricht —
+wird abwärts der Prozess gesucht, dessen Wurzel ein anderes Geräte-/Inode-Paar
+als `/` trägt, und dort muss `/proc/<pid>/root/home` genau den Gastnamen
+enthalten und das Home des Dienstbenutzers (`os.userInfo().username`)
+vermissen lassen; sie beweist **nicht**, dass der Prozessbaum echt ist, denn ein
+absichtlich gefälschtes `/proc` liegt ausserhalb des Bedrohungsmodells, das
+gegen einen Mandanten schützt und nicht gegen den Betreiber der Maschine; und
+`boundary.enforced: true` steht seitdem nur noch nach einer bestandenen Probe —
+eine fehlgeschlagene endet mit `boundary-not-enforced`, beendet den
+Prozessbaum und nennt einen Wrapper oder eine mitgelieferte `bwrap`-Kopie
+früher im `PATH` als wahrscheinliche Ursache.

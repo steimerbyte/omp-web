@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { RpcClient, type RpcAgentProcess } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import { planSandboxSpawn, type SandboxPlan } from "./sandbox";
+import { probeWorkerNamespace } from "./tenant-namespace-probe";
 import { secretMaskFiles } from "./secret-mask";
 import { getUserHome, type WebIdentity } from "./request-identity";
 import { prepareTenantSessionDir } from "./tenant-sessions";
@@ -114,6 +115,16 @@ export interface TenantWorkerOptions {
   /** Fuer Tests: zusaetzliche Argumente hinter `--session-dir`. */
   extraArgs?: string[];
   startTimeoutMs?: number;
+  /**
+   * Die Namespace-Messung, austauschbar **nur** fuer Tests.
+   *
+   * Ein Test, der `enforced: false` belegen soll, braucht einen Start, dessen
+   * Probe scheitert. Ihn ueber einen echten Wrapper auf dem `PATH` zu bauen
+   * waere ein zweiter Testgegenstand (PATH-Aufloesung, Shell-Semantik,
+   * `exec`-Ersatz) statt des einen Vertrags. Der Vorgabewert ist die echte
+   * Messung; ein Aufrufer ausserhalb der Tests hat keinen Grund, sie zu setzen.
+   */
+  probeNamespace?: typeof probeWorkerNamespace;
 }
 
 /**
@@ -332,17 +343,50 @@ export async function startTenantWorker(
   }
 
   const pid = spawnRef.pid;
+  if (pid === undefined) {
+    // Ohne PID gibt es nichts zu messen und nichts zu behaupten.
+    await client.stop().catch(() => {});
+    return {
+      ok: false,
+      reason: "boundary-not-enforced",
+      detail: "The spawn reported no PID, so there is no process whose mount namespace could be verified.",
+      remediation:
+        "The worker process did not report a PID, so its boundary cannot be verified. "
+        + "A wrapper named `bwrap` earlier on PATH (or a vendored bubblewrap copy that execs the payload without --unshare-*) "
+        + "is the likely cause: point PATH at the real bubblewrap, remove the wrapper, and retry.",
+    };
+  }
+  // Erst messen, dann behaupten. Ein `pid !== undefined` ist die Meldung des
+  // Spawns, keine Eigenschaft des Kerns: ein Wrapper frueher im PATH, der die
+  // Nutzlast ohne Mount-Namespace `exec`t, liefert trotzdem eine PID. Die Probe
+  // fragt den Kernel nach der Wurzel dieses Prozessbaums und nach dem, was dort
+  // unter `/home` steht (siehe `lib/tenant-namespace-probe.ts`).
+  const probe = (options.probeNamespace ?? probeWorkerNamespace)(pid, identity.username);
+  if (!probe.ok) {
+    // Kein Bericht ueber eine Grenze, die nicht steht: den ganzen Baum beenden
+    // und mit benanntem Grund ablehnen. Die Registry bekommt so nie ein
+    // `enforced: true`, und der Mandant bekommt keinen Prozess, der ihm
+    // faelschlich als eingegrenzt verkauft wird.
+    await client.stop().catch(() => {});
+    return {
+      ok: false,
+      reason: "boundary-not-enforced",
+      detail: probe.detail,
+      remediation:
+        "The worker process did not end up in its own mount namespace, so the boundary is not enforced. "
+        + "A wrapper named `bwrap` earlier on PATH (or a vendored bubblewrap copy that execs the payload without --unshare-*) "
+        + "is the likely cause: point PATH at the real bubblewrap, remove the wrapper, and retry.",
+    };
+  }
   return {
     username: identity.username,
     pid,
     enforced: true,
     client,
     startedAt: Date.now(),
-    // `enforced` nur mit lebendem Prozess — die Zusage aus §5/§8 des Plans: der
-    // Server behauptet keine Isolation, die er nicht hat.
-    boundary: pid === undefined
-      ? { kind: "tenant-worker", enforced: false }
-      : { kind: "tenant-worker", enforced: true, pid },
+    // `enforced` nur nach einer bestandenen Messung — die Zusage aus §5/§8 des
+    // Plans: der Server behauptet keine Isolation, die er nicht hat.
+    boundary: { kind: "tenant-worker", enforced: true, pid },
     isAlive: () => !death.dead,
     async stop() {
       await client.stop().catch(() => {});

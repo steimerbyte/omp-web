@@ -47,7 +47,15 @@ export function mergeSessionLists(
   const byId = new Map(supplementalSessions.map((session) => [session.id, session]));
   // A disk scan is authoritative once the JSONL exists. In particular, this
   // replaces a transient registry snapshot without briefly rendering two rows.
-  for (const session of persistedSessions) byId.set(session.id, session);
+  for (const session of persistedSessions) {
+    const live = byId.get(session.id);
+    // `boundary` is the one field the disk cannot know: it is a property of the
+    // running process (`getRpcSessionInfos`), and the persisted row wins for
+    // every file-backed field. Dropping it here made the claim unreachable —
+    // `/api/sessions` returned no `boundary` for a worker-hosted session even
+    // though the runtime had just measured it.
+    byId.set(session.id, live?.boundary ? { ...session, boundary: live.boundary } : session);
+  }
   return [...byId.values()].sort((a, b) => b.modified.localeCompare(a.modified));
 }
 

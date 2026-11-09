@@ -2308,6 +2308,10 @@ export class TenantBoundaryError extends Error {
  * - `tenant-worker-spawn-failed`: der Plan ging auf, der Prozess starb
  *   trotzdem. Das ist der eine echte Defekt in dieser Familie, und ihn als
  *   voruebergehend zu deklarieren luede zu einem Wiederholungssturm ein.
+ * - `boundary-not-enforced`: gestartet, aber die Probe fand keine eigene
+ *   Mount-Namespace (ein Wrapper frueher im `PATH`). Auch das ist kein
+ *   Zustand, der von selbst vorbeigeht — ein erneuter Versuch trifft denselben
+ *   Wrapper. Deshalb faellt der Grund auf die Vorgabe 500 und nicht auf 503.
  */
 const BOUNDARY_STATUS_BY_REASON: Record<string, number> = {
   "bwrap-missing": 503,

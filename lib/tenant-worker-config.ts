@@ -41,6 +41,17 @@ import type { SandboxFailureReason } from "./sandbox";
 /** Warum kein Worker gestartet werden konnte. Benannt, nie still. */
 export type TenantWorkerFailureReason =
   | "boundary-unavailable"
+  /**
+   * Der Prozess lief, steht aber nicht in einer eigenen Mount-Namespace.
+   *
+   * Ein eigener Grund neben `boundary-unavailable`: dort fehlt eine
+   * Voraussetzung, bevor irgendetwas startet (Home, SDK, `bun`). Hier ist
+   * gestartet worden und die Grenze hat sich beim Nachmessen nicht eingestellt —
+   * typischerweise ein Wrapper frueher im `PATH`, der `bwrap` heisst und die
+   * Nutzlast ohne `--unshare-*` `exec`t. Ein Wiederholungsversuch aendert daran
+   * nichts, deshalb kein 503 (siehe `BOUNDARY_STATUS_BY_REASON`).
+   */
+  | "boundary-not-enforced"
   | "tenant-worker-spawn-failed"
   | "tenant-worker-crashed"
   | "tenant-worker-timeout"

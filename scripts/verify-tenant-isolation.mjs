@@ -612,7 +612,7 @@ async function main() {
 
   // --- 2: Worker-Grenze ----------------------------------------------------
   if (!workerRowsApply) {
-    for (const id of ["2a", "2b", "2c", "2d", "2e"]) {
+    for (const id of ["2a", "2b", "2c", "2d", "2e", "2f"]) {
       // Der Text nennt den Modus, in dem der Lauf steht. Vorher stand hier
       // fest "--mode fail-closed", und ein opt-out-Lauf behauptete damit
       // etwas ueber einen Modus, in dem er nicht lief.
@@ -625,6 +625,7 @@ async function main() {
     fail("2c", "/proc/<worker>/root/home/<hostuser> existiert nicht", "kein Worker");
     fail("2d", "Worker-environ traegt keine Dienstgeheimnisse", "kein Worker — kein Kindprozess zum Messen");
     fail("2e", "Guest-Geheimnisdatei im Worker nicht lesbar", "kein Worker");
+    fail("2f", "boundary.enforced stimmt mit dem Kernelbefund ueberein", "kein Worker — keine Grenze zu melden");
   } else {
     pass("2a", "Ein Workerprozess pro Mandant",
       `${mine.length} Worker (pids ${mine.map((p) => p.pid).join(",")}), ${procs.length} RPC gesamt`
@@ -661,6 +662,52 @@ async function main() {
     const empty = guest.ok && guest.value.trim().length === 0;
     (guest.ok && !empty ? fail : pass)("2e", `Guest ${secretsPath} im Worker nicht lesbar`,
       guest.ok ? (empty ? "leer (maskiert)" : `${guest.value.length} Bytes lesbar`) : `nicht lesbar (${guest.code})`);
+
+    // 2f: sagt die API dasselbe wie der Kernel?
+    //
+    // `boundary.enforced` ist eine Behauptung des Servers gegenueber dem Client.
+    // Sie darf nicht aus `pid !== undefined` folgen: ein `bwrap`-Wrapper frueher
+    // im PATH, der die Nutzlast ohne Mount-Namespace `exec`t, liefert eine PID
+    // und keine Grenze (§5/§8 des Plans). Seit dem Fix steht `enforced: true`
+    // nur nach einer bestandenen Probe (`lib/tenant-namespace-probe.ts`), die
+    // vom Kernel liest: `/proc/<pid>/root` muss eine eigene Wurzel haben, und
+    // `/proc/<pid>/root/home` muss genau den Mandanten enthalten.
+    //
+    // Beide Richtungen, und die negative wird **nicht** mit einem gefaelschten
+    // `bwrap` gebaut, sondern ueber die eingeschleuste Probe
+    // (`lib/tenant-worker.test.mjs`, "a worker whose namespace probe fails is
+    // refused"): ein Wrapper auf dem PATH waere ein zweiter Testgegenstand
+    // (PATH-Aufloesung, Shell-Semantik, `exec`-Ersatz) und wuerde messen, ob der
+    // Wrapper funktioniert — nicht, ob der Server ohne Grenze schweigt. Diese
+    // Zeile misst deshalb die positive Richtung am laufenden Server und
+    // verweist fuer die negative auf den Test, der sie fuehrt.
+    const listRes2f = await request(opts, "/api/sessions", {}, alpha.cookie);
+    const own = (listRes2f.json?.sessions ?? []).find((s) => s.id === sessionId) ?? null;
+    const boundary = own?.boundary ?? null;
+    if (listRes2f.status !== 200) {
+      skip("2f", "boundary.enforced stimmt mit dem Kernelbefund ueberein", `GET /api/sessions -> ${listRes2f.status}`);
+    } else if (own === null) {
+      fail("2f", "boundary.enforced stimmt mit dem Kernelbefund ueberein",
+        `Session ${sessionId} fehlt in der Liste (${(listRes2f.json?.sessions ?? []).length} Zeilen)`);
+    } else if (!boundary) {
+      fail("2f", "boundary.enforced stimmt mit dem Kernelbefund ueberein",
+        `kein boundary-Feld an Session ${sessionId} — der Client kann \"Worker\" nicht von \"Serverprozess\" unterscheiden`);
+    } else {
+      const claimed = boundary.enforced === true;
+      // Die Zusage ist eine Gleichheit in beide Richtungen: ein `true` ohne
+      // Grenze ist die Behauptung, die der Fix verbietet; ein `false` bei
+      // stehender Grenze waere die umgekehrte Luege (und wuerde den Fix
+      // verdecken, wenn er zu streng ablehnt). Der Kernelbefund ist `onlyTenant`
+      // aus Zeile 2b: genau ein Eintrag unter `/proc/<worker>/root/home`, und er
+      // ist der Mandant.
+      (claimed === onlyTenant ? pass : fail)(
+        "2f", "boundary.enforced stimmt mit dem Kernelbefund ueberein",
+        `API: kind=${JSON.stringify(boundary.kind)} enforced=${claimed} pid=${boundary.pid ?? "—"}; `
+        + `Kernel: /proc/<worker>/root/home = ${JSON.stringify(entries)} (${onlyTenant ? "eigene Wurzel" : "Host-Wurzel"})`
+        + (claimed === onlyTenant ? "" : " — die API behauptet etwas anderes als der Kernel zeigt")
+        + "; negativer Fall: `bun test lib/tenant-worker.test.mjs` (\u00abnamespace probe fails\u00bb) belegt, dass eine fehlgeschlagene Probe keinen enforced-Worker zurueckgibt",
+      );
+    }
   }
 
   // --- 3: Store-Layout -----------------------------------------------------
