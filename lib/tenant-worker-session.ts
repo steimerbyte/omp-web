@@ -1,6 +1,6 @@
-import { chmodSync } from "node:fs";
-import { join } from "node:path";
-import { SessionManager } from "@oh-my-pi/pi-coding-agent";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { CURRENT_SESSION_VERSION, SessionManager } from "@oh-my-pi/pi-coding-agent";
 import type { RpcClient } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-client";
 import type { AgentSessionLike, GoalRuntimeLike } from "./omp-types";
 import { getOmpRuntime, getSettingsForIdentity } from "./omp-runtime";
@@ -100,6 +100,42 @@ export interface WorkerBackedSessionOptions {
 /** Der Gast-Pfad des Session-Verzeichnisses eines Kontos. */
 export function guestSessionDir(identity: WebIdentity): string {
   return `/home/${identity.username}/.omp/agent/sessions`;
+}
+
+/**
+ * Die Kopfzeile eines **neuen** Transcripts traegt die Id des Workers.
+ *
+ * Der Grund ist die eine Wahrheit ueber die Identitaet: der Worker vergibt die
+ * Id, `/api/agent/new` gibt sie heraus, und der Dateiname traegt sie bereits
+ * (`<ts>_<id>.jsonl`, vom Worker gewaehlt). Nur die Kopfzeile fehlte noch —
+ * `SessionManager.open` legt eine fehlende Datei an und vergibt dabei eine
+ * **zweite** Id, und `getRpcSessionInfos` liest die Liste aus `header?.id`.
+ * Gemessen am 2026-11-09: `POST /api/agent/new` -> `…-8787…`, Liste -> `…-8831…`,
+ * `GET /api/sessions/<8787>` -> 404.
+ *
+ * Ein **vorhandenes** Transcript bleibt unangetastet: `open` uebernimmt seine
+ * Kopfzeile samt Id, eine bestehende Session loest also unveraendert auf.
+ * `wx` statt eines `existsSync`-Vorchecks schliesst das Rennen zwischen beiden.
+ */
+export function seedSessionHeader(sessionFile: string, sessionId: string, cwd: string): void {
+  try {
+    // `open` legte das Verzeichnis frueher selbst an; `writeFileSync` tut das
+    // nicht. 0700, weil der Pfad Teil des Archivs ist (Abnahmezeile `3d`).
+    mkdirSync(dirname(sessionFile), { recursive: true, mode: 0o700 });
+    writeFileSync(sessionFile, `${JSON.stringify({
+      type: "session",
+      version: CURRENT_SESSION_VERSION,
+      id: sessionId,
+      timestamp: new Date().toISOString(),
+      cwd,
+    })}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  } catch (error) {
+    // EEXIST: das Transcript gibt es schon (die Id darin gewinnt, `open` liest
+    // sie). Jeder andere Fehler ist ein echter: ohne die Datei kann `open` die
+    // Session nicht an das Worker-Archiv haengen.
+    const code = error !== null && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code !== "EEXIST") throw error;
+  }
 }
 
 /**
@@ -249,6 +285,17 @@ export async function createWorkerBackedSession(
   // — die Session waere fuer ihr eigenes Konto unsichtbar. Der Gast-Pfad bleibt
   // der Vertrag fuer alles, was **im** Worker laeuft (§9); die Kopfzeile
   // beschreibt dagegen die Sicht des Servers auf dieselbe Datei.
+  // Eine Wahrheit fuer die Identitaet: die Id, die `/api/agent/new` zurueckgibt,
+  // ist die Id des Workers, steht im Dateinamen und ab hier auch in der
+  // Kopfzeile. Ohne diese Zeile vergab `SessionManager.open` fuer die noch
+  // fehlende Datei eine **zweite** Id (gemessen am 2026-11-09: Worker-Id
+  // `…-8787…` im Dateinamen, Kopfzeile `…-8831…`), und `getRpcSessionInfos`
+  // (`header?.id ?? session.sessionId`) zeigte die Session unter einer Id, die
+  // kein Client je gesehen hat — der Lookup der eigenen Session fand nichts.
+  // Die Gegenrichtung braucht die Zeile nicht: `open` uebernimmt eine
+  // vorhandene Kopfzeile samt Id, und ein bereits existierendes Transcript wird
+  // deshalb unveraendert gelesen.
+  seedSessionHeader(sessionFile, state.sessionId, options.hostCwd);
   const manager = await SessionManager.open(sessionFile, undefined, undefined, {
     initialCwd: options.hostCwd,
   });
