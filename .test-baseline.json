@@ -1679,9 +1679,9 @@
       "uncovered": 7
     },
     "lib/tenant-worker-session.ts": {
-      "functionsFound": 14,
-      "functionsHit": 3,
-      "uncovered": 11
+      "functionsFound": 69,
+      "functionsHit": 24,
+      "uncovered": 45
     }
   }
 }
