@@ -401,6 +401,34 @@ export async function startTenantWorker(
  * (~1 s, ~290 MB) fallen einmal pro Konto an, nicht pro Chat. Der Registrierung
  * liegt ein `Promise` zugrunde, damit zwei gleichzeitige erste Requests nicht
  * zwei Worker starten.
+ *
+ * ### Der Idle-Timer misst Verkehr, nicht Alter
+ *
+ * Der erste Entwurf hat den Timer einmal beim Anlegen gesetzt und beim Feuern
+ * `Date.now() - lastUsed < idleMs` geprueft — aber `touch` rief nur die
+ * Session-Erzeugung. Gemessen am 2026-11-09 mit
+ * `OMP_WEB_TENANT_WORKER_IDLE_MS=10000` und einem `bash`-Aufruf alle ~6 s war
+ * der Worker bei t≈19 s **weg**, obwohl er durchgehend benutzt wurde: der Timer
+ * zaehlte das Alter des Prozesses, nicht die Ruhezeit. Bei der Vorgabe von
+ * 300000 verlor damit jeder Chat, dessen Turns weniger als fuenf Minuten
+ * auseinanderlagen, mitten im Gespraech seinen Prozess.
+ *
+ * Deshalb setzt **jede** Benutzung den einen Timer neu (`touch`), und ein
+ * Worker, der gerade arbeitet, wird gar nicht abgeraeumt: `isBusy` fragt die
+ * Session-Registry, ob fuer dieses Konto ein Turn laeuft. Ein Turn kann laenger
+ * dauern als `idleMs` — ein Werkzeug wie `bun install` braucht Minuten —, und
+ * ihn mitten im Lauf zu beenden waere ein Datenverlust, kein Aufraeumen.
+ *
+ * Wo "Benutzung" gemessen wird: am `client` des Workers, also am einzigen Weg
+ * zum Prozess. Ein `touch` nur beim Beschaffen der Session (`rpc-manager`)
+ * mass wieder das Alter des Prozesses — deshalb haengt das Signal in
+ * `withTraffic` und nicht beim Aufrufer, und die Zusage gilt fuer jeden
+ * Benutzer des Workers.
+ *
+ * Was jetzt gemessen ist (`lib/tenant-worker.test.mjs`, echter Worker und
+ * echter `bash`): bei `idleMs = 3000` und einer Anfrage pro Sekunde ueber
+ * 10 s bleibt **dieselbe** PID am Leben; ohne Verkehr ist der Worker nach
+ * `2 × idleMs` (+ Slack) weg, und auch der Prozess ist es.
  */
 export interface TenantWorkerHost {
   max: number;
@@ -422,9 +450,28 @@ interface WorkerSlot {
   lastUsed: number;
 }
 
-export function createTenantWorkerHost(options: { max?: number; idleMs?: number } = {}): TenantWorkerHost {
+export function createTenantWorkerHost(
+  options: {
+    max?: number;
+    idleMs?: number;
+    /**
+     * Laeuft fuer dieses Konto gerade ein Turn?
+     *
+     * Der Idle-Timer darf einen arbeitenden Worker **nicht** abraeumen: ein
+     * `bun install` in einem Werkzeugaufruf dauert laenger als `idleMs`, und ein
+     * Abbruch mitten im Lauf ist Datenverlust. Der Server kennt die Antwort
+     * (die Session-Registry weiss, ob ein Turn laeuft) — deshalb ist das eine
+     * eingeschleuste Funktion und kein Zeitfenster hier.
+     *
+     * Vorgabe: nie beschaeftigt. Das ist die richtige Vorgabe fuer einen Host
+     * ohne Sessions und fuer Tests, die nur den Timer messen.
+     */
+    isBusy?: (username: string) => boolean;
+  } = {},
+): TenantWorkerHost {
   const max = options.max ?? resolveWorkerMax();
   const idleMs = options.idleMs ?? resolveWorkerIdleMs();
+  const isBusy = options.isBusy ?? (() => false);
   const slots = new Map<string, WorkerSlot>();
   const starting = new Map<string, Promise<TenantWorker | TenantWorkerFailure>>();
 
@@ -443,19 +490,76 @@ export function createTenantWorkerHost(options: { max?: number; idleMs?: number 
     remediation: "Raise OMP_WEB_TENANT_WORKER_MAX, or lower OMP_WEB_TENANT_WORKER_IDLE_MS so idle workers are reaped sooner.",
   });
 
+  /**
+   * Setzt den einen Timer dieses Slots neu: abbrechen, dann wieder scharf
+   * machen. Kein zweiter Timer, keine Ansammlung — sonst feuert nach n
+   * Anfragen ein Schwarm, und der erste davon raeumt einen Worker ab, den die
+   * anderen gerade benutzen.
+   *
+   * Beim Feuern wird **kein** Alter geprueft: der Timer ist genau `idleMs` nach
+   * dem letzten Verkehr gesetzt worden, also ist er faellig. Ein Vergleich
+   * `Date.now() - lastUsed` waere die alte Logik und die einzige Stelle, an der
+   * sie sich wieder einschleichen koennte. `lastUsed` bleibt trotzdem gepflegt —
+   * es ist die Reihenfolge, in der die Kapazitaet weicht (`snapshot`).
+   */
   const scheduleIdle = (username: string): void => {
     const slot = slots.get(username);
     if (!slot) return;
     clearTimeout(slot.timer);
-    slot.lastUsed = Date.now();
-    slot.timer = setTimeout(() => {
-      // Der Timer laeuft ins Leere, wenn in der Zwischenzeit eine Anfrage kam:
-      // dann hat `touch` ihn neu gesetzt und dieser hier ist veraltet.
+    slot.timer = setTimeout(function check() {
       const current = slots.get(username);
-      if (!current || Date.now() - current.lastUsed < idleMs) return;
+      if (!current) return;
+      // Ein Turn kann laenger dauern als `idleMs` (ein `bun install` braucht
+      // Minuten); ihn mitten im Lauf zu beenden waere Datenverlust. Also nicht
+      // abraeumen, sondern den naechsten Blick planen.
+      if (isBusy(username)) {
+        current.lastUsed = Date.now();
+        current.timer = setTimeout(check, idleMs);
+        current.timer.unref?.();
+        return;
+      }
       void evict(username);
     }, idleMs);
     slot.timer.unref?.();
+  };
+
+  /**
+   * Die eine Stelle, die "dieser Worker wurde gerade benutzt" festhaelt:
+   * Zeitstempel **und** Timer. Zwei getrennte Schreibstellen waeren zwei
+   * Wahrheiten ueber denselben Verkehr, und genau daran ist der erste Entwurf
+   * gescheitert (Timer neu, Zeitstempel alt).
+   */
+  const noteTraffic = (username: string): void => {
+    const slot = slots.get(username);
+    if (!slot) return;
+    slot.lastUsed = Date.now();
+    scheduleIdle(username);
+  };
+
+  /**
+   * Der Verkehr am `client` — dem einzigen Weg zum Prozess dieses Workers.
+   *
+   * Ein `touch` nur beim Beschaffen der Session (`rpc-manager.ts:2421`) misst
+   * das Alter des Prozesses, nicht seine Ruhezeit: jeder gewoehnliche Turn
+   * laeuft ueber `client.send`, und der zaehlte nicht. Deshalb haengt das
+   * Signal an jeder Methode des Clients und nicht beim Aufrufer — die Zusage
+   * haelt damit unabhaengig davon, wer den Worker benutzt.
+   */
+  const withTraffic = (worker: TenantWorker): TenantWorker => {
+    const client = worker.client;
+    worker.client = new Proxy(client, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          noteTraffic(worker.username);
+          // `target` als Empfaenger, nicht der Proxy: die Methoden lesen
+          // private Felder, und die existieren nur auf dem Ziel.
+          return Reflect.apply(value, target, args);
+        };
+      },
+    });
+    return worker;
   };
 
   return {
@@ -470,7 +574,9 @@ export function createTenantWorkerHost(options: { max?: number; idleMs?: number 
         // Request scheitert an derselben Stelle — der in Anforderung 4
         // verlangte "restart on unexpected death" faende nie statt.
         if (existing.worker.isAlive()) {
-          scheduleIdle(identity.username);
+          // Jede Benutzung verschiebt das Abraeumen — auch diese: das Beschaffen
+          // ist Verkehr fuer den Worker.
+          noteTraffic(identity.username);
           return existing.worker;
         }
         await evict(identity.username);
@@ -493,9 +599,10 @@ export function createTenantWorkerHost(options: { max?: number; idleMs?: number 
           starting.delete(identity.username);
           if ("ok" in result && result.ok === false) return result;
           const worker = result as TenantWorker;
-          slots.set(identity.username, { worker, timer: undefined, lastUsed: Date.now() });
+          const tracked = withTraffic(worker);
+          slots.set(identity.username, { worker: tracked, timer: undefined, lastUsed: Date.now() });
           scheduleIdle(identity.username);
-          return worker;
+          return tracked;
         },
         (error: unknown): TenantWorkerFailure => {
           starting.delete(identity.username);
@@ -521,7 +628,7 @@ export function createTenantWorkerHost(options: { max?: number; idleMs?: number 
       }));
     },
     touch(username) {
-      scheduleIdle(username);
+      noteTraffic(username);
     },
   };
 }
