@@ -47,13 +47,43 @@ upstream line — see the Provenance section in the README.
 
 
   **Lebenszyklus.** Träger Start bei der ersten Agent-Anfrage des Kontos, Abräumen
-  nach `OMP_WEB_TENANT_WORKER_IDLE_MS` (Vorgabe 300 000, Werte unter 10 000
-  werden angehoben), harte Obergrenze `OMP_WEB_TENANT_WORKER_MAX` (Vorgabe 4 —
-  265 MiB resident / 364 MiB Spitze gemessen, `VmRSS 271524 kB` /
-  `VmHWM 372868 kB`, und ~1,1 s pro Worker, 6 Kerne binden vor 12 GiB) mit
-  LRU-Verdrängung, und ein gestorbener Worker wird ersetzt statt weiter
-  ausgeliefert. `SessionInfo.boundary` meldet `kind`/`enforced`/`pid`;
-  `enforced: true` steht dort nur mit gemeldeter PID.
+  nach `OMP_WEB_TENANT_WORKER_IDLE_MS` (Vorgabe 300 000; ungültige Werte und
+  Werte unter 10 000 fallen auf diese Vorgabe zurück), harte Obergrenze
+  `OMP_WEB_TENANT_WORKER_MAX` (Vorgabe 4) mit LRU-Verdrängung.
+  `SessionInfo.boundary` meldet `kind`/`enforced`/`pid`.
+
+  Ein Worker kostet rund 265 MiB resident und 364 MiB Spitze (`VmRSS 271524 kB`
+  / `VmHWM 372868 kB` aus `/proc/<pid>/status` am inneren `bun`), ~1,1 s Start;
+  die Kerne binden vor dem Speicher. Die Grenze wird auf der **Spitze** geplant,
+  nicht auf dem Ruhewert: vier Worker sind rund 1,4 GiB, nicht die ~1,0 GiB, die
+  der Ruhewert nahelegt.
+
+  **Der Idle-Timer misst Ruhezeit, nicht Alter.** Er wurde einmal beim Anlegen
+  gesetzt und beim Feuern gegen das Alter des Prozesses geprüft, während nur die
+  Session-Erzeugung ihn zurücksetzte: mit `OMP_WEB_TENANT_WORKER_IDLE_MS=10000`
+  und einem `bash`-Aufruf alle ~6 s war der Worker bei t≈19 s weg, und bei der
+  Vorgabe von fünf Minuten verlor jeder Chat mit engeren Turns seinen Prozess
+  mitten im Gespräch. Jetzt verschiebt jeder Verkehr das Abräumen, und ein
+  Worker mit laufendem Turn wird nie abgeräumt.
+
+  **Der Namespace wird gemessen, nicht aus der PID geschlossen.** Die API meldete
+  `boundary.enforced: true`, sobald der Spawn eine PID hatte — ein `bwrap`-
+  Wrapper früher im `PATH`, der die Nutzlast ohne `--unshare-*` `exec`t, lieferte
+  genau so eine PID, und ein ungegrenzter Mandant stand als eingegrenzt im
+  Bericht. Jetzt prüft eine Probe nach dem Start die Mount-Namespace des
+  Prozessbaums; schlägt sie fehl, wird der Worker beendet und der Request endet
+  mit `reason: "boundary-not-enforced"` (Status 500 — ein erneuter Versuch trifft
+  denselben Wrapper) samt `detail` und `remediation`. `boundary.enforced: true`
+  steht damit nur nach einer bestandenen Messung.
+
+  **Ein toter Worker vergiftete seine Session dauerhaft.** Ein abgeräumter oder
+  mit `kill -9` beendeter Worker ließ einen Wrapper zurück, dessen `isAlive()`
+  weiter `true` meldete, sodass jeder Request an der geschlossenen Pipe mit
+  `500 {"error":"Client not started"}` scheiterte — bis zum Serverneustart
+  (gemessen: drei Requests hintereinander). Jetzt fragt `isAlive()` den Worker,
+  ein toter Wrapper wird ersetzt, und die Session wird aus ihrem Archiv unter
+  derselben Id neu geöffnet; gemessen antwortet der erste Request nach dem
+  `kill -9` mit **200**.
 
   **Der Provider kommt aus dem eigenen `models.yml` des Kontos.** Der erste echte
   Start scheiterte mit `No default model selected`, weil die Provider-Liste
@@ -74,8 +104,8 @@ upstream line — see the Provenance section in the README.
   leer/ungesetzt = keine Freigabe) ist der einzige Weg zum Betreiber-Schlüssel;
   ein nicht gelisteter Name löst nichts auf und schreibt eine Zeile auf stderr.
   Preis einer Freigabe, dokumentiert statt verschwiegen: der Wert steht im argv
-  des Workers (`/proc/<pid>/cmdline`) und ist für jede Prozess-ID der
-  Dienst-UID lesbar.
+  des Workers (`/proc/<pid>/cmdline`) und ist dort für die Dauer des
+  Worker-Lebens für jeden Prozess der Dienst-UID lesbar.
 
   **Zwei Defekte, die erst die Messung zeigte.** Das Transcript einer
   In-Process-Mandanten-Session war `0644` — `persistBashOnlySession` schrieb ohne
@@ -150,10 +180,24 @@ upstream line — see the Provenance section in the README.
   mit `0700` auf Verzeichnissen und `0600` auf den Transcripts. Gemessen vorher:
   ein fremdes Transcript lag als `0644` da und ließ sich aus einer
   Mandanten-Session vollständig lesen. Der Admin bleibt bewusst beim
-  Prozess-Verzeichnis (§9 des Plans). Dazu eine einmalige, idempotente
-  Migration des Bestands: pro Konto ein Bucket-Umzug mit sha256-Listen vor und
-  nach, kein Überschreiben eines vorhandenen Ziels, und ein Bucket mit einer
-  fremden Session bleibt stehen statt halb umzuziehen.
+  Prozess-Verzeichnis (§9 des Plans).
+
+  **Die Migration des Bestands läuft jetzt beim Serverstart.** Das Modul gab es
+  vorher schon, aufgerufen hat es niemand — der Betreiber hätte beim Upgrade auf
+  eine Migration gewartet, die nie lief, und der Bestand wäre still liegen
+  geblieben. Jetzt ruft `instrumentation.ts` sie beim Start auf; sie ist
+  idempotent (ein zweiter Lauf findet nichts mehr, zusätzlich ein Prozess-Guard)
+  und läuft damit **einmal pro Serverstart**, nicht bei jedem Request. Pro Konto
+  ein Bucket-Umzug mit sha256-Listen vor und nach, kein Überschreiben eines
+  vorhandenen Ziels, und ein Bucket mit einer fremden Session bleibt stehen statt
+  halb umzuziehen. Geloggt wird eine Zeile pro umgezogenem Bucket (`<bucket> ->
+  <konto> (n files)`) plus eine Zusammenfassung (`moved n buckets, n files,
+  skipped n`); ohne Bestand bleibt es bei der Zusammenfassung allein.
+  `OMP_WEB_TENANT_ARCHIVE_MIGRATION=dry-run` verschiebt nichts, sondern nennt
+  die Buckets, die es täte — der Blick vor dem Upgrade. Ein Fehler wird zu einer
+  Zeile auf stderr; der Server startet trotzdem, und ein zweiter Versuch kommt
+  erst mit dem nächsten Start — innerhalb eines Prozesses läuft sie genau
+  einmal.
 
   Die vier Geheimdateien (Secrets, `omp-web-auth.json`,
   `omp-web-accounts.json`, `omp-web-session-key`) stehen in einer Liste
@@ -164,11 +208,13 @@ upstream line — see the Provenance section in the README.
   dem Host, 0 B in der Grenze; die drei Dateien unter `/home/pi/.omp/agent` sind
   dort `ENOENT`.
 
-  **Nicht** enthalten und nicht behauptet: der Worker-Prozess pro Mandant (L1).
-  Der Agent läuft weiter im Serverprozess; die Pfad- und Modusgrenze ist keine
-  Prozessgrenze, und ein `bash`-Tool kann weiterhin alles lesen, was dem
-  Dienstbenutzer gehört — außerhalb der verdeckten Dateien. Nicht verifiziert
-  auf einem zweiten Host: nur agent-pc (LXC 101, bubblewrap 0.12.0) gemessen.
+  **In diesem Schritt** nicht enthalten und nicht behauptet: der Worker-Prozess
+  pro Mandant (L1). Damals lief der Agent weiter im Serverprozess, und die Pfad-
+  und Modusgrenze war keine Prozessgrenze — ein `bash`-Tool konnte alles lesen,
+  was dem Dienstbenutzer gehört, außerhalb der verdeckten Dateien. Der erste
+  Eintrag oben holt das nach; was dort weiterhin offen ist, steht dort. Nicht
+  verifiziert auf einem zweiten Host: nur agent-pc (LXC 101, bubblewrap 0.12.0)
+  gemessen.
 
 ## v0.24.3
 Released 2026-11-08.
