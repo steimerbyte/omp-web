@@ -3,7 +3,8 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
-## Unreleased
+## v0.25.0
+Released 2026-11-09.
 
 - **Ein Mandant wird von einem eigenen Prozess gehostet — die Grenze ist jetzt
   eine Prozessgrenze, nicht mehr eine Pfadprüfung.** Ein Nicht-Admin-Konto läuft
