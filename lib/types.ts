@@ -412,6 +412,25 @@ export interface SessionInfo {
   /** True while the runtime session exists only in memory and its JSONL file
    *  has not been created yet. Disk-backed actions must wait until this clears. */
   transient?: boolean;
+  /**
+   * Wo diese Session laeuft, sofern der Server es messen kann.
+   *
+   * `kind: "tenant-worker"` heisst: ein eigener Prozess in einer bwrap-
+   * Namespace hostet sie (`lib/tenant-worker.ts`). `enforced: true` steht dort
+   * nur mit einer gemeldeten PID — der Server behauptet keine Isolation, die
+   * er nicht hat. `kind: "in-process"` ist der Admin und der ausdrueckliche
+   * Betriebsausstieg `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`; `enforced` ist dann
+   * immer `false`.
+   *
+   * Optional, weil der Client transiente `SessionInfo`-Objekte baut, bevor der
+   * erste Refresh gelaufen ist, und weil eine Session aus dem Archiv stammt,
+   * fuer die es keinen laufenden Prozess gibt.
+   */
+  boundary?: {
+    kind: "tenant-worker" | "in-process";
+    enforced: boolean;
+    pid?: number;
+  };
 }
 
 export interface SessionContext {

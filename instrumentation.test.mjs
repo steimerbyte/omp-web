@@ -1,6 +1,6 @@
-// instrumentation.ts hatte keinen Test. register() laedt drei Module ueber
+// instrumentation.ts hatte keinen Test. register() laedt vier Module ueber
 // process.cwd(); der Test legt dafuer Stubs an, wechselt das Verzeichnis und
-// prueft beide Runtimes plus den Fehlerzweig.
+// prueft beide Runtimes plus die Fehlerzweige.
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +10,7 @@ import test from "node:test";
 
 const INSTRUMENTATION = pathToFileURL(new URL("./instrumentation.ts", import.meta.url).pathname).href;
 
-function makeStubRoot(logPath, { scheduler = true } = {}) {
+function makeStubRoot(logPath, { scheduler = true, migration = "ok" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "omp-instrumentation-"));
   mkdirSync(join(root, "lib"), { recursive: true });
   const log = (line) => `appendFileSync(${JSON.stringify(logPath)}, ${JSON.stringify(`${line}\n`)});`;
@@ -31,6 +31,15 @@ export function inheritedSecretNames() { log("inheritedSecretNames"); return pro
     writeFileSync(join(root, "lib", "scheduler.ts"), `
 import { appendFileSync } from "node:fs";
 export function startScheduler() { appendFileSync(${JSON.stringify(logPath)}, "startScheduler\\n"); }
+`);
+  }
+  if (migration) {
+    writeFileSync(join(root, "lib", "tenant-session-migration.ts"), `
+import { appendFileSync } from "node:fs";
+export function runTenantArchiveMigrationAtStartup() {
+  appendFileSync(${JSON.stringify(logPath)}, "runTenantArchiveMigrationAtStartup\\n");
+  ${migration === "throws" ? 'throw new Error("kaputt");' : ""}
+}
 `);
   }
   return root;
@@ -63,6 +72,7 @@ test("Node-Runtime: Dispatcher, Secrets und Scheduler werden geladen", async () 
     assert.match(lines, /resolveSecretsFile/);
     assert.match(lines, /runtimeSecrets/);
     assert.match(lines, /startScheduler/);
+    assert.match(lines, /runTenantArchiveMigrationAtStartup/);
     assert.ok(consoleCapture.lines.log.some((line) => line.includes("2 secret(s) loaded from")));
   } finally {
     consoleCapture.restore();
@@ -86,6 +96,7 @@ test("Edge-Runtime: nur die Loopback-Ausnahme, kein Scheduler", async () => {
     await register();
     assert.match(readFileSync(logPath, "utf8"), /ensureLoopbackNotProxied/);
     assert.doesNotMatch(readFileSync(logPath, "utf8"), /startScheduler/);
+    assert.doesNotMatch(readFileSync(logPath, "utf8"), /runTenantArchiveMigrationAtStartup/, "kein Dateizugriff im Edge-Runtime");
   } finally {
     consoleCapture.restore();
     process.chdir(cwd);
@@ -131,6 +142,32 @@ test("ein kaputter Scheduler haelt den Server nicht an", async () => {
     const { register } = await import(INSTRUMENTATION);
     await assert.doesNotReject(() => register());
     assert.ok(consoleCapture.lines.error.some((line) => line.includes("[scheduler] could not be started")));
+  } finally {
+    consoleCapture.restore();
+    process.chdir(cwd);
+    for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
+    Object.assign(process.env, env);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("eine scheiternde Migration haelt den Server nicht an", async () => {
+  const logPath = join(mkdtempSync(join(tmpdir(), "omp-instrumentation-log-")), "log.txt");
+  const root = makeStubRoot(logPath, { migration: "throws" });
+  const cwd = process.cwd();
+  const env = { ...process.env };
+  const consoleCapture = captureConsole();
+  try {
+    process.chdir(root);
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.HB_SECRETS = "0";
+    delete process.env.HB_INHERITED;
+    const { register } = await import(INSTRUMENTATION);
+    await assert.doesNotReject(() => register());
+    // Eine Zeile, und nur der Befund: `register` laeuft weiter und der Start
+    // gelingt. Der Bestand bleibt liegen — das ist schlimm genug zum Melden,
+    // aber kein Grund, den Server nicht zu bedienen.
+    assert.ok(consoleCapture.lines.error.some((line) => line.includes("[archive-migration] could not be started")));
   } finally {
     consoleCapture.restore();
     process.chdir(cwd);

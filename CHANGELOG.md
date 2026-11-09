@@ -5,6 +5,162 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+- **Ein Mandant wird von einem eigenen Prozess gehostet — die Grenze ist jetzt
+  eine Prozessgrenze, nicht mehr eine Pfadprüfung.** Ein Nicht-Admin-Konto läuft
+  in einem `bwrap`-Kind, gestartet über `planSandboxSpawn` mit dem argv aus
+  `docs/plans/tenant-isolation.md` §4 plus zwei zusätzlichen `--ro-bind` (das
+  `bun`-Binaerprogramm und die `node_modules` des Repos, beide read-only in das
+  Gast-Home). Gehostet wird die Session vom SDK selbst im `--mode rpc`, gefahren
+  über den SDK-`RpcClient` — kein nachgebauter Frame-Codec. Der Admin und
+  identitätslose interne Starts bleiben im Dienstprozess, unverändert.
+
+  Gemessen im Abnahme-Harness (`scripts/verify-tenant-isolation.mjs`) gegen einen
+  Scratch-Server: **27 PASS, 0 FAIL, 0 SKIP**; derselbe Lauf auf unverändertem
+  `main` ergab 6 PASS / 19 FAIL. Aus der Mandanten-Session heraus: `ls <homeRoot>`
+  → `ENOENT`, fremdes Archiv → `ENOENT`, Sitzungsschlüssel → nicht lesbar,
+  `ls /proc` → 2 (Host: 43), 0 fremde lesbare Dateien. Aus dem Host heraus:
+  `/proc/<worker>/root/home` enthält nur das eigene Konto, der Worker-`environ`
+  trägt 7 Schlüssel und keines der Dienstgeheimnisse.
+
+  **Fail-closed, benannt.** Fehlt `bwrap`, ist die User-Namespace aus, fehlt das
+  Konto-Home oder ist die Secrets-Datei nicht maskierbar, endet der Request mit
+  **503** und `reason` + `detail` + `remediation` im Körper, und es entsteht
+  weder Session noch Worker. 503, weil eine fehlende Grenze ein Zustand des
+  Hosts ist und kein Serverfehler — dieselbe Antwort, die
+  `POST /api/terminal` für dieselbe Ursache gibt. Ein echter Fehlschlag
+  (`tenant-worker-spawn-failed`) bleibt bei 500, damit ihn niemand für
+  vorübergehend hält.
+  Der einzige Ausweg ist `OMP_WEB_ALLOW_UNSANDBOXED_TENANT=1`, der beim Start
+  eine laute Zeile auf **stderr** schreibt und `boundary.enforced` auf `false`
+  setzt. Gemessen: `--mode fail-closed` 10 PASS / 0 FAIL / 21 N/A (`reason:
+  "bwrap-missing"`), `--mode opt-out` 8 PASS / 0 FAIL / 22 N/A, wobei `6c` die
+  Wirkung des Ausstiegs positiv belegt (fremdes Konto, fremdes Archiv und
+  Sitzungsschlüssel sichtbar).
+
+  **Der Arbeitsplatz des Mandanten ist sein Home, nicht `/tmp`.** `bwrap
+  --chdir /home/<name>` allein genügte nicht: die SDK-CLI zieht aus einem
+  Startverzeichnis, das dem Home entspricht, per `maybeAutoChdir` nach `/tmp` um
+  (`src/cli/startup-cwd.ts:11-42`). Mit `--allow-home` bleibt es beim Home —
+  gemessen dreifach im Worker: `readlink /proc/self/cwd`, `/bin/pwd -P` und
+  `$PWD` melden alle `/home/<name>`. Abnahmezeile `A11` prüft das dreifach, weil
+  `$PWD` allein eine Behauptung der Shell ist.
+
+
+  **Lebenszyklus.** Träger Start bei der ersten Agent-Anfrage des Kontos, Abräumen
+  nach `OMP_WEB_TENANT_WORKER_IDLE_MS` (Vorgabe 300 000; ungültige Werte und
+  Werte unter 10 000 fallen auf diese Vorgabe zurück), harte Obergrenze
+  `OMP_WEB_TENANT_WORKER_MAX` (Vorgabe 4) mit LRU-Verdrängung.
+  `SessionInfo.boundary` meldet `kind`/`enforced`/`pid`.
+
+  Ein Worker kostet rund 265 MiB resident und 364 MiB Spitze (`VmRSS 271524 kB`
+  / `VmHWM 372868 kB` aus `/proc/<pid>/status` am inneren `bun`), ~1,1 s Start;
+  die Kerne binden vor dem Speicher. Die Grenze wird auf der **Spitze** geplant,
+  nicht auf dem Ruhewert: vier Worker sind rund 1,4 GiB, nicht die ~1,0 GiB, die
+  der Ruhewert nahelegt.
+
+  **Der Idle-Timer misst Ruhezeit, nicht Alter.** Er wurde einmal beim Anlegen
+  gesetzt und beim Feuern gegen das Alter des Prozesses geprüft, während nur die
+  Session-Erzeugung ihn zurücksetzte: mit `OMP_WEB_TENANT_WORKER_IDLE_MS=10000`
+  und einem `bash`-Aufruf alle ~6 s war der Worker bei t≈19 s weg, und bei der
+  Vorgabe von fünf Minuten verlor jeder Chat mit engeren Turns seinen Prozess
+  mitten im Gespräch. Jetzt verschiebt jeder Verkehr das Abräumen, und ein
+  Worker mit laufendem Turn wird nie abgeräumt.
+
+  **Der Namespace wird gemessen, nicht aus der PID geschlossen.** Die API meldete
+  `boundary.enforced: true`, sobald der Spawn eine PID hatte — ein `bwrap`-
+  Wrapper früher im `PATH`, der die Nutzlast ohne `--unshare-*` `exec`t, lieferte
+  genau so eine PID, und ein ungegrenzter Mandant stand als eingegrenzt im
+  Bericht. Jetzt prüft eine Probe nach dem Start die Mount-Namespace des
+  Prozessbaums; schlägt sie fehl, wird der Worker beendet und der Request endet
+  mit `reason: "boundary-not-enforced"` (Status 500 — ein erneuter Versuch trifft
+  denselben Wrapper) samt `detail` und `remediation`. `boundary.enforced: true`
+  steht damit nur nach einer bestandenen Messung.
+
+  **Ein toter Worker vergiftete seine Session dauerhaft.** Ein abgeräumter oder
+  mit `kill -9` beendeter Worker ließ einen Wrapper zurück, dessen `isAlive()`
+  weiter `true` meldete, sodass jeder Request an der geschlossenen Pipe mit
+  `500 {"error":"Client not started"}` scheiterte — bis zum Serverneustart
+  (gemessen: drei Requests hintereinander). Jetzt fragt `isAlive()` den Worker,
+  ein toter Wrapper wird ersetzt, und die Session wird aus ihrem Archiv unter
+  derselben Id neu geöffnet; gemessen antwortet der erste Request nach dem
+  `kill -9` mit **200**.
+
+  **Der Provider kommt aus dem eigenen `models.yml` des Kontos.** Der erste echte
+  Start scheiterte mit `No default model selected`, weil die Provider-Liste
+  konstant leer war. Gelesen wird jetzt über `ModelsConfigFile.relocate`, also mit
+  dem Parser des SDK.
+
+  **Zugangsdaten: der eigene `apiKey` des Mandanten, Betreiber-Schlüssel nur auf
+  ausdrückliche Freigabe.** Ein Provider-Name in einem `models.yml`, das der
+  Mandant selbst schreibt, darf nicht allein darüber entscheiden, welcher Wert
+  in seine Umgebung kommt — genau das war ausnutzbar: `providers: { brave: … }`
+  ohne `apiKey` löste `BRAVE_API_KEY` aus der Geheimnisdatei des Betreibers auf,
+  `--setenv` legte ihn in Umgebung und argv des Workers, und die Bash des
+  Mandanten holte ihn mit einem `curl` ab. Jetzt gilt: ohne
+  `OMP_WEB_TENANT_PROVIDER_GRANT` erreicht **kein** Betreiber-Schlüssel einen
+  Mandanten-Worker, unabhängig davon, was der Mandant schreibt; sein eigener
+  `apiKey` im eigenen `models.yml` funktioniert weiterhin, weil das SDK ihn aus
+  dem Gast-Home liest. `OMP_WEB_TENANT_PROVIDER_GRANT` (kommagetrennte Namen,
+  leer/ungesetzt = keine Freigabe) ist der einzige Weg zum Betreiber-Schlüssel;
+  ein nicht gelisteter Name löst nichts auf und schreibt eine Zeile auf stderr.
+  Preis einer Freigabe, dokumentiert statt verschwiegen: der Wert steht im argv
+  des Workers (`/proc/<pid>/cmdline`) und ist dort für die Dauer des
+  Worker-Lebens für jeden Prozess der Dienst-UID lesbar.
+
+  **Zwei Defekte, die erst die Messung zeigte.** Das Transcript einer
+  In-Process-Mandanten-Session war `0644` — `persistBashOnlySession` schrieb ohne
+  `mode`, und das SDK öffnet die `.jsonl` mit `O_CREAT` ohne Modus; jetzt `0600`
+  beim Anlegen plus Nachziehen nach jedem `bash`-Lauf. Und der Ausstiegsmodus war
+  grün, ohne zu prüfen, ob das Flag überhaupt wirkt; Zeile `6c` misst jetzt das
+  Gegenteil der Abnahmezeilen.
+
+  **Zwei Grenzverletzungen, die beim Abschluss des Branches gefunden und
+  geschlossen wurden — beide waren ausnutzbar.** Sie stehen hier, weil sie nicht
+  im Entwurf standen, sondern im fertigen Code:
+
+  1. *Eine selbst geschriebene Session-Kopfzeile verschaffte jede Datei-Wurzel.*
+     Das Archiv eines Kontos liegt in seinem eigenen Home (0700 — aber von seiner
+     eigenen Bash beschreibbar). Eine Datei darin, deren zweite Zeile
+     `{"type":"session","cwd":"/"}` ist, trug ihren `cwd` ungefiltert in
+     `getAllowedFileRoots` (`lib/file-access.ts`), weil der Besitzfilter nur auf
+     den Prozess-Baum angewandt wurde, nicht auf das Mandanten-Archiv
+     (`lib/session-reader.ts`). Gemessen an einem Scratch-Server: danach
+     antwortete `GET /api/files/etc/passwd?type=read` mit **200**, und dieselbe
+     Route gab die 44-Byte-Datei `omp-web-session-key` heraus — aus einem Leser
+     wurde die Fälschung beliebiger Cookies, auch des Admins. Geschlossen an
+     zwei Stellen: das Archiv filtert seine Sessions jetzt mit derselben
+     Besitzregel wie der Prozess-Baum, und `getAllowedFileRoots` nimmt einen
+     `cwd` für einen Nicht-Admin nur noch als Wurzel, wenn er in seinem Home
+     liegt. Abnahmezeile `A12` schreibt den Angriff und prüft, dass er `403`
+     bekommt; zwei Regressionstests in `lib/session-reader.test.mjs` decken
+     Ursache und Gegenprobe ab.
+  2. *Die Session-Kopfzeile nannte den Quellbaum des Betreibers.* Der Server
+     öffnet das Transcript mit `SessionManager.open`; ohne `initialCwd` fällt das
+     SDK auf `getProjectDir()` zurück — den cwd des Serverprozesses. Gemessen:
+     `"cwd":"/home/pi/workspace/omp-web-iso"` in der Kopfzeile einer
+     Mandanten-Session, und `/api/sessions` zeigte ihn als `cwd` **und**
+     `projectRoot`. Über denselben Wurzel-Pfad wie (1) wurde daraus eine erlaubte
+     Datei-Wurzel. Jetzt geht der Konto-Pfad als `initialCwd` mit; die Kopfzeile
+     nennt das Home des Mandanten.
+
+  **Nicht verifiziert und nicht behauptet:** nur ein Host (agent-pc, LXC 101,
+  bubblewrap 0.12.0) gemessen — ob `unprivileged_userns_clone` auf einem anderen
+  Zielhost gesetzt ist, ist offen, und bis dahin ist der Betrieb dort
+  fail-closed (keine Mandanten-Session); Landlock ist dort unbelegt (kein
+  `/sys/kernel/security`, kein `landlock` in `/proc/self/status`), also keine
+  Zusage; es lief **kein echter Modellaufruf** — alle Zeilen sind modellfrei über
+  `ensure_session` und `bash`, ein vollständiger Chat durch einen Worker ist
+  nicht gemessen; der Mandant kann **seinen eigenen** Provider-Schlüssel lesen
+  (der Modellaufruf passiert im selben Prozess wie die Tool-Shell), aber keinen
+  fremden — Betreiber-Schlüssel erreichen ihn nur, soweit
+  `OMP_WEB_TENANT_PROVIDER_GRANT` sie ausdrücklich freigibt, und eine Freigabe
+  ist eine bewusste Entscheidung des Betreibers, kein Nebeneffekt eines
+  Provider-Namens; der Admin-Pfad bleibt ungeschützt; nichts davon ist deployt,
+  getaggt oder gepusht. Die beiden Grenzverletzungen oben sind auf diesem Host
+  belegt — gegen einen Scratch-Server, nicht gegen einen Host ohne
+  User-Namespaces und nicht gegen einen zweiten Host. Das Test-Gate ist grün
+  (3012 Tests, 0 Fehlschläge, 85,9 % der Funktionen ausgeführt).
+
 - **Der Deploy lässt einen vom Operator abgeschalteten Healthcheck aus.** Das
   Unit-Drop-in zieht den Timer über `Wants=omp-web-healthcheck.timer` bei jedem
   `systemctl start omp-web.service` wieder herein; war er vor dem Deploy
@@ -20,6 +176,50 @@ upstream line — see the Provenance section in the README.
   Conic-Verlauf aus `var(--accent)` dreht über den bereits registrierten
   `--bg-angle` in 9 s und liegt unter allem Inhalt der Zelle.
   `prefers-reduced-motion` bekommt denselben Schein ohne Drehung.
+- **Mandanten bekommen ein eigenes Session-Archiv, und die Geheimdateien sind in
+  jeder Grenze verdeckt.** Zwei getrennte Änderungen, die zusammen den ersten
+  Schritt aus `docs/plans/tenant-isolation.md` umsetzen:
+
+  Das Archiv eines Nicht-Admins liegt jetzt unter seinem eigenen
+  Agent-Verzeichnis (`<home>/.omp/agent/sessions`) statt im Prozess-Verzeichnis,
+  mit `0700` auf Verzeichnissen und `0600` auf den Transcripts. Gemessen vorher:
+  ein fremdes Transcript lag als `0644` da und ließ sich aus einer
+  Mandanten-Session vollständig lesen. Der Admin bleibt bewusst beim
+  Prozess-Verzeichnis (§9 des Plans).
+
+  **Die Migration des Bestands läuft jetzt beim Serverstart.** Das Modul gab es
+  vorher schon, aufgerufen hat es niemand — der Betreiber hätte beim Upgrade auf
+  eine Migration gewartet, die nie lief, und der Bestand wäre still liegen
+  geblieben. Jetzt ruft `instrumentation.ts` sie beim Start auf; sie ist
+  idempotent (ein zweiter Lauf findet nichts mehr, zusätzlich ein Prozess-Guard)
+  und läuft damit **einmal pro Serverstart**, nicht bei jedem Request. Pro Konto
+  ein Bucket-Umzug mit sha256-Listen vor und nach, kein Überschreiben eines
+  vorhandenen Ziels, und ein Bucket mit einer fremden Session bleibt stehen statt
+  halb umzuziehen. Geloggt wird eine Zeile pro umgezogenem Bucket (`<bucket> ->
+  <konto> (n files)`) plus eine Zusammenfassung (`moved n buckets, n files,
+  skipped n`); ohne Bestand bleibt es bei der Zusammenfassung allein.
+  `OMP_WEB_TENANT_ARCHIVE_MIGRATION=dry-run` verschiebt nichts, sondern nennt
+  die Buckets, die es täte — der Blick vor dem Upgrade. Ein Fehler wird zu einer
+  Zeile auf stderr; der Server startet trotzdem, und ein zweiter Versuch kommt
+  erst mit dem nächsten Start — innerhalb eines Prozesses läuft sie genau
+  einmal.
+
+  Die vier Geheimdateien (Secrets, `omp-web-auth.json`,
+  `omp-web-accounts.json`, `omp-web-session-key`) stehen in einer Liste
+  (`lib/secret-mask.ts`) und werden in jeder Grenze verdeckt. Zwei Fehler dabei
+  behoben: die Masken standen **vor** dem Home-Bind und wurden von jedem
+  späteren Mount aufgehoben, und eine Datei unter dem Konto-Home wurde gar nicht
+  maskiert. Gemessen in der echten bwrap-Grenze: `/etc/omp-web.env` 269 B auf
+  dem Host, 0 B in der Grenze; die drei Dateien unter `/home/pi/.omp/agent` sind
+  dort `ENOENT`.
+
+  **In diesem Schritt** nicht enthalten und nicht behauptet: der Worker-Prozess
+  pro Mandant (L1). Damals lief der Agent weiter im Serverprozess, und die Pfad-
+  und Modusgrenze war keine Prozessgrenze — ein `bash`-Tool konnte alles lesen,
+  was dem Dienstbenutzer gehört, außerhalb der verdeckten Dateien. Der erste
+  Eintrag oben holt das nach; was dort weiterhin offen ist, steht dort. Nicht
+  verifiziert auf einem zweiten Host: nur agent-pc (LXC 101, bubblewrap 0.12.0)
+  gemessen.
 
 ## v0.24.3
 Released 2026-11-08.

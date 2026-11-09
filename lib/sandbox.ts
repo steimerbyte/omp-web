@@ -51,7 +51,8 @@ export type SandboxFailureReason =
   | "admin-home"
   | "bad-username"
   | "cwd-outside-home"
-  | "mask-unavailable";
+  | "mask-unavailable"
+  | "bad-extra-bind";
 
 export interface SandboxFailure {
   ok: false;
@@ -96,6 +97,22 @@ export interface SandboxOptions {
    * Shell der Weg zum Admin-Passwort.
    */
   maskFiles?: string[];
+  /**
+   * Zusaetzliche read-only Bind-Mounts, als `[hostPfad, guestPfad]`.
+   *
+   * Fuer den Agent-Worker (Plan §7 L1) und **nur** dafuer: `bun` liegt unter
+   * `/home/pi` und die SDK-Abhaengigkeiten unter dem Repo — beide sind nicht
+   * gebunden, weil die Grenze absichtlich ein einzelnes Home ist. Der Worker
+   * braucht sie trotzdem, also wird genau das hineingelegt, was er zum Starten
+   * braucht, und nicht mehr.
+   *
+   * Read-only und ohne `--dev-bind`: der Worker soll die Laufzeit *benutzen*,
+   * nicht schreiben. Ein Gast-Pfad muss absolut und unterhalb des Gast-Homes
+   * liegen; alles andere wird mit `bad-extra-bind` abgelehnt, weil ein Bind auf
+   * `/etc` oder `/` genau die Grenze wieder aufmachen wuerde, die diese Datei
+   * baut.
+   */
+  extraBinds?: Array<[host: string, guest: string]>;
 }
 
 const SANDBOX_HOME = "/home";
@@ -404,22 +421,87 @@ export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
   }
 
   // Die Dienstgeheimnisse, die unter einem gebundenen Verzeichnis liegen,
-  // bekommen `/dev/null` darueber. Ohne das ist die Aussage „die Shell sieht
-  // keine Geheimnisse" nur ueber `env` wahr: `/etc` ist gebunden, die Datei
-  // gehoert dem Dienstbenutzer, und die Namespace aendert die uid nicht —
+  // bekommen eine leere Datei darueber. Ohne das ist die Aussage „die Shell
+  // sieht keine Geheimnisse" nur ueber `env` wahr: `/etc` ist gebunden, die
+  // Datei gehoert dem Dienstbenutzer, und die Namespace aendert die uid nicht —
   // `cat /etc/omp-web.env` liefert dann das Admin-Passwort. Der Mount muss
   // **nach** dem Verzeichnis kommen, das ihn sichtbar macht, und nur fuer
   // Dateien, die es auf dem Host wirklich gibt (`bwrap` bricht sonst mit
-  // `Can't find source path` ab).
-  const maskable = (options.maskFiles ?? []).filter((file) => existsSync(file)
-    && ["/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/run/systemd/resolve"].some(
-      (root) => file === root || file.startsWith(`${root}/`),
-    ));
+  // `Can't find source path` ab). Die Umsetzung steht weiter unten, hinter dem
+  // Home-Bind — siehe den Kommentar dort.
+  // Das Arbeitsverzeichnis muss auf den Namespace-Pfad umgeschrieben werden.
+  // Der Host-Pfad existiert innerhalb der Sandbox nicht: gemessen
+  // `bwrap: Can't chdir to /tmp/omp-sandbox-*/grace: No such file or
+  // directory`, weil das Home dort als `/home/<name>` haengt.
+  const sandboxedCwd = mapCwdIntoSandbox(options.cwd, home, options.username);
+  argv.push("--bind", home, `${SANDBOX_HOME}/${options.username}`);
+
+  // Zusaetzliche read-only Binds fuer den Agent-Worker. Sie stehen **nach** dem
+  // Home-Bind und **vor** den Masken, weil eine Maske auf einer Datei innerhalb
+  // eines dieser Binds sonst wieder ueberschrieben wuerde.
+  //
+  // Der Gast-Pfad wird geprueft, nicht bloss uebernommen: ein Ziel wie `/etc`
+  // oder `/` wuerde einen Host-Pfad ueber die Grenze legen, und genau das ist
+  // der Fehler, den diese Funktion verhindert, indem sie dafuer kein Argument
+  // kennt — bis jetzt. Deshalb ist die Regel explizit: absolut, unter dem
+  // Gast-Home, kein `..`.
+  for (const [hostPath, guestPath] of options.extraBinds ?? []) {
+    if (typeof hostPath !== "string" || !hostPath.startsWith("/") || !existsSync(hostPath)) {
+      return {
+        ok: false,
+        reason: "bad-extra-bind",
+        detail: `Extra bind source ${String(hostPath)} must be an absolute existing path.`,
+        remediation: "Point the worker at a path that exists on the host, or start it without that mount.",
+      };
+    }
+    const guestHome = `${SANDBOX_HOME}/${options.username}`;
+    const guest = typeof guestPath === "string" ? guestPath : "";
+    if (!guest.startsWith("/") || guest.split("/").includes("..")
+      || !(guest === guestHome || guest.startsWith(`${guestHome}/`))) {
+      return {
+        ok: false,
+        reason: "bad-extra-bind",
+        detail: `Extra bind target ${String(guestPath)} must be an absolute path inside ${guestHome}.`,
+        remediation: "Mount worker files under the tenant's guest home; anything else reopens the boundary this plan builds.",
+      };
+    }
+    argv.push("--ro-bind", hostPath, guest);
+  }
+
+  // Die Masken kommen **nach** jedem Bind, dessen Pfad sie verdecken sollen.
+  // Das ist die zweite Haelfte derselben Regel wie oben: `--ro-bind /etc /etc`
+  // macht `/etc/omp-web.env` sichtbar, also muss die Maske danach kommen. Und
+  // weil das Home des Mandanten ebenfalls gebunden wird, koennte eine Datei
+  // darin (etwa ein `OMP_WEB_ACCOUNTS_FILE` unter dem Konto-Home) sonst nur
+  // von einem System-Bind verdeckt werden — also gar nicht.
+  //
+  // Die Zielpfade sind **Host-Pfade**: bwrap legt die Ziele im Namespace an,
+  // und ein Pfad innerhalb des Homes, das gerade gebunden wurde, ist dort
+  // derselbe. Fuer eine Datei unter dem Home muss das Ziel der Host-Pfad sein,
+  // nicht der Guest-Pfad — deshalb steht die Liste hier und nicht hinter der
+  // cwd-Umschreibung.
+  const systemRoots = ["/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/run/systemd/resolve"];
+  // Eine Datei braucht nur dann eine Maske, wenn ein Bind sie ueberhaupt
+  // sichtbar macht. Liegt sie unter keinem, existiert sie in der Namespace
+  // nicht — `ENOENT` ist die staerkere Zusage als eine leere Datei, also ist
+  // das Ueberspringen hier korrekt und kein stiller Fehler.
+  //
+  // Zwei Faelle sind sichtbar und brauchen deshalb eine Maske: unter einem
+  // gebundenen Systemverzeichnis (dort liegt `/etc/omp-web.env`) und unter dem
+  // gebundenen Home (dort liegt eine Kontendatei, wenn eine Installation sie
+  // dorthin konfiguriert). Der zweite Fall fehlte, und ohne ihn war die Liste
+  // fuer eine Datei im Konto-Home eine Zusage ohne Deckung.
+  const maskable = (options.maskFiles ?? []).filter((file) => {
+    if (!existsSync(file)) return false;
+    return systemRoots.some((root) => file === root || file.startsWith(`${root}/`))
+      || isInsideHome(file, home);
+  });
   if (maskable.length > 0) {
     const source = emptyMaskSource();
     if (source === null) {
       // Lieber keine Shell als eine, in der die Geheimnisdatei liegt: die Maske
-      // ist der letzte Schnitt zwischen `/etc` und dem Admin-Passwort.
+      // ist der letzte Schnitt zwischen dem gebundenen Verzeichnis und dem
+      // Admin-Passwort.
       return {
         ok: false,
         reason: "mask-unavailable",
@@ -427,15 +509,16 @@ export function planSandboxSpawn(options: SandboxOptions): SandboxResult {
         remediation: "Check that the service user can write to its temporary directory, then reload.",
       };
     }
-    for (const file of maskable) argv.push("--ro-bind", source, file);
+    for (const file of maskable) {
+      // Das Ziel ist der Pfad **in der Namespace**. Fuer alles unter einem
+      // System-Bind ist das derselbe String; fuer eine Datei unter dem Home ist
+      // es der Guest-Pfad (`/home/<name>/…`), weil das Home dort haengt und
+      // nicht unter seinem Host-Pfad. Ein Host-Pfad als Ziel wuerde die Datei
+      // daneben anlegen und die echte offen lassen — genau der Fehler, den die
+      // Live-Probe vorher gezeigt hat (16 Byte statt 0).
+      argv.push("--ro-bind", source, isInsideHome(file, home) ? mapCwdIntoSandbox(file, home, options.username) : file);
+    }
   }
-
-  // Das Arbeitsverzeichnis muss auf den Namespace-Pfad umgeschrieben werden.
-  // Der Host-Pfad existiert innerhalb der Sandbox nicht: gemessen
-  // `bwrap: Can't chdir to /tmp/omp-sandbox-*/grace: No such file or
-  // directory`, weil das Home dort als `/home/<name>` haengt.
-  const sandboxedCwd = mapCwdIntoSandbox(options.cwd, home, options.username);
-  argv.push("--bind", home, `${SANDBOX_HOME}/${options.username}`);
 
   // `--clearenv` ist der Schnitt, der wirklich greift: gemessen 109 geerbte
   // Schluessel (inklusive `BRAVE_API_KEY` und `OMP_WEB_PASSWORD`) vorher,

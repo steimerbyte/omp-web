@@ -85,6 +85,11 @@
       "file": "scripts/test-gate.mjs",
       "reason": "Harness-Werkzeug: von `bun run test`/CI aufgerufen, von keinem Test importiert",
       "since": "2026-11-04"
+    },
+    {
+      "file": "scripts/verify-tenant-isolation.mjs",
+      "reason": "Abnahme-Harness gegen einen laufenden Server: sein Test ist der Lauf selbst (node scripts/verify-tenant-isolation.mjs). Ein Modulimport wuerde nur die Argument-Parser-Funktionen laden und die Grenze nicht messen.",
+      "since": "2026-11-08"
     }
   ],
   "coverage": {
@@ -489,9 +494,9 @@
       "uncovered": 0
     },
     "bin/runtime.js": {
-      "functionsFound": 9,
-      "functionsHit": 9,
-      "uncovered": 0
+      "functionsFound": 18,
+      "functionsHit": 10,
+      "uncovered": 8
     },
     "bin/web-auth-store.js": {
       "functionsFound": 76,
@@ -1414,9 +1419,9 @@
       "uncovered": 0
     },
     "lib/rpc-manager.ts": {
-      "functionsFound": 202,
-      "functionsHit": 149,
-      "uncovered": 53
+      "functionsFound": 211,
+      "functionsHit": 156,
+      "uncovered": 55
     },
     "lib/runtime-secrets.ts": {
       "functionsFound": 11,
@@ -1667,6 +1672,16 @@
       "functionsFound": 3,
       "functionsHit": 3,
       "uncovered": 0
+    },
+    "lib/tenant-worker.ts": {
+      "functionsFound": 28,
+      "functionsHit": 21,
+      "uncovered": 7
+    },
+    "lib/tenant-worker-session.ts": {
+      "functionsFound": 69,
+      "functionsHit": 24,
+      "uncovered": 45
     }
   }
 }

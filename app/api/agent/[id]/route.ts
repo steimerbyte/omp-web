@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { startRpcSession, getRpcSession, TenantBoundaryError, tenantBoundaryHttpStatus } from "@/lib/rpc-manager";
 import { switchColdSessionModel } from "@/lib/cold-model-switch";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getRequestIdentity } from "@/lib/request-identity";
@@ -120,10 +120,21 @@ export async function POST(
     }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
+      // Ein Mandant, dessen Session noch nicht laeuft, kommt auch hier an:
+      // `startRpcSession` startet den Worker in derselben Funktion. Ohne diesen
+      // Zweig schickte diese Route fuer denselben Zustand weiter eine 500,
+      // waehrend `/api/agent/new` die 503 gibt.
+      ...(error instanceof TenantBoundaryError
+        ? { reason: error.reason, detail: error.detail, remediation: error.remediation }
+        : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
-    }, { status: 500 });
+    }, {
+      status: error instanceof TenantBoundaryError
+        ? tenantBoundaryHttpStatus(error.reason)
+        : 500,
+    });
   }
 }
 

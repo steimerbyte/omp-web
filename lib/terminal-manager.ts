@@ -4,9 +4,8 @@ import path from "path";
 import type { Subprocess } from "bun";
 import { buildTerminalEnv, planSandboxSpawn, type SandboxFailureReason } from "./sandbox";
 import { getUserHome } from "./request-identity";
-import { childEnv, resolveSecretsFile } from "./runtime-secrets";
-import { resolveWebAccountsFile, resolveWebAuthFile } from "../bin/web-auth-store.js";
-import { sessionKeyFile } from "./web-auth-session";
+import { childEnv } from "./runtime-secrets";
+import { secretMaskFiles } from "./secret-mask";
 
 export type TerminalStatus = "running" | "exited";
 
@@ -221,7 +220,7 @@ export class TerminalManager {
         // Namespace aendert die uid nicht, und die Datei gehoert dem
         // Dienstbenutzer. Ohne diese Liste waere die Umgebung sauber und der
         // Weg zum Admin-Passwort offen (`cat /etc/omp-web.env`).
-        maskFiles: [resolveSecretsFile(), resolveWebAuthFile(), resolveWebAccountsFile(), sessionKeyFile()],
+        maskFiles: secretMaskFiles(),
       });
       if (!plan.ok) {
         throw new TerminalUnavailableError(plan.reason, plan.detail, plan.remediation);

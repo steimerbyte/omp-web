@@ -192,6 +192,58 @@ and through the routes that exist — not against someone who edits the underlyi
 files. Full threat model, including what this deliberately does *not* protect
 against: [docs/authentication.md](./docs/authentication.md).
 
+**A tenant session runs in its own process.** A non-admin account is hosted by a
+`bwrap` child started through `planSandboxSpawn`, so what is not bound into it
+does not exist there: no `/home`, no sibling accounts, no account store, no
+session key, no service environment. The admin and identity-less internal starts
+stay in the service process, unchanged. Three variables govern it:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OMP_WEB_TENANT_WORKER_MAX` | `4` | Concurrent workers. One per account, started on that account's first agent request and reaped after the idle timeout. Four is not arbitrary: a worker is **265 MiB resident** and **364 MiB at peak** (measured on a running worker: `VmRSS 271524 kB`, `VmHWM 372868 kB`), and the peak is what this cap has to plan for — four workers are ~1.4 GiB at peak, not the ~1.0 GiB the resident figure suggests. This class of host has 6 cores / 12 GiB, and the cores bind before the memory. Raising it past `64` is refused. |
+| `OMP_WEB_TENANT_WORKER_IDLE_MS` | `300000` | Idle time before a worker is reaped. Values below `10000` are raised to it — a shorter timeout would tear down a worker between two turns of the same conversation. |
+| `OMP_WEB_TENANT_PROVIDER_GRANT` | unset | Comma-separated provider names (`brave,parallel`). The **only** path by which a provider a tenant names in its own `models.yml` may be resolved against the operator's secret store; with it unset or empty nothing is resolved, and every such name is refused with one log line per name. See the paragraph below the table for what a grant exposes. |
+| `OMP_WEB_ALLOW_UNSANDBOXED_TENANT` | unset | `1` puts tenant sessions back into the service process, on purpose, and prints a loud line on **stderr at startup** naming this variable. `SessionInfo.boundary.enforced` is then `false`. For development, or a host where user namespaces are unavailable — not for a multi-user install. |
+| `OMP_WEB_TENANT_ARCHIVE_MIGRATION` | `apply` | How the startup migration of existing session archives runs. `dry-run` moves nothing and logs the buckets it would move; `apply` moves each non-admin bucket into its own account's archive and hashes it before and after. |
+
+The archive migration runs once per server start, after the runtime exists: it moves each non-admin account's existing bucket out of the process agent directory into that account's own archive, logs one line per bucket and one summary line, moves nothing on the next start, and refuses to take the server down if it fails — a `dry-run` moves nothing and names the buckets it would have moved.
+
+**A provider name is a tenant's intent, a key is the operator's right.** The
+`providers:` block of a tenant's `models.yml` is a file that tenant writes, so a
+name in it must never by itself pick up a key from the operator's secrets file —
+that is how `providers: { brave: … }` with no `apiKey` used to hand the tenant's
+shell `BRAVE_API_KEY` and a `curl` to any host. The default is therefore the
+strict one: **unset means no operator secret ever reaches a tenant worker**,
+whatever the tenant writes. The tenant carries its own `apiKey` in its own
+`models.yml`, which the SDK reads from the guest home without this process ever
+holding it — that is the recommended configuration, and the only one that needs
+no grant.
+
+`OMP_WEB_TENANT_PROVIDER_GRANT` is the operator's explicit exception, and the
+only one. Each name it lists is looked up in the secret store and, if a value is
+found, passed into the worker — that is what the grant means. Two consequences
+to weigh before setting it:
+
+- A granted value is **visible outside the boundary**. It goes in through
+  `bwrap --setenv NAME VALUE`, so it sits in the worker's argv — readable in
+  `/proc/<pid>/cmdline` for the worker's whole life — and any process running as
+  the service uid can read it. The tenant seeing it is the point of a grant; the
+  rest of the host seeing it is the price.
+- The grant is by **name**, so grant only providers whose key is acceptable to
+  leak to that tenant. Granting `openai` to a tenant hands it your OpenAI
+  billing.
+
+A name that is not listed resolves nothing and logs one line on stderr naming
+the tenant and the provider, so the refusal is visible and not mistaken for the
+tenant's own misconfiguration. A granted name whose value is not in the secret
+store is reported as missing rather than injected empty — `KEY=` would be a set
+but wrong value and would move the failure from startup to the first model call.
+
+There is no silent fallback between those states. If the plan is rejected — no
+`bwrap`, user namespaces disabled, a missing home, an unusable account name, an
+unmaskable secrets file — the request fails with `reason`, `detail` and
+`remediation` in the body, and no session is created.
+
 ## The chat
 
 A turn streams into the transcript as it is produced. Tool calls render as their
