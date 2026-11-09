@@ -28,6 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const encoder = new TextEncoder();
   let detach: (() => void) | null = null;
+  let interval: NodeJS.Timeout | undefined;
   let closed = false;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -59,12 +60,29 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           }
           return Promise.resolve();
         },
-        close: () => Promise.resolve(),
+        // Der Manager schliesst den Schreiber, wenn der Prozess endet oder die
+        // Shell gekillt wird. Ohne diesen Zweig blieb der SSE-Strom offen.
+        close: () => {
+          if (closed) return Promise.resolve();
+          clearInterval(interval);
+          send("exit", { exitCode: manager.get(id)?.exitCode ?? -1 });
+          closed = true;
+          detach?.();
+          try { controller.close(); } catch { /* ignore */ }
+          return Promise.resolve();
+        },
       } as unknown as WritableStreamDefaultWriter<Uint8Array>;
 
       detach = manager.attach(id, writer);
 
-      const interval = setInterval(() => {
+      // Der Prozess kann zwischen get() und attach() enden; dann lief die
+      // Schliessung oben schon an einem leeren Strom vorbei.
+      if (manager.get(id)?.status === "exited") {
+        void writer.close();
+        return;
+      }
+
+      interval = setInterval(() => {
         if (closed) return;
         try {
           controller.enqueue(encoder.encode(`: keep-alive\n\n`));

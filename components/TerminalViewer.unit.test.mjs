@@ -230,7 +230,7 @@ test("zeigt Connecting, verarbeitet connected/output und sendet Resize", async (
   container.remove();
 });
 
-test("Exit schreibt den Code, setzt exited und ruft onExit", async () => {
+test("Exit setzt exited und ruft onExit, ohne die Meldung doppelt zu schreiben", async () => {
   let exits = 0;
   const { root, container } = await mount({ onExit: () => { exits += 1; } });
 
@@ -239,8 +239,8 @@ test("Exit schreibt den Code, setzt exited und ruft onExit", async () => {
     instances[0].emit("exit", { exitCode: 7 });
     await new Promise((resolve) => setTimeout(resolve, 60));
   });
-  assert.match(container.textContent, /Process exited/);
-  assert.match(container.querySelector(".xterm-rows").textContent, /\[Process exited with code 7\]/);
+  // Die Exit-Zeile kommt als `output` aus dem Manager; der Viewer schreibt sie nicht.
+  assert.doesNotMatch(container.querySelector(".xterm-rows").textContent, /Process exited/);
   assert.equal(container.querySelector('[aria-label="exited"]') !== null, true);
   assert.equal(exits, 1);
 
@@ -249,14 +249,14 @@ test("Exit schreibt den Code, setzt exited und ruft onExit", async () => {
   container.remove();
 });
 
-test("Exit ohne JSON setzt exited mit generischer Meldung", async () => {
+test("Exit ohne JSON setzt exited", async () => {
   const { root, container } = await mount();
   await act(async () => {
     instances[0].emit("connected", { cols: 80, rows: 24 });
     instances[0].listeners.get("exit")[0]({ data: "{broken" });
     await new Promise((resolve) => setTimeout(resolve, 60));
   });
-  assert.match(container.querySelector(".xterm-rows").textContent, /\[Process exited\]/);
+  assert.doesNotMatch(container.querySelector(".xterm-rows").textContent, /Process exited/);
   assert.equal(container.querySelector('[aria-label="exited"]') !== null, true);
 
   await act(async () => root.unmount());

@@ -8,12 +8,15 @@ import { listAllSessions } from "./session-reader";
 import { getUserHome, type WebIdentity } from "./request-identity";
 export { allowFileRoot, normalizeSlashes } from "./allowed-roots";
 
-// Short-TTL cache of the allowed-roots set. Without this, every file list/read
-// request re-scans every pi session on disk just to check access. 5s is short
-// enough that newly-created cwds appear promptly. Keyed by identity, because
-// the set is per-identity now: a single cached union would hand one account the
-// roots of another.
-const ALLOWED_ROOTS_TTL_MS = 5_000;
+// Short-TTL cache of the allowed-roots set. What is being cached is the full
+// session scan (listAllSessions + resolveProject per cwd), which costs seconds
+// on a grown store. The TTL has to outlive that scan, otherwise the cache
+// expires before it is filled and every concurrent request starts its own. The
+// scan is only the fallback for session-derived cwds: explicit grants go
+// through allowFileRoot, which clears the cache on the spot. Keyed by identity,
+// because the set is per-identity now: a single cached union would hand one
+// account the roots of another.
+const ALLOWED_ROOTS_TTL_MS = 30_000;
 const WINDOWS_ABSOLUTE_RE = /^[a-zA-Z]:[\\/]/;
 
 export function isWindowsAbsolutePath(filePath: string): boolean {

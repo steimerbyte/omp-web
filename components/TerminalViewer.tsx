@@ -131,13 +131,9 @@ export function TerminalViewer({ terminalId, onExit }: Props) {
       }
     });
 
-    const handleExit = (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data) as { exitCode: number };
-        term.write(`\r\n\x1b[2m[Process exited with code ${payload.exitCode}]\x1b[0m\r\n`);
-      } catch {
-        term.write("\r\n\x1b[2m[Process exited]\x1b[0m\r\n");
-      }
+    // Die Exit-Zeile schreibt bereits der Manager in den Byte-Strom; ein
+    // zweites `term.write` hier haette sie doppelt gezeigt.
+    const handleExit = () => {
       setStatus("exited");
       onExit?.();
     };

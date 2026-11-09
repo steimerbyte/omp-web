@@ -298,15 +298,7 @@ export class TerminalManager {
       record.info.status = "exited";
       record.info.exitCode = exitCode;
       record.info.lastActivityAt = Date.now();
-      const exitMsg = Buffer.from(
-        `\n[Process exited with code ${exitCode}]\n`,
-        "utf-8",
-      );
-      for (const writer of record.streams) {
-        this.safeWrite(writer, exitMsg);
-        try { writer.close().catch(() => undefined); } catch { /* ignore */ }
-      }
-      record.streams.clear();
+      this.closeStreams(record);
     });
 
     return info;
@@ -366,7 +358,26 @@ export class TerminalManager {
     if (record.info.status === "running") {
       try { record.child.kill(); } catch { /* may have already exited */ }
     }
+    // Vor dem Loeschen, damit die Route den echten Exit-Code noch lesen kann.
+    this.closeStreams(record);
     this.terminals.delete(id);
+  }
+
+  /**
+   * Beendet jeden angehaengten Strom: die letzte Meldung als Ausgabe, dann
+   * `close()` — die Route antwortet darauf mit `event: exit` und schliesst SSE.
+   */
+  private closeStreams(record: TerminalRecord): void {
+    const exitCode = record.info.exitCode ?? -1;
+    const exitMsg = Buffer.from(
+      `\n[Process exited with code ${exitCode}]\n`,
+      "utf-8",
+    );
+    for (const writer of record.streams) {
+      this.safeWrite(writer, exitMsg);
+      try { writer.close().catch(() => undefined); } catch { /* ignore */ }
+    }
+    record.streams.clear();
   }
 
   private killAll(): void {

@@ -171,3 +171,39 @@ test("ein Schreibvorgang nach dem Abbruch wird verworfen", async () => {
   // Kein Fehler, kein Frame: `closed` ist gesetzt.
   await writer.write(new Uint8Array([120]));
 });
+
+test("schliesst der Manager den Schreiber, endet der Strom mit einem exit-Frame", async () => {
+  const info = ownedTerminal();
+  terminal.calls.attached.length = 0;
+  const abort = new AbortController();
+
+  const res = await GET(request("term-1", { signal: abort.signal }), params("term-1"));
+  const reader = res.body.getReader();
+  await reader.read(); // connected
+
+  // Der Manager setzt den Exit-Code vor dem close(); genau so macht es der
+  // child.exited-Zweig.
+  info.status = "exited";
+  info.exitCode = 7;
+  const { writer } = terminal.calls.attached.at(-1);
+  await writer.close();
+
+  const exit = decoder.decode((await reader.read()).value);
+  assert.equal(exit, `event: exit\ndata: {"exitCode":7}\n\n`);
+  assert.equal((await reader.read()).done, true, "der Strom muss nach dem exit-Frame schliessen");
+
+  // Ein zweites close(), etwa aus dem abort-Zweig, ist folgenlos.
+  await writer.close();
+  abort.abort();
+});
+
+test("ein schon beendeter Prozess bekommt sofort einen exit-Frame", async () => {
+  ownedTerminal({ status: "exited", exitCode: 0 });
+  terminal.calls.attached.length = 0;
+
+  const res = await GET(request("term-1"), params("term-1"));
+  const reader = res.body.getReader();
+  await reader.read(); // connected
+  assert.equal(decoder.decode((await reader.read()).value), `event: exit\ndata: {"exitCode":0}\n\n`);
+  assert.equal((await reader.read()).done, true);
+});

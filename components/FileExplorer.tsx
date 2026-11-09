@@ -2464,6 +2464,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     initialViewState?.history ?? historyStartingAt(initialViewState?.currentPath ?? cwd),
   );
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
+  // Offene Baum-/Git-Abfragen. Ist eine Antwort langsamer als der 5-s-Takt,
+  // startete der naechste Takt sonst eine weitere Anfrage und belegte die
+  // sechs HTTP-Verbindungen des Browsers dauerhaft. Zaehler, weil beide
+  // Effekte unten parallel laufen.
+  const pollPendingRef = useRef(0);
   // Bestaetigung fuer den Refresh-Button. Zwei Sekunden gruen, dann faellt der
   // Haken wieder weg — ohne sie bliebe bei unveraendertem Baum kein Merkmal,
   // an dem der Nutzer den Klick sieht.
@@ -3211,6 +3216,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     // erst nach der Antwort. Eine Ablehnung laesst die Ansicht damit genau so
     // stehen, wie sie war, statt den verbotenen Pfad zu uebernehmen.
     listPathRef.current = requestedPath;
+    pollPendingRef.current += 1;
     fetchEntries(requestedPath)
       .then((listing) => {
         if (listPathRef.current !== requestedPath) return;
@@ -3242,7 +3248,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         });
       })
       .catch((e) => { if (listPathRef.current === requestedPath) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (listPathRef.current === requestedPath) setLoading(false); });
+      .finally(() => {
+        pollPendingRef.current -= 1;
+        if (listPathRef.current === requestedPath) setLoading(false);
+      });
   }, [cwd, requestedPath, refreshKey, treeRefreshKey]);
 
   // Auto-refresh the listing every 5 seconds. Bumping treeRefreshKey
@@ -3251,6 +3260,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   // highlights all survive the round-trip.
   useEffect(() => {
     const interval = setInterval(() => {
+      if (pollPendingRef.current > 0) return;
       setTreeRefreshKey((key) => key + 1);
     }, 5000);
     return () => clearInterval(interval);
@@ -3258,6 +3268,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
   useEffect(() => {
     let cancelled = false;
+    pollPendingRef.current += 1;
     fetchGitStatus(cwd)
       .then((status) => {
         if (!cancelled) {
@@ -3272,7 +3283,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
           setGitFiles([]);
           setGitLineStats({ additions: 0, deletions: 0 });
         }
-      });
+      })
+      .finally(() => { pollPendingRef.current -= 1; });
     return () => { cancelled = true; };
   }, [cwd, refreshKey, treeRefreshKey]);
 

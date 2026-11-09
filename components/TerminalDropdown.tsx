@@ -41,8 +41,14 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const refreshPendingRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    // Polls must not stack: each one holds a slot of the six HTTP
+    // connections the browser allows per host, and a queued request behind a
+    // slow neighbour delays everything else (an idle POST included).
+    if (refreshPendingRef.current) return;
+    refreshPendingRef.current = true;
     try {
       const res = await fetch("/api/terminal");
       if (!res.ok) return;
@@ -50,6 +56,8 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
       setTerminals(data.terminals);
     } catch {
       // Network blip; keep the cached list rather than showing an error.
+    } finally {
+      refreshPendingRef.current = false;
     }
   }, []);
 

@@ -145,7 +145,7 @@ test("ohne Identitaet wird keine Shell gestartet", async () => {
   assert.equal(terminal.calls.spawn.length, 0);
 });
 
-test("ein cwd ausserhalb der erlaubten Wurzeln ist 403", async () => {
+test("ein cwd ausserhalb des eigenen Homes ist 403", async () => {
   const res = await POST(request("/api/terminal", { method: "POST", body: { cwd: "/etc" } }));
   assert.equal(res.status, 403);
   assert.deepEqual(await res.json(), { error: "Access denied for requested cwd" });
@@ -202,13 +202,13 @@ test("ein kaputter JSON-Body startet die Shell im Home statt zu scheitern", asyn
   assert.equal(terminal.calls.spawn[0].cwd, aliceHome);
 });
 
-test("der Admin darf seine Shell in einem erlaubten cwd ausserhalb der Mandanten-Homes oeffnen", async () => {
+test("der Admin darf seine Shell ueberall oeffnen, wo es den Pfad gibt", async () => {
   const shared = join(HOME_ROOT, "shared");
+  mkdirSync(shared, { recursive: true });
   terminal.calls.spawn.length = 0;
-  // Der Admin ist der Host: fuer ihn ist `/` die Wurzel. Ein Pfad, der in den
-  // Roots liegt, ist damit erlaubt.
-  allowFileRoot(shared, { username: "pi", isAdmin: true });
-
+  // Der Admin ist der Host: jeder existierende Pfad ist sein cwd. Der
+  // `allowFileRoot`-Aufruf ist bewusst weggefallen — der Pfad braucht keine
+  // Erlaubnis, nur eine Existenz.
   const res = await POST(request("/api/terminal", {
     method: "POST",
     headers: ADMIN,
@@ -216,6 +216,31 @@ test("der Admin darf seine Shell in einem erlaubten cwd ausserhalb der Mandanten
   }));
   assert.equal(res.status, 200);
   assert.equal(terminal.calls.spawn[0].isAdmin, true);
+});
+
+test("der Admin bekommt fuer einen Pfad, den es nicht gibt, 403", async () => {
+  terminal.calls.spawn.length = 0;
+  const res = await POST(request("/api/terminal", {
+    method: "POST",
+    headers: ADMIN,
+    body: { cwd: join(HOME_ROOT, "does-not-exist") },
+  }));
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: "Access denied for requested cwd" });
+  assert.equal(terminal.calls.spawn.length, 0);
+});
+
+test("ein Mandant oeffnet im eigenen Home, das keine Sitzung und keine Erlaubnis je genannt hat", async () => {
+  const ownDir = join(aliceHome, "projects", "never-listed");
+  mkdirSync(ownDir, { recursive: true });
+  terminal.calls.spawn.length = 0;
+
+  const res = await POST(request("/api/terminal", { method: "POST", body: { cwd: ownDir } }));
+
+  assert.equal(res.status, 200);
+  assert.equal(terminal.calls.spawn[0].cwd, ownDir);
+  assert.equal(terminal.calls.spawn[0].owner, "alice");
+  assert.equal(terminal.calls.spawn[0].isAdmin, false);
 });
 
 test("eine Sandbox-Absage wird 503 mit Grund, Abhilfe und sandboxed:false", async () => {

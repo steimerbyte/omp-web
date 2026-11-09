@@ -4,10 +4,7 @@ import {
   TerminalUnavailableError,
   type TerminalInfo,
 } from "@/lib/terminal-manager";
-import {
-  getAllowedFileRoots,
-  isExistingFilePathAllowed,
-} from "@/lib/file-access";
+import { existsSync } from "node:fs";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getUserHome, isAdminIdentity } from "@/lib/request-identity";
 import { isPathInUserHome } from "@/lib/path-security";
@@ -75,23 +72,18 @@ export async function POST(req: NextRequest) {
       : getUserHome(identity);
     const cwd = path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(requestedCwd);
 
-    const allowedRoots = await getAllowedFileRoots(identity);
-    if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
-      return NextResponse.json({ error: "Access denied for requested cwd" }, { status: 403 });
-    }
-    // Die Allow-Liste ist die *Sitzungs*-Grenze, nicht die Home-Grenze: ein
-    // `projectRoot` aus einem verknuepften Worktree eines fremden Repos steht
-    // darin (SHELL-ISOLATION-SCAN §4). Ein Mandant bekommt deshalb zusaetzlich
-    // die Home-Pruefung, sonst oeffnet er seine Shell in `/home/<andere>`.
-    // Ein Admin ist der Host; fuer ihn ist `/` der erlaubte Wurzelraum.
-    if (!isAdminIdentity(identity) && !isPathInUserHome(identity, cwd)) {
+    // Die Home ist die Grenze des Mandanten, `/` die des Admins. Die
+    // sitzungsabgeleitete Allow-Liste kostete dafuer einen vollen Session-Scan,
+    // den dieser Klick nicht bezahlen kann.
+    const isAdmin = isAdminIdentity(identity);
+    if (isAdmin ? !existsSync(cwd) : !isPathInUserHome(identity, cwd)) {
       return NextResponse.json({ error: "Access denied for requested cwd" }, { status: 403 });
     }
 
     const cols = Number.isFinite(body?.cols) ? Math.max(2, Math.min(500, Number(body?.cols))) : 80;
     const rows = Number.isFinite(body?.rows) ? Math.max(1, Math.min(200, Number(body?.rows))) : 24;
 
-    const info = await getTerminalManager().spawn(cwd, cols, rows, identity.username, isAdminIdentity(identity));
+    const info = await getTerminalManager().spawn(cwd, cols, rows, identity.username, isAdmin);
     return NextResponse.json({ terminal: toInfo(info) });
   } catch (error) {
     // Eine fehlende Sandbox ist ein Zustand des Hosts, kein Serverfehler: 503

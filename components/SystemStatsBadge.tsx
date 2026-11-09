@@ -136,10 +136,15 @@ export function SystemStatsBadge() {
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // One poll at a time. A slow /api/system-stats (the same HTTP/1.1 connection
+  // pool the whole app shares) must not queue further samples behind itself.
+  const tickPendingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
+      if (tickPendingRef.current) return;
+      tickPendingRef.current = true;
       try {
         const res = await fetch("/api/system-stats");
         if (!res.ok) return;
@@ -156,6 +161,8 @@ export function SystemStatsBadge() {
         });
       } catch {
         // Network blip; keep the last known sample.
+      } finally {
+        tickPendingRef.current = false;
       }
     };
     void tick();
