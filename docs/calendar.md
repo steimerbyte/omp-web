@@ -400,6 +400,11 @@ damit ein Wochenendtag im aktuellen Monat nicht wie ein fremder aussieht.
 Theme-Variablen statt Farbwerten, aus demselben Grund wie überall sonst:
 `applyOmpPalette` schreibt sie zur Laufzeit um.
 
+Der heutige Tag trägt zusätzlich einen langsam umlaufenden Schein aus
+`var(--accent)` (`[data-cal-today]`), der in der Monatszelle und in der
+Kopfzelle der Wochen- und Tagesansicht sitzt und bei `prefers-reduced-motion`
+stillsteht.
+
 #### Die Terminliste eines Tages
 
 In eine Monatszelle passen nur wenige Termine: der Rest steht als „N weitere"
