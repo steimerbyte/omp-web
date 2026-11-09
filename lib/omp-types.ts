@@ -148,6 +148,19 @@ export interface ExtensionUiContextLike {
 export interface AgentSessionLike {
   readonly sessionId: string;
   readonly sessionFile: string | undefined;
+  /**
+   * Lebt der Prozess, der diese Session fuehrt?
+   *
+   * Fuer eine In-Process-Session ist die Frage sinnlos (der Wrapper lebt genau
+   * so lange wie die Session) und bleibt deshalb optional. Fuer eine
+   * **Worker**-Session ist sie die einzige ehrliche Auskunft: der Prozess kann
+   * abgeraeumt (`idleMs`) oder abgeschossen werden, waehrend dieses Objekt im
+   * Server weiterlebt. Ohne sie meldete der Wrapper `isAlive()` fuer einen toten
+   * Worker, und der Fast-Path der Route lieferte ihn aus — gemessen am
+   * 2026-11-09: der naechste Request antwortete `500 Client not started`, und
+   * zwar bei jedem weiteren, bis der Server neu startete.
+   */
+  isAlive?(): boolean;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
   readonly autoCompactionEnabled: boolean;

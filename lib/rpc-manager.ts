@@ -38,7 +38,7 @@ import {
 } from "./tenant-worker";
 import { createWorkerBackedSession, tenantArchiveDir, type WorkerSessionBoundary } from "./tenant-worker-session";
 import { resolveBunPath } from "../bin/runtime.js";
-import { EventEmitter } from "node:events";
+import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 import { dirname, join } from "node:path";
 import { unsandboxedTenantWarning, tenantProviders } from "./tenant-worker-config";
 import { fileURLToPath } from "node:url";
@@ -582,7 +582,19 @@ export class AgentSessionWrapper {
   }
 
   isAlive(): boolean {
-    return this._alive;
+    if (!this._alive) return false;
+    // Eine Worker-Session kann sterben, waehrend dieser Wrapper weiterlebt: der
+    // Prozess wird nach `idleMs` abgeraeumt oder abgeschossen, und das Objekt
+    // hier merkt davon nichts. Ohne diese Abfrage meldete `isAlive()` fuer einen
+    // toten Worker `true`, der Fast-Path in `app/api/agent/[id]/route.ts` haette
+    // den Wrapper ausgeliefert, und der Request scheiterte an der geschlossenen
+    // Pipe (`Client not started`) — und jeder weitere auch, dauerhaft, bis der
+    // Server neu startet. Gemessen am 2026-11-09: drei Requests hintereinander
+    // 500, bis zum Neustart.
+    //
+    // Eine In-Process-Session hat die Methode nicht; dann bleibt es bei `true`.
+    if (this.inner.isAlive?.() === false) return false;
+    return true;
   }
 
   isRunning(): boolean {
@@ -1086,7 +1098,46 @@ export class AgentSessionWrapper {
     callerIdentity?: WebIdentity | null,
   ): Promise<unknown> {
     const identity = callerIdentity === undefined ? this.identity : callerIdentity;
+    // Ein abgeraeumter oder abgeschossener Worker: diese Session kann den Befehl
+    // nicht mehr ausfuehren.
+    //
+    // Gemessen am 2026-11-09: nach dem Reap (Ruhezeit `idleMs`) und nach
+    // `kill -9` des Worker-Prozesses meldete der Wrapper weiter
+    // `isAlive() === true`; der Fast-Path in `app/api/agent/[id]/route.ts`
+    // lieferte ihn aus, und der Dispatch scheiterte dauerhaft an der
+    // geschlossenen Pipe (`500 {"error":"Client not started"}`) — drei Requests
+    // hintereinander, bis zum Serverneustart.
+    //
+    // Seit `isAlive()` den Worker fragt, kommt ein Dispatch auf einen **toten**
+    // Wrapper hier an. Die Route startet die Session vorher ueber
+    // `startRpcSession` neu (gemessen: derselbe Request antwortet wieder 200);
+    // dieser Zweig deckt den Aufrufer ab, der einen Wrapper haelt, waehrend sein
+    // Worker weggeraeumt wird. Er bekommt **einen** benannten Fehler mit Abhilfe
+    // statt einer dauerhaft geschlossenen Pipe, und der naechste Request oeffnet
+    // dieselbe Session-Id aus ihrem Archiv auf einem frischen Worker.
+    //
+    // Ein `TenantBoundaryError`, weil die Route daraus `reason`, `detail` und
+    // `remediation` macht und 503 statt 500 antwortet: der Dienst ist da, dieser
+    // eine Prozess nicht mehr, und ein erneuter Versuch gelingt.
+    if (this.inner.isAlive?.() === false) {
+      throw new TenantBoundaryError({
+        reason: "tenant-worker-restarted",
+        detail: `The worker hosting session ${this.inner.sessionId} was reaped for idleness or died before this command arrived; `
+          + "the session is reopened from its archive, with the same id, on the next request.",
+        remediation: "retry the request",
+      });
+    }
     this.resetIdleTimer();
+    // Jeder Dispatch, der hier ankommt, ist Verkehr fuer den Worker dieses
+    // Kontos. Ohne diesen Aufruf mass der Idle-Timer der Worker-Registry das
+    // **Alter** des Prozesses statt seiner Ruhezeit: gemessen am 2026-11-09 mit
+    // `OMP_WEB_TENANT_WORKER_IDLE_MS=10000` und einem `bash`-Aufruf alle ~6 s
+    // war der Worker bei t≈19 s weg, obwohl er durchgehend benutzt wurde.
+    // `send` meldet Verkehr an den Worker seines Kontos. `globalThis` direkt statt
+    // `getTenantWorkerHost()`: der Getter legte fuer den ersten Admin-Request eine
+    // Registry an, die nie einen Worker halten wird, und installierte drei
+    // Prozess-Haken fuer einen Pfad, der keine Grenze braucht.
+    if (identity) globalThis.__ompTenantWorkers?.touch(identity.username);
     const type = command.type as string;
     if (this.shouldWaitForExtensions(type)) await this.waitForExtensionsBound();
     if (this.handoffRunning && HANDOFF_ALLOWED_COMMAND_TYPES[type] !== true) {
@@ -2318,6 +2369,12 @@ const BOUNDARY_STATUS_BY_REASON: Record<string, number> = {
   "userns-disabled": 503,
   "boundary-unavailable": 503,
   "mask-unavailable": 503,
+  // Der Prozess, der die Session fuehrte, ist weg — der naechste Request baut
+  // dieselbe Session-Id auf einem frischen Worker neu auf. `503` ist hier die
+  // einzige ehrliche Antwort: der Dienst laeuft, diese eine Faehigkeit fehlt
+  // gerade, und ein Wiederholungsversuch gelingt (gemessen am 2026-11-09: der
+  // Request nach dem `kill -9` lief durch, mit derselben Session-Id).
+  "tenant-worker-restarted": 503,
 };
 
 /**
@@ -2365,20 +2422,32 @@ export function __resetUnsandboxedTenantWarning(): void {
  * zweiten Worker fuer dasselbe Konto starten.
  */
 function getTenantWorkerHost(): TenantWorkerHost {
-  if (!globalThis.__ompTenantWorkers) {
-    globalThis.__ompTenantWorkers = createTenantWorkerHost();
-    // Beim Beenden die Kinder mitnehmen. `die-with-parent` in der Namespace
-    // sorgt dafuer, dass ein hart beendeter Server keine Waisen hinterlaesst;
-    // dieser Haken ist der geordnete Weg fuer den Normalfall.
-    const shutdown = () => {
-      const host = globalThis.__ompTenantWorkers;
-      if (!host) return;
-      for (const entry of host.snapshot()) void host.release(entry.username);
-    };
-    process.once("exit", shutdown);
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
-  }
+  if (globalThis.__ompTenantWorkers) return globalThis.__ompTenantWorkers;
+  globalThis.__ompTenantWorkers = createTenantWorkerHost({
+    // Laeuft fuer dieses Konto gerade ein Turn? Ein arbeitender Worker wird
+    // nicht abgeraeumt, auch wenn seine letzte Anfrage laenger als `idleMs`
+    // her ist: ein `bun install` in einem Werkzeugaufruf braucht Minuten, und
+    // ein Abbruch mitten im Lauf waere Datenverlust. Die Antwort kommt aus der
+    // Session-Registry und nicht aus einem Zeitfenster hier.
+    isBusy: (username) => {
+      for (const session of getRegistry().values()) {
+        if (getOwnerMap().get(session.sessionId) !== username) continue;
+        if (session.isAlive() && session.isRunning()) return true;
+      }
+      return false;
+    },
+  });
+  // Beim Beenden die Kinder mitnehmen. `die-with-parent` in der Namespace sorgt
+  // dafuer, dass ein hart beendeter Server keine Waisen hinterlaesst; dieser
+  // Haken ist der geordnete Weg fuer den Normalfall.
+  const shutdown = () => {
+    const host = globalThis.__ompTenantWorkers;
+    if (!host) return;
+    for (const entry of host.snapshot()) void host.release(entry.username);
+  };
+  process.once("exit", shutdown);
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
   return globalThis.__ompTenantWorkers;
 }
 
@@ -2435,7 +2504,15 @@ async function startWorkerSessionForTenant(
     // Ein Bus, der nichts abonniert: die Frames kommen aus dem Worker ueber
     // `client.onEvent`, und der Wrapper haengt sich mit `session.subscribe`
     // daran. Der Subagent-Bus bleibt damit leer — Subagenten laufen im Worker.
-    const eventBus = new EventEmitter() as unknown as ConstructorParameters<typeof AgentSessionWrapper>[1];
+    //
+    // `EventBus` des SDK und kein `node:events`-Emitter: der Wrapper gibt den
+    // Bus an `RpcSubagentRegistry`, und dessen `dispose()` ruft die Rueckgabe
+    // von `.on()` als Abmeldefunktion auf. Beim Emitter ist das der Emitter
+    // selbst — gemessen am 2026-11-09 warf `wrapper.destroy()` damit
+    // `TypeError: unsubscribe is not a function`, und zwar in genau dem Pfad,
+    // der einen abgeraeumten Worker ersetzen soll: statt des Neustarts kam ein
+    // 500 aus dem Aufraeumen.
+    const eventBus = new EventBus() as unknown as ConstructorParameters<typeof AgentSessionWrapper>[1];
     return { ok: true, session, eventBus };
   } catch (error) {
     // Eine halb aufgebaute Session darf nicht im Registry landen: der Worker
@@ -2468,6 +2545,25 @@ export async function startRpcSession(
 
   const existing = registry.get(sessionId);
   if (existing?.isAlive()) return { session: existing, realSessionId: sessionId };
+  if (existing) {
+    // Ein toter Wrapper bleibt sonst in der Registry stehen, und
+    // `getRpcSession(id)` liefert ihn weiter aus: `GET /api/agent/<id>` und
+    // `GET /api/sessions/<id>/state` antworten dann `{running:false}`, was
+    // stimmt, aber `POST /api/agent/<id>` landet im Fast-Path und scheitert an
+    // der geschlossenen Pipe. Gemessen am 2026-11-09: drei Requests
+    // hintereinander 500 `Client not started`, dauerhaft.
+    //
+    // `destroy` ist idempotent (`if (!this._alive) return`) und schliesst den
+    // Bus ab; die Session wird im naechsten Schritt aus ihrem Archiv neu
+    // aufgebaut, mit derselben Id. Dass dieser Aufruf fuer eine Worker-Session
+    // nicht wirft, haengt an dem `EventBus` aus `startWorkerSessionForTenant`:
+    // mit einem `node:events`-Emitter warf `destroy` hier
+    // `TypeError: unsubscribe is not a function` (gemessen am 2026-11-09), und
+    // der Neustart endete in einem 500 aus dem Aufraeumen statt in einer
+    // wiederhergestellten Session.
+    existing.destroy();
+    if (registry.get(sessionId) === existing) registry.delete(sessionId);
+  }
 
   const inflight = locks.get(sessionId);
   if (inflight) return inflight;
@@ -2526,14 +2622,39 @@ export async function startRpcSession(
       wrapper.start();
       const realSessionId = workerSession.session.sessionId;
       const realSessionFile = workerSession.session.sessionFile;
-      if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
+      // Der Schluessel, unter dem diese Session erreichbar ist.
+      //
+      // Fuer eine **bestehende** Session ist das die Id des Aufrufers, nicht die
+      // Id, die der Worker gerade meldet. Gemessen am 2026-11-09: ein neu
+      // angelegtes Mandanten-Archiv traegt in seiner Kopfzeile eine andere Id als
+      // die, unter der der Wrapper laeuft — die Datei legt der Server an
+      // (`SessionManager.open`, siehe `tenant-worker-session.ts`), und der Worker
+      // uebernimmt beim Oeffnen die Kopfzeilen-Id. Nach einem Reap meldete der
+      // frische Worker deshalb eine **andere** Id; wurde der Wrapper darunter
+      // registriert, fand der naechste Request `/api/agent/<alte Id>` nichts mehr,
+      // baute die Session ein zweites Mal auf und hinterliess bei jedem Request
+      // einen weiteren Wrapper im Registry — ein Leck und doppelte Eintraege in
+      // der Session-Liste. Unter der aufrufenden Id registriert bleibt dieselbe
+      // Session unter derselben Id bedienbar.
+      //
+      // Eine **neue** Session (`sessionFile === ""`) hat noch keine Id, die der
+      // Aufrufer kennen koennte: dort bleibt es bei der Id des Workers, die
+      // `/api/agent/new` an den Client zurueckgibt.
+      //
+      // Genau **ein** Schluessel pro Session, und zwar die Id, unter der der
+      // Aufrufer sie addressiert. Die vom Worker gemeldete Id wird bewusst nicht
+      // zusaetzlich eingetragen — `getRpcSessionInfos` laeuft ueber die Registry,
+      // und ein zweiter Schluessel auf denselben Wrapper haette dieselbe Session
+      // zweimal in der Liste gezeigt.
+      const handle = sessionFile === "" ? realSessionId : sessionId;
+      if (realSessionFile) cacheSessionPath(handle, realSessionFile);
       wrapper.onDestroy(() => {
-        registry.delete(realSessionId);
-        forgetSessionOwner(realSessionId);
+        if (registry.get(handle) === wrapper) registry.delete(handle);
+        forgetSessionOwner(handle);
       });
-      registry.set(realSessionId, wrapper);
-      setSessionOwner(realSessionId, options.owner ?? "");
-      return { session: wrapper, realSessionId };
+      registry.set(handle, wrapper);
+      setSessionOwner(handle, options.owner ?? "");
+      return { session: wrapper, realSessionId: handle };
     }
     if (policy.mode === "in-process" && policy.reason === "opted-out") {
       // Einmal pro Serverstart, nicht pro Anfrage: die Warnung ist ein

@@ -283,6 +283,11 @@ export async function createWorkerBackedSession(
     // (`SessionManager.open`) und schreibt sie in die Session-Liste. Ein
     // Gast-Pfad waere hier ein Pfad, den es auf diesem Host nicht gibt.
     get sessionFile() { return sessionFile; },
+    // Die einzige Wahrheit ueber das Leben dieser Session ist der Worker. Der
+    // Wrapper fragt sie ueber `isAlive()` ab; ohne diese Zeile blieb `_alive`
+    // auf `true` stehen, und ein abgeraeumter oder abgeschossener Worker
+    // vergiftete die Session fuer die restliche Prozesslaufzeit.
+    isAlive() { return worker.isAlive(); },
     get isStreaming() { return state.isStreaming; },
     get isCompacting() { return state.isCompacting; },
     get autoCompactionEnabled() { return state.autoCompactionEnabled; },
