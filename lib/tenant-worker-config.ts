@@ -58,7 +58,11 @@ export interface TenantWorkerFailure {
   remediation: string;
 }
 
-/** Die Vorgaben. 256 MiB und ~1,03 s pro Worker sind auf diesem Host gemessen. */
+/**
+ * Die Vorgaben. Gemessen an einem laufenden Worker: 265 MiB resident
+ * (`VmRSS 271524 kB`) und 364 MiB Spitze (`VmHWM 372868 kB`), ~1,03 s Start.
+ * Fuer die Obergrenze zaehlt die **Spitze**, nicht der Ruhewert.
+ */
 export const DEFAULT_WORKER_IDLE_MS = 300_000;
 export const DEFAULT_WORKER_MAX = 4;
 const MIN_IDLE_MS = 10_000;
@@ -67,9 +71,9 @@ const MAX_WORKER_MAX = 64;
 /**
  * Die Anzahl gleichzeitiger Worker.
  *
- * Gemessen auf diesem Host: 6 Kerne, 12 GiB, 288–295 MB pro Worker. Vier ist
- * die Vorgabe, weil die **Kerne** vor dem Speicher binden — 20 Worker wuerden
- * in 12 GiB passen, aber jeder Start kostet ~1 s CPU.
+ * Gemessen auf diesem Host: 6 Kerne, 12 GiB, 265 MiB resident und 364 MiB
+ * Spitze pro Worker. Vier ist die Vorgabe, weil die **Kerne** vor dem Speicher
+ * binden — 20 Worker wuerden in 12 GiB passen, aber jeder Start kostet ~1 s CPU.
  */
 export function resolveWorkerMax(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.OMP_WEB_TENANT_WORKER_MAX;

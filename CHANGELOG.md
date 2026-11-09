@@ -49,8 +49,8 @@ upstream line — see the Provenance section in the README.
   **Lebenszyklus.** Träger Start bei der ersten Agent-Anfrage des Kontos, Abräumen
   nach `OMP_WEB_TENANT_WORKER_IDLE_MS` (Vorgabe 300 000, Werte unter 10 000
   werden angehoben), harte Obergrenze `OMP_WEB_TENANT_WORKER_MAX` (Vorgabe 4 —
-  310 MiB RSS / 365 MiB Spitze und ~1,1 s pro Worker, 6 Kerne binden
-  vor 12 GiB) mit
+  265 MiB resident / 364 MiB Spitze gemessen, `VmRSS 271524 kB` /
+  `VmHWM 372868 kB`, und ~1,1 s pro Worker, 6 Kerne binden vor 12 GiB) mit
   LRU-Verdrängung, und ein gestorbener Worker wird ersetzt statt weiter
   ausgeliefert. `SessionInfo.boundary` meldet `kind`/`enforced`/`pid`;
   `enforced: true` steht dort nur mit gemeldeter PID.
@@ -58,7 +58,24 @@ upstream line — see the Provenance section in the README.
   **Der Provider kommt aus dem eigenen `models.yml` des Kontos.** Der erste echte
   Start scheiterte mit `No default model selected`, weil die Provider-Liste
   konstant leer war. Gelesen wird jetzt über `ModelsConfigFile.relocate`, also mit
-  dem Parser des SDK; der Betreiber-Bestand wird nicht geerbt.
+  dem Parser des SDK.
+
+  **Zugangsdaten: der eigene `apiKey` des Mandanten, Betreiber-Schlüssel nur auf
+  ausdrückliche Freigabe.** Ein Provider-Name in einem `models.yml`, das der
+  Mandant selbst schreibt, darf nicht allein darüber entscheiden, welcher Wert
+  in seine Umgebung kommt — genau das war ausnutzbar: `providers: { brave: … }`
+  ohne `apiKey` löste `BRAVE_API_KEY` aus der Geheimnisdatei des Betreibers auf,
+  `--setenv` legte ihn in Umgebung und argv des Workers, und die Bash des
+  Mandanten holte ihn mit einem `curl` ab. Jetzt gilt: ohne
+  `OMP_WEB_TENANT_PROVIDER_GRANT` erreicht **kein** Betreiber-Schlüssel einen
+  Mandanten-Worker, unabhängig davon, was der Mandant schreibt; sein eigener
+  `apiKey` im eigenen `models.yml` funktioniert weiterhin, weil das SDK ihn aus
+  dem Gast-Home liest. `OMP_WEB_TENANT_PROVIDER_GRANT` (kommagetrennte Namen,
+  leer/ungesetzt = keine Freigabe) ist der einzige Weg zum Betreiber-Schlüssel;
+  ein nicht gelisteter Name löst nichts auf und schreibt eine Zeile auf stderr.
+  Preis einer Freigabe, dokumentiert statt verschwiegen: der Wert steht im argv
+  des Workers (`/proc/<pid>/cmdline`) und ist für jede Prozess-ID der
+  Dienst-UID lesbar.
 
   **Zwei Defekte, die erst die Messung zeigte.** Das Transcript einer
   In-Process-Mandanten-Session war `0644` — `persistBashOnlySession` schrieb ohne
@@ -105,11 +122,14 @@ upstream line — see the Provenance section in the README.
   `ensure_session` und `bash`, ein vollständiger Chat durch einen Worker ist
   nicht gemessen; der Mandant kann **seinen eigenen** Provider-Schlüssel lesen
   (der Modellaufruf passiert im selben Prozess wie die Tool-Shell), aber keinen
-  fremden; der Admin-Pfad bleibt ungeschützt; nichts davon ist deployt, getaggt
-  oder gepusht. Die beiden Grenzverletzungen oben sind auf diesem Host belegt —
-  gegen einen Scratch-Server, nicht gegen einen Host ohne User-Namespaces und
-  nicht gegen einen zweiten Host. Das Test-Gate ist grün (3012 Tests, 0
-  Fehlschläge, 85,9 % der Funktionen ausgeführt).
+  fremden — Betreiber-Schlüssel erreichen ihn nur, soweit
+  `OMP_WEB_TENANT_PROVIDER_GRANT` sie ausdrücklich freigibt, und eine Freigabe
+  ist eine bewusste Entscheidung des Betreibers, kein Nebeneffekt eines
+  Provider-Namens; der Admin-Pfad bleibt ungeschützt; nichts davon ist deployt,
+  getaggt oder gepusht. Die beiden Grenzverletzungen oben sind auf diesem Host
+  belegt — gegen einen Scratch-Server, nicht gegen einen Host ohne
+  User-Namespaces und nicht gegen einen zweiten Host. Das Test-Gate ist grün
+  (3012 Tests, 0 Fehlschläge, 85,9 % der Funktionen ausgeführt).
 
 - **Der Deploy lässt einen vom Operator abgeschalteten Healthcheck aus.** Das
   Unit-Drop-in zieht den Timer über `Wants=omp-web-healthcheck.timer` bei jedem
