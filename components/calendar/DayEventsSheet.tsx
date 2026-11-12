@@ -1,5 +1,6 @@
 "use client";
 
+import type { RefObject } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,25 +9,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { formatGermanLongDate, type CalendarEvent } from "@/lib/calendar";
 import { useCalendarText } from "./useCalendarText";
 
 /**
- * Die Termine eines Tages als Liste — der Zwischenschritt vor dem Dialog.
+ * Alle Termine eines Tages — die Tagesuebersicht.
  *
- * ### Warum es diese Liste gibt
+ * ### Was diese Liste ist
  *
- * In der Monatsansicht passt in eine Tageszelle nur eine Handvoll Chips. Ein
- * Tag mit vier Terminen zeigt auf einem 390 Pixel breiten Bildschirm einen
- * Chip und „3 weitere" — und der Chip ist 50 Pixel breit, also kein Ziel fuer
- * einen Finger. Ein Klick auf den Tag oeffnet deshalb erst diese Liste, und
- * *aus* der Liste kommt der Termin-Dialog. Damit ist jeder Termin eines Tages
- * erreichbar, unabhaengig davon, wie viele in die Zelle passen.
+ * Ein Klick auf einen Tag (in der Monatszelle, in der Kopfzelle der Wochen-
+ * und Tagesansicht) oeffnet *immer* diese Uebersicht: Datum, Zahl der
+ * Termine, jeder Termin mit Titel und Uhrzeit, und darunter der fette Knopf
+ * „Termin hinzufuegen". Das gilt auch fuer einen Klick auf den Termin selbst
+ * (Chip oder Block im Stundenraster): bei vielen Terminen auf einem Tag ist
+ * der Nachbar einen Pixel entfernt, und ein direkter Klick in den Dialog
+ * landete dann im falschen Termin. Gewaehlt wird erst hier, wo die Zeilen 44
+ * Pixel hoch sind und die Liste scrollt. Aus der Uebersicht kommt der
+ * Termin-Dialog — er bleibt die einzige Form zum Anlegen und Bearbeiten.
  *
- * Wann der Klick die Liste oeffnet und wann er direkt anlegt, entscheidet
- * `MonthGrid` (`dayEvents.length > 0 && (compact || hiddenCount > 0)`): ein
- * leerer Tag legt immer direkt an, und auf dem Desktop bleibt der
- * Ein-Klick-Weg zum Anlegen erhalten, solange die Zelle nichts verschluckt.
+ * Frueher war die Liste ein Zwischenschritt, den nur ein schmaler Bildschirm
+ * oder eine abgeschnittene Zelle oeffnete; sonst legte der Klick direkt
+ * einen Termin an. Das war eine Regel, die von der Fensterbreite und der
+ * Hoehe der Zelle abhing — niemand konnte vorhersagen, was ein Klick tut.
+ * Jetzt tut er ueberall dasselbe.
  *
  * ### Warum ein `Dialog` und kein eigenes Popup
  *
@@ -34,11 +40,23 @@ import { useCalendarText } from "./useCalendarText";
  * Arbeit, die ein Popup sonst selbst machen muesste. `components/ui/dialog`
  * bringt genau das mit und wird vom Termin-Dialog ohnehin benutzt — ein
  * zweites Popup-Primitiv waere eine zweite Sorte Verhalten im selben
- * Bildschirm.
+ * Bildschirm. Unter 640 Pixeln ist dasselbe Popup ein Bottom-Sheet
+ * (`.calendar-day-sheet` in `app/globals.css`).
+ *
+ * ### Warum der Fokus zurueck zur Tageszelle geht
+ *
+ * Der Knopf, der die Liste geoeffnet hat, ist nach dem Schliessen das
+ * naechste sinnvolle Ziel — sonst landet der Fokus im `body`, und die
+ * Tastaturbenutzung faengt wieder oben an. `onCloseAutoFocus` ist der Ort,
+ * an dem das Popup seinen Fokus zurueckgibt; `returnFocus` traegt die Zelle.
+ * Oeffnet die Liste den Termin-Dialog, ist `returnFocus` vorher geleert —
+ * sonst zoege das schliessende Sheet den Fokus aus dem gerade geoeffneten
+ * Dialog.
  */
 export function DayEventsSheet({
   date,
   events,
+  returnFocus,
   onSelect,
   onCreate,
   onClose,
@@ -47,28 +65,45 @@ export function DayEventsSheet({
   date: string;
   /** Die Termine des Tages — bereits nach Beginn sortiert. */
   events: CalendarEvent[];
+  /** Die Tageszelle, die die Liste geoeffnet hat. */
+  returnFocus: RefObject<HTMLElement | null>;
   /** Ein Termin wurde gewaehlt: die Liste schliesst, der Dialog oeffnet. */
   onSelect: (event: CalendarEvent) => void;
-  /** „Neuer Termin" an diesem Tag. */
+  /** „Termin hinzufuegen" an diesem Tag. */
   onCreate: (date: string) => void;
   onClose: () => void;
 }) {
   const t = useCalendarText();
+  const compact = useIsMobile();
+  const count = events.length;
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         showCloseButton={false}
+        data-cal-day-sheet="true"
+        // Die Basisklassen zentrieren mit `-translate-x-1/2 -translate-y-1/2`;
+        // unter 640 Pixeln setzt `.calendar-day-sheet` sie zurueck und
+        // verankert unten. Die beiden Utility-Klassen sind derselbe Reset in
+        // Tailwind-Sprache — ohne sie landet das Sheet halb ausserhalb des
+        // Bildschirms (AGENTS.md, „Subagent state belongs to one session").
+        className={compact ? "calendar-day-sheet translate-x-0 translate-y-0" : undefined}
+        // Inline gewinnt gegen jede Klasse: die Breite des Sheets kommt
+        // deshalb nur im Nicht-compact-Fall von hier.
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",
           color: "var(--text)",
-          maxWidth: 420,
-          width: "calc(100% - 32px)",
-          maxHeight: "calc(100dvh - 32px)",
+          ...(compact ? {} : { maxWidth: 420, width: "calc(100% - 32px)", maxHeight: "calc(100dvh - 32px)" }),
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
+        }}
+        onCloseAutoFocus={(event) => {
+          const target = returnFocus.current;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
         }}
       >
         <DialogHeader style={{ flexShrink: 0 }}>
@@ -76,13 +111,17 @@ export function DayEventsSheet({
             {formatGermanLongDate(date)}
           </DialogTitle>
           <DialogDescription style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {t("calendar.selectEvent")}
+            {count === 0
+              ? t("calendar.emptyDay")
+              : t(count === 1 ? "calendar.eventCountOne" : "calendar.eventCountMany", { count })}
           </DialogDescription>
         </DialogHeader>
 
         {/* Die Liste scrollt, der Fuss bleibt stehen — dieselbe Aufteilung
             wie im Termin-Dialog: ein Fuss, der mitscrollt, ist auf einem
-            flachen Bildschirm irgendwann nicht mehr da. */}
+            flachen Bildschirm irgendwann nicht mehr da. Die Hoehe begrenzt
+            das Popup selbst, nicht die Liste: ein Tag mit dreissig Terminen
+            scrollt, ein Tag mit zweien bleibt klein. */}
         <div
           style={{
             display: "flex",
@@ -90,20 +129,10 @@ export function DayEventsSheet({
             gap: 4,
             flex: "1 1 auto",
             minHeight: 0,
-            // Die Liste bleibt ein „kleines Popup": ab etwa sechs Terminen
-            // scrollt sie, statt den Dialog auf die volle Bildschirmhoehe
-            // wachsen zu lassen.
-            maxHeight: "52dvh",
             overflowY: "auto",
             overscrollBehavior: "contain",
           }}
         >
-          {events.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-dim)" }}>
-              {t("calendar.emptyDay")}
-            </p>
-          ) : null}
-
           {events.map((event) => (
             <button
               key={event.id}
@@ -141,7 +170,18 @@ export function DayEventsSheet({
           ))}
         </div>
 
-        <DialogFooter style={{ flexShrink: 0, display: "flex", flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
+        <DialogFooter
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            // Schmal: der fette Knopf steht oben und ueber die volle Breite,
+            // „Schliessen" darunter. Breit: nebeneinander, der Knopf waechst.
+            flexDirection: compact ? "column-reverse" : "row",
+            alignItems: "stretch",
+            gap: 8,
+            justifyContent: "flex-end",
+          }}
+        >
           <button
             type="button"
             onClick={onClose}
@@ -157,12 +197,21 @@ export function DayEventsSheet({
             type="button"
             onClick={() => onCreate(date)}
             style={{
-              padding: "8px 12px", minHeight: 44, fontSize: 12, fontWeight: 550,
-              borderRadius: 8, cursor: "pointer", fontFamily: "inherit",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              flex: "1 1 auto", width: compact ? "100%" : undefined,
+              padding: "12px 16px",
+              // 48 Pixel: der Hauptweg dieses Bildschirms — groesser als die
+              // 44-Pixel-Zeilen darueber, weil er das Ziel ist.
+              minHeight: 48,
+              fontSize: 14, fontWeight: 650,
+              borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
               border: "1px solid var(--accent)", background: "var(--accent)", color: "var(--bg)",
             }}
           >
-            {t("calendar.newEvent")}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+            {t("calendar.addEvent")}
           </button>
         </DialogFooter>
       </DialogContent>

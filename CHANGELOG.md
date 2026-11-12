@@ -5,6 +5,22 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+- **Ein Klick auf einen Kalendertag öffnet die Tagesübersicht, überall.** Die
+  Monatszelle und die Kopfzelle der Wochen-/Tagesansicht öffnen bei *jedem*
+  Klick die Tagesübersicht — auf die Tageszahl, in die leere Fläche und auf
+  einen Termin (Chip oder Block im Stundenraster) gleichermaßen. In der
+  Übersicht (`DayEventsSheet`) stehen Datum, Zahl der Termine, jeder Termin des
+  Tages und ein 48 px hoher Knopf „Termin hinzufügen", der den bestehenden
+  Termin-Dialog mit dem Tag vorbelegt (unter 640 px als Bottom-Sheet); den
+  Termin wählt erst die Liste, weil ein Chip bei vielen Terminen leicht der
+  falsche ist (der alte Klick landete direkt im Dialog). Die alte Regel — Desktop legt direkt an, Handy und
+  abgeschnittene Zelle öffnen eine Liste — hing von Fensterbreite und Zellhöhe
+  ab und ist weg; Anlegen bleibt über den Knopf der Übersicht, „Neuer Termin"
+  in der Kopfzeile und den Stundenklick in Woche/Tag. Die Termine eines Tages
+  kommen aus `eventsForDay` (`calendar-model.ts`) statt aus zwei Kopien der
+  Filter-und-Sortier-Logik, und die Übersicht gibt den Fokus an die Zelle
+  zurück, von der sie geöffnet wurde.
+
 - **Der Titel-Knopf benennt eine Session jetzt auch dann, wenn die erste
   Nachricht nur „hi" war.** Die Titelquelle ist die erste Äußerung mit Signal,
   sonst die Kompaktierungs-Zusammenfassung, sonst die rohe erste Nachricht; die

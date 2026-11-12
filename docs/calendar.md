@@ -351,10 +351,16 @@ nicht. Die `calendar.*`-Schlüssel stehen deshalb **nur** in
 anderen Paketen wären sie tote Kopien: der Kalender liest sie ohnehin aus dem
 deutschen Paket.
 
-`lib/i18n/locale-parity.test.mjs` hält beides fest: das deutsche Paket darf
-mehr Schlüssel haben als der englische Katalog, aber ausschließlich mit dem
-Präfix `calendar.` — und der englische und der chinesische Katalog dürfen
-keinen einzigen `calendar.`-Schlüssel enthalten.
+Auch die Schlüssel der Tagesübersicht — `calendar.addEvent`,
+`calendar.eventCountOne`, `calendar.eventCountMany` — stehen nur dort. Der
+Numerus ist zweigeteilt statt über ein `{countSuffix}` aus der Domäne: die
+Komponente wählt nach der Zahl zwischen `eventCountOne` und `eventCountMany`,
+weil „1 Termin“/„2 Termine“ eine Sprachregel ist und kein Rechenergebnis.
+
+`lib/i18n/locale-parity.test.mjs` hält das fest: das deutsche Paket darf mehr
+Schlüssel haben als der englische Katalog, aber ausschließlich mit dem Präfix
+`calendar.`; der englische und der chinesische Katalog tragen keinen
+einzigen `calendar.`-Schlüssel.
 
 Die fünf deutschen Namen der Preset-Farben („Akzent“, „Erfolg“, „Warnung“,
 „Gefahr“, „Violett“) stehen **nicht** im Katalog, sondern in
@@ -369,12 +375,13 @@ Kalender öffnet, ist aus demselben Grund deutsch beschriftet
 ### Die drei Ansichten
 
 - **Monat** — ein 6×7-Raster, Montag zuerst. Jede Zelle zeigt den Tag, den
-  Feiertagsnamen und die Termine. Ein Klick auf die Tagesfläche legt einen
-  Termin an — außer in den beiden Fällen, in denen er die Terminliste öffnet
-  (siehe unten).
+  Feiertagsnamen und die Termine. Ein Klick auf die Tagesfläche öffnet die
+  Tagesübersicht dieses Tages (siehe unten).
 - **Woche** — sieben Tagesspalten mit einer Stundenskala von 00 bis 24 Uhr.
   Ganztagestermine stehen in einer eigenen Zeile darüber, Termine mit Uhrzeit
-  werden absolut positioniert.
+  werden absolut positioniert. Die Kopfzelle eines Tages öffnet dieselbe
+  Tagesübersicht wie eine Monatszelle; ein Klick in die Stundenspalte legt
+  weiterhin direkt einen Termin an.
 - **Tag** — eine Spalte, dieselbe Stundenskala.
 
 Wochen- und Tagesansicht scrollen **senkrecht**, auf jedem Bildschirm: 24
@@ -405,37 +412,63 @@ Der heutige Tag trägt zusätzlich einen Glow-Rahmen aus `var(--accent)`
 und Tagesansicht sitzt. Ein 1-px-Ring auf der Zellkante plus ein weicher Schein
 nach außen; nichts bewegt sich, damit Tageszahl und Termine ruhig bleiben.
 
-#### Die Terminliste eines Tages
+#### Die Tagesübersicht
 
 In eine Monatszelle passen nur wenige Termine: der Rest steht als „N weitere"
-da. Früher führte dieser Hinweis in die Tagesansicht; auf einem Handy war
-damit jeder Termin erreichbar, den die Zelle abgeschnitten hatte — aber nur
-über einen Ansichtswechsel, und die Zelle selbst ließ sich nicht antippen,
-ohne einen *neuen* Termin anzulegen.
-
-Ein Klick auf die Tagesfläche öffnet deshalb eine Liste
+da. Ein Klick auf die Tagesfläche öffnet deshalb **immer** die Tagesübersicht
 (`components/calendar/DayEventsSheet.tsx`, ein `Dialog` aus
-`components/ui/dialog`) — aber nur, wenn der Tag mindestens einen Termin hat
-**und** einer der beiden Gründe vorliegt: jeder Termin mit Titel und Uhrzeit,
-die Liste scrollt innerhalb des Dialogs, und darunter stehen „Neuer Termin"
-und „Schließen". Aus der Liste geht es in den Termin-Dialog.
+`components/ui/dialog`): das Datum, die Zahl der Termine, jeder Termin mit
+Titel und Uhrzeit — Ganztagestermine zuerst, dann nach Beginn —, und darunter
+ein fetter Knopf „Termin hinzufügen" (48 Pixel hoch, in der Breite des
+Dialogs). Aus der Übersicht geht es in den Termin-Dialog, und der bleibt die
+einzige Form zum Anlegen und Bearbeiten.
 
-1. **Auf dem schmalen Bildschirm** (dieselbe 640-Pixel-Schwelle wie
-   `useIsMobile`) — auch bei einem einzigen Termin. Dort ist die Zelle das
-   Ziel, nicht der Chip: 51 Pixel breit und 17 Pixel hoch trifft kein Finger.
-2. **Auf dem Desktop, wenn die Zelle Termine verschluckt** (`hiddenCount > 0`,
-   also wenn „N weitere" dasteht). Dann ist die Liste der einzige Weg zu
-   diesen Terminen.
+Jeder Klick in den Tag öffnet diese Übersicht — auch einer auf einen
+Termin-Chip. Bei vielen Terminen an einem Tag liegt der Nachbar-Chip neben dem
+eigenen, und ein Treffer daneben landete früher im falschen Termin-Dialog. Der
+Chip ist dort, wo die Entscheidung fällt, eine 44 Pixel hohe Zeile in einer
+Liste, die scrollt; gewählt wird erst dort. Dasselbe gilt in der Wochen- und
+Tagesansicht für den Terminblock im Stundenraster: er öffnet die Übersicht des
+Tages, auf dem er liegt. Ein Klick in eine leere Stunde legt weiterhin direkt
+an — dort zielt der Nutzer auf eine Uhrzeit, nicht auf einen Termin.
 
-Sonst legt der Klick auf die Tagesfläche wie bisher direkt einen Termin an —
-auf dem breiten Bildschirm, wenn alle Termine sichtbar sind, und in **beiden**
-Ansichten auf einem leeren Tag: eine Liste ohne Einträge wäre ein
-Zwischenschritt ohne Auswahl. Ein Klick auf einen Termin-Chip öffnet immer
-direkt den Termin-Dialog.
+Früher war dieselbe Liste ein Zwischenschritt, den nur zwei Fälle öffneten: der
+schmale Bildschirm und die abgeschnittene Zelle (`hiddenCount > 0`); sonst legte
+der Klick direkt einen Termin an. Auf einem 390 Pixel breiten Bildschirm war das
+der Unterschied zwischen einem 50 Pixel breiten Chip, den niemand trifft, und
+einer Liste mit 44 Pixel hohen Zeilen — aber auf dem Desktop hing die Wirkung
+eines Klicks von der Breite des Fensters *und* von der Höhe der Zelle ab. Eine
+Regel, die niemand vorhersieht, ist keine Bedienung. Der Klick tut jetzt überall
+dasselbe, auch auf einem leeren Tag: dessen Übersicht nennt die Leere und trägt
+denselben Knopf.
 
-Auf einem 390 Pixel breiten Bildschirm ist die Liste der Unterschied zwischen
-einem 50 Pixel breiten Chip, den niemand trifft, und einer Liste mit
-44 Pixel hohen Zeilen.
+Anlegen bleibt damit an drei Stellen erreichbar: der Knopf in der Übersicht
+(Tag vorbelegt), der Knopf „Neuer Termin" in der Kopfzeile (der gewählte Tag)
+und ein Klick in eine Stunde der Wochen- oder Tagesansicht (dort zielt der
+Nutzer auf eine Uhrzeit, nicht auf einen Tag).
+
+Der Klick hängt an der Zelle, nicht am `<button>` über ihr: so zählt auch ein
+Treffer auf einem Chip als Klick in den Tag. Der `<button>` liegt flach unter
+den Chips und füllt die Zelle (`inset: 0`) und trägt weiterhin Tastatur und
+Fokus — Enter oder Leertaste lösen seinen Klick aus, und der blubbert in den
+Handler der Zelle. Im Stundenraster ist es derselbe Aufbau an der Kopfzelle.
+Der Name des Knopfes ist das lange Datum plus die Zahl der Termine
+(„Mittwoch, 11.11.2026, 2 Termine"), und der
+Hinweis „N weitere" ist kein eigener Knopf mehr, sondern ein Hinweis: ein
+zweites Ziel in derselben Zelle wäre ein zweiter Tab-Stopp ohne eigene Wirkung.
+Schließt die Übersicht, gibt sie den Fokus an die Zelle zurück, die sie
+geöffnet hat (`onCloseAutoFocus`); wechselt sie in den Termin-Dialog, wird
+dieses Ziel vorher geleert, damit das schließende Sheet dem Dialog den Fokus
+nicht entzieht.
+
+Unter 640 Pixeln (dieselbe Schwelle wie `useIsMobile`) ist dasselbe Popup ein
+Bottom-Sheet: `.calendar-day-sheet` in `app/globals.css` setzt `inset: auto 0 0 0`
+und `translate: none`, weil die Basisklassen von `DialogContent` das Popup sonst
+mit `-translate-x-1/2 -translate-y-1/2` zentrieren und ein Sheet, das nur den
+Anker überschreibt, zur Hälfte außerhalb des Bildschirms landet. Darüber ist es
+der zentrierte Dialog mit 420 Pixeln Breite; die Höhe folgt dem Inhalt bis zur
+Kappungsgrenze des Popups, nicht einer festen Zahl — ein Tag mit zwei Terminen
+ist ein kleines Sheet, ein Tag mit dreißig scrollt.
 
 ### Der Bildschirm entscheidet über die Spaltenbreite
 
@@ -1093,8 +1126,9 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 | `app/globals.css` | Die Theme-Variablen — und dort auch `--violet`, die fünfte Preset-Farbe, in beiden Themes. |
 | `hooks/useCalendar.ts` | Laden, Schreiben und die Verbindung zum SSE-Strom. |
 | `components/CalendarView.tsx` | Die Oberfläche. |
-| `components/calendar/calendar-model.ts` | Die Rechenlogik der Anzeige: wo ein Termin sitzt, wie lang er ist, wie er verschoben wird. |
+| `components/calendar/calendar-model.ts` | Die Rechenlogik der Anzeige: wo ein Termin sitzt, wie lang er ist, wie er verschoben wird — und welche Termine zu einem Tag gehören (`eventsForDay`). |
 | `components/calendar/CalendarEventDialog.tsx` | Der Dialog zum Anlegen und Bearbeiten eines Termins. |
+| `components/calendar/DayEventsSheet.tsx` | Die Tagesübersicht: Datum, Zahl der Termine, jeder Termin des Tages, der Knopf „Termin hinzufügen" und der Fokus-Rückweg zur Tageszelle. Unter 640 Pixeln ein Bottom-Sheet. |
 | `components/calendar/CalendarImport.tsx` | Die Oberfläche des Imports: Dateiauswahl, Größenprüfung vor dem Request, die Vorschau, der Import-Knopf und der Fehler im Dialog. |
 | `components/calendar/useCalendarText.ts` | Die Texte des Kalenders — immer aus dem deutschen Sprachpaket. |
 | `lib/i18n/messages/de.ts` | Das deutsche Sprachpaket, vollständig — und als einziges Paket mit den `calendar.*`-Schlüsseln. |
@@ -1114,10 +1148,10 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 | `lib/calendar-ics.test.mjs` | Der ICS-Parser: gefaltete Zeilen, die Texte, die drei Zeitumrechnungen, die Dauer, die Regeln (Täglich, Wöchentlich, Monatlich, `INTERVAL`, `COUNT`, `UNTIL`), die Ausschlussliste `EXDATE`, die unbegrenzte und die unbekannte Regel, die Zähler für Alarm und Teilnehmer, die kaputte Datei — und die neun verworfenen Formate: jede von ihnen wird von ihrer eigenen Datei ausgelöst und von keiner anderen, eine Datei mit allen neun trägt genau die neun Zähler. Ebenso der Import-Deckel von 2000 Terminen mit der Meldung, dass der Import abgeschnitten wurde, und der Deckel von 1000 Terminen je Ereignis. |
 | `app/api/calendar/calendar-routes.test.mjs` | Zugriff, Anlegen, Ändern, Löschen, Filter, Farben, Mandantengrenze. |
 | `app/api/calendar/import/route.test.mjs` | Der Import: Zugriff, die Grenzen (2 MB, kein Kalender), die Vorschau ohne Schreibvorgang, das Schreiben in die Datei, die Duplikate, der Bericht. |
-| `components/calendar/calendar-model.test.mjs` | Die Rechenlogik der Anzeige: Raster, Mitternacht, Verschieben. |
+| `components/calendar/calendar-model.test.mjs` | Die Rechenlogik der Anzeige: Raster, Mitternacht, Verschieben, und die Termine eines Tages (`eventsForDay`): Ganztag vor Uhrzeit, fremder Tag aus, mehrtägig an jedem Tag. |
 | `components/calendar/calendar-event-dialog.test.mjs` | Vorbelegung von Beginn und Ende, das Ende folgt dem Beginn um 60 Minuten — auch wenn die Beginnzeit sich danach ändert —, die zweistufige Löschbestätigung **im Dialog** (ohne `window.confirm`), die den Namen des Termins nennt, das Abbrechen stellt den Zustand wieder her, der Fehler im Dialog, die fünf Presets und der eigene Farbcode. |
 | `components/calendar/calendar-import.test.mjs` | Der Import der Oberfläche: der erste Request liest nur und schreibt nichts, „Importieren" schickt `apply: true`, eine zu große Datei erzeugt keinen Request, der Serverfehler steht **im Dialog**, der Statuscode nennt die deutsche Überschrift, eine Datei ohne Termine wird als solche gemeldet, und die Zahl steht im richtigen Numerus. Der Block „Diese Angaben wurden nicht übernommen" erscheint **nur**, wenn ein Zähler über null liegt, und die Vorschau nennt alle neun verworfenen Formate mit ihrem deutschen Namen statt eines Rohschlüssels. Ebenso die Grenze von 4000 Zeichen für Notiz und Ort, mit der Warnung in der Vorschau. |
-| `components/calendar/calendar-view.test.mjs` | Die verdrahtete Ansicht: Ziehen im Monats- und im Wochenraster, und der Servertext erscheint nicht unübersetzt. |
+| `components/calendar/calendar-view.test.mjs` | Die verdrahtete Ansicht: Ziehen im Monats- und im Wochenraster, ein Klick auf einen Tag öffnet überall die Tagesübersicht (auch leer), der Tagesknopf trägt Datum und Zahl der Termine in seinem Namen, der Knopf „Termin hinzufügen" legt am Tag der Übersicht an, die Übersicht gibt den Fokus an die Zelle zurück, und der Servertext erscheint nicht unübersetzt. |
 | `components/calendar/calendar-sse.test.mjs` | Der SSE-Strom: die Änderung erreicht einen Listener, für den der Client sich tatsächlich registriert. |
 | `hooks/useCalendar.test.mjs` | Der Generationszähler des Hooks: die jüngere Antwort gewinnt, auch wenn die ältere später eintrifft, eine ältere Antwort wird verworfen, keine der Anfragen wird abgebrochen, ein veralteter Fehler meldet nichts, und beim Abbau wird die laufende Anfrage abgebrochen. |
 | `lib/i18n/locale-parity.test.mjs` | Die Vollständigkeit des deutschen Pakets und die `calendar.*`-Ausnahme. |

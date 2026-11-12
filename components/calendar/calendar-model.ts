@@ -91,6 +91,22 @@ export function eventSpansDay(event: CalendarEvent, day: string): boolean {
 }
 
 /**
+ * Die Termine eines Tages in der Reihenfolge, in der jede Tagesansicht sie
+ * zeigt: Ganztagestermine zuerst, dann nach Beginn.
+ *
+ * Die Reihenfolge entsteht aus dem Stringvergleich von `start`: ein
+ * Ganztagestermin traegt `2026-03-14`, ein Termin mit Uhrzeit
+ * `2026-03-14T15:00`, und das kuerzere Datum ist das kleinere. Genau diese
+ * Sortierung benutzten Monatszelle und Tagesliste vorher je einmal — hier
+ * steht sie einmal, damit beide nicht auseinanderlaufen.
+ */
+export function eventsForDay(events: CalendarEvent[], day: string): CalendarEvent[] {
+  return events
+    .filter((event) => eventSpansDay(event, day))
+    .sort((left, right) => (left.start < right.start ? -1 : left.start > right.start ? 1 : 0));
+}
+
+/**
  * Der Teil eines Termins mit Uhrzeit, der auf einem Tag liegt.
  *
  * Ein Termin ueber Mitternacht gehoert zu zwei Tagen: der erste Teil endet um

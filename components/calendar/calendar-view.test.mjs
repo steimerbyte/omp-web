@@ -130,6 +130,24 @@ win.HTMLElement.prototype.attachEvent = function attachEvent(type, handler) {
 win.HTMLElement.prototype.detachEvent = function detachEvent(type, handler) {
   this.removeEventListener(type.replace(/^on/, ""), handler);
 };
+
+// linkedom kennt keinen Fokus: `focus()` ist ein Nop, `document.activeElement`
+// bleibt leer. Der Test prueft aber, dass die Tagesuebersicht den Fokus an die
+// Zelle zurueckgibt — also merkt sich der Harness das zuletzt fokussierte
+// Element, so wie ein Browser es taete. Radix' Fokusfalle ruft `focus()`
+// waehrend des Oeffnens; genau deshalb ist der letzte Aufruf nach dem
+// Schliessen die Aussage.
+let focusedElement = null;
+Object.defineProperty(win.document, "activeElement", {
+  configurable: true,
+  get: () => focusedElement,
+});
+// `this` ist hier das Element: der Stub ersetzt die Browser-Methode, und eine
+// Pfeilfunktion kennt ihren Empfaenger nicht.
+win.HTMLElement.prototype.focus = function focus() {
+  // eslint-disable-next-line @typescript-eslint/no-this-alias
+  focusedElement = this;
+};
 win.matchMedia = () => ({
   matches: false,
   media: "",
@@ -192,7 +210,7 @@ const { deLocale } = await jiti.import("@/lib/i18n/messages/de.ts");
 const deMessages = deLocale.messages;
 // Das Raster und die Monatsrechnung der Ansicht — der Test baut sie nicht
 // nach, er benutzt sie.
-const { buildMonthGrid } = await jiti.import("@/lib/calendar.ts");
+const { buildMonthGrid, formatGermanLongDate } = await jiti.import("@/lib/calendar.ts");
 const { shiftMonth, todayDateString } = await jiti.import("../calendar/calendar-model.ts");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
@@ -220,8 +238,19 @@ const inputWith = (label) => win.document.querySelector(`input[aria-label="${lab
 /** Das Datum eines Termintags in der Schreibweise des Dialogs: `TT.MM.JJJJ`. */
 const formatDay = (date) => `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}`;
 
-/** Die offene Terminliste. */
-const sheet = () => win.document.querySelector('[role="dialog"]');
+/** Die offene Tagesuebersicht. */
+const sheet = () => win.document.querySelector("[data-cal-day-sheet]");
+
+/** Der Knopf in der Zelle, der die Tagesuebersicht oeffnet. */
+const dayButton = (cell) => cell.querySelector("[data-cal-open-day]");
+
+/** Die Uebersicht eines Tages oeffnen — wie ein Klick auf die Zelle. */
+async function openDay(cell) {
+  await act(async () => {
+    dayButton(cell).click();
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+}
 
 /** Der Chip (der ziehbare Termin) mit dem gegebenen Titel. */
 const chipWith = (title) =>
@@ -429,7 +458,7 @@ async function withMobile(run) {
   }
 }
 
-test("schmal: ein Klick auf einen Tag oeffnet erst die Terminliste", async () => {
+test("schmal: ein Klick auf einen Tag oeffnet die Tagesuebersicht", async () => {
   await withMobile(async () => {
     const { root } = await mount();
 
@@ -438,20 +467,18 @@ test("schmal: ein Klick auf einen Tag oeffnet erst die Terminliste", async () =>
     const cell = chip.closest("[data-cal-cell]");
     assert.ok(cell, "die Tageszelle wurde nicht gefunden");
 
-    await act(async () => {
-      cell.dispatchEvent(new win.Event("click", { bubbles: true }));
-    });
-    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    await openDay(cell);
 
-    // Der Termin-Dialog ist **nicht** aufgegangen: erst kommt die Liste.
+    // Der Termin-Dialog ist **nicht** aufgegangen: erst kommt die Uebersicht.
     assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
+    assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
     assert.ok(
-      win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
-      "die Terminliste wurde nicht geoeffnet",
+      sheet().textContent.includes(deMessages["calendar.eventCountMany"].replace("{count}", "2")),
+      "die Tagesuebersicht nennt nicht beide Termine",
     );
 
     // Die Liste nennt beide Termine des Tages und ihre Uhrzeit.
-    const rows = [...win.document.querySelectorAll("button")].filter(
+    const rows = [...sheet().querySelectorAll("button")].filter(
       (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
     );
     assert.equal(rows.length, 2, "die Liste zeigt nicht alle Termine des Tages");
@@ -470,7 +497,7 @@ test("schmal: ein Klick auf einen Tag oeffnet erst die Terminliste", async () =>
   });
 });
 
-test("breit: passen alle Termine in die Zelle, legt der Klick direkt an", async () => {
+test("breit: ein Klick auf einen Tag oeffnet die Uebersicht statt direkt anzulegen", async () => {
   const { root } = await mount();
 
   const chip = chipWith("Teammeeting");
@@ -478,21 +505,16 @@ test("breit: passen alle Termine in die Zelle, legt der Klick direkt an", async 
   const cell = chip.closest("[data-cal-cell]");
   assert.ok(cell, "die Tageszelle wurde nicht gefunden");
 
-  await act(async () => {
-    cell.dispatchEvent(new win.Event("click", { bubbles: true }));
-  });
-  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+  // Auf dem Desktop gibt es keinen zweiten Weg: der Klick auf die Zelle
+  // oeffnet die Uebersicht, auch wenn alle Termine sichtbar sind.
+  await openDay(cell);
 
-  // Keine Liste, kein Zwischenschritt: auf dem Desktop ist der Klick auf die
-  // Tagesflaeche das Anlegen, solange die Zelle nichts verschluckt.
-  assert.equal(
-    win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
-    false,
-    "auf dem Desktop wurde die Terminliste geoeffnet, obwohl alle Termine sichtbar sind",
+  assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
+  assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging direkt auf");
+  const rows = [...sheet().querySelectorAll("button")].filter(
+    (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
   );
-  const title = byId("calendar-title");
-  assert.ok(title, "der Termin-Dialog ging nicht auf");
-  assert.equal(title.value, "", "der Dialog ist nicht leer");
+  assert.equal(rows.length, 2, "die Uebersicht zeigt nicht alle Termine des Tages");
 
   await act(async () => { root.unmount(); });
 });
@@ -514,27 +536,23 @@ test("breit mit verdeckten Terminen: der Klick auf den Tag oeffnet die Liste", a
   try {
     const { root } = await mount();
 
-    const more = [...win.document.querySelectorAll("button")]
-      .find((button) => /^\d+ weitere$/.test(button.textContent.trim()));
+    // Der Hinweis ist kein Knopf mehr — er ist ein Hinweis auf die Uebersicht,
+    // die der Klick auf die Zelle oeffnet.
+    const more = [...win.document.querySelectorAll("[data-cal-cell] *")]
+      .find((element) => element.children.length === 0 && /^\d+ weitere$/.test(element.textContent.trim()));
     assert.ok(more, "der Hinweis „N weitere\" wurde nicht gerendert");
     // Zwei Termine, Platz fuer einen: die Zelle verschluckt einen davon.
     assert.equal(more.textContent.trim(), "2 weitere", "der Hinweis nennt nicht beide verdeckten Termine");
     const cell = more.closest("[data-cal-cell]");
     assert.ok(cell, "die Tageszelle wurde nicht gefunden");
 
-    await act(async () => {
-      cell.dispatchEvent(new win.Event("click", { bubbles: true }));
-    });
-    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    await openDay(cell);
 
     assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
-    assert.ok(
-      win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
-      "die Terminliste wurde nicht geoeffnet",
-    );
+    assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
     // Der verdeckte Termin steht in der Liste — vorher war er nur ueber den
     // Wechsel in die Tagesansicht erreichbar.
-    const rows = [...win.document.querySelectorAll("button")].filter(
+    const rows = [...sheet().querySelectorAll("button")].filter(
       (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
     );
     assert.equal(rows.length, 2, "die Liste zeigt nicht alle Termine des Tages");
@@ -547,7 +565,7 @@ test("breit mit verdeckten Terminen: der Klick auf den Tag oeffnet die Liste", a
   }
 });
 
-test("schmal: ein leerer Tag legt direkt an, statt die Liste zu oeffnen", async () => {
+test("schmal: ein leerer Tag oeffnet die Uebersicht mit ihrem Leer-Text", async () => {
   await withMobile(async () => {
     const { root } = await mount();
 
@@ -555,42 +573,48 @@ test("schmal: ein leerer Tag legt direkt an, statt die Liste zu oeffnen", async 
       .find((cell) => !cell.querySelector("[data-cal-chip]"));
     assert.ok(empty, "es gibt keine leere Tageszelle im Raster");
 
-    await act(async () => {
-      empty.dispatchEvent(new win.Event("click", { bubbles: true }));
-    });
-    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    await openDay(empty);
 
-    // Eine Liste ohne Eintraege waere ein Zwischenschritt ohne Auswahl: dort
-    // gibt es nichts zu waehlen, also legt der Klick direkt an.
-    assert.equal(
-      win.document.body.textContent.includes(deMessages["calendar.selectEvent"]),
-      false,
-      "auf dem schmalen Bildschirm wurde fuer einen leeren Tag die Liste geoeffnet",
+    // Auch ein leerer Tag hat jetzt eine Uebersicht: sie nennt die Leere und
+    // traegt den Knopf, der den Termin anlegt. Ein Klick, der je nach
+    // Bildschirmbreite etwas anderes tut, war die alte Regel.
+    assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
+    assert.ok(
+      sheet().textContent.includes(deMessages["calendar.emptyDay"]),
+      "die Uebersicht nennt die Leere des Tages nicht",
     );
-    const title = byId("calendar-title");
-    assert.ok(title, "der Termin-Dialog ging nicht auf");
-    assert.equal(title.value, "", "der Dialog ist nicht leer");
+    assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging direkt auf");
 
     await act(async () => { root.unmount(); });
   });
 });
 
-test("ein Klick auf einen leeren Tag legt weiterhin direkt einen Termin an", async () => {
+test("ein Klick auf einen leeren Tag oeffnet die Uebersicht, und ihr Knopf legt den Termin an", async () => {
   const { root } = await mount();
 
   // Die Zelle ohne Chip — dort gibt es nichts auszuwaehlen.
   const empty = [...win.document.querySelectorAll("[data-cal-cell]")]
     .find((cell) => !cell.querySelector("[data-cal-chip]"));
   assert.ok(empty, "es gibt keine leere Tageszelle im Raster");
+  const emptyDay = empty.getAttribute("data-cal-date");
 
-  await act(async () => {
-    empty.dispatchEvent(new win.Event("click", { bubbles: true }));
-  });
+  await openDay(empty);
+
+  // Der fette Knopf im Fuss — nicht der in der Kalender-Kopfzeile, der den
+  // Termin am gewaehlten Tag des Kalenders anlegt.
+  const create = [...sheet().querySelectorAll("button")]
+    .find((button) => button.textContent.trim() === deMessages["calendar.addEvent"]);
+  assert.ok(create, "der Knopf „Termin hinzufügen\" fehlt in der Uebersicht");
+  assert.equal(create.style.minHeight, "48px", "der Knopf ist keine 48 Pixel hoch");
+  assert.ok(create.style.flex.length > 0 || create.style.width.length > 0, "der Knopf waechst nicht");
+
+  await act(async () => { create.click(); });
   await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 
   const title = byId("calendar-title");
-  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.ok(title, "der Termin-Dialog ging aus der Uebersicht nicht auf");
   assert.equal(title.value, "", "der Dialog ist nicht leer");
+  assert.equal(byId("calendar-start-date").value, formatDay(emptyDay), "der neue Termin steht nicht am Tag der Uebersicht");
   // Ein neuer Termin bringt seine Uhrzeit selbst mit: 09:00 bis 10:00.
   assert.equal(
     win.document.querySelector(`input[aria-label="Beginn (Uhrzeit)"]`)?.value,
@@ -788,19 +812,22 @@ test("die Wochenansicht markiert den heutigen Tag in der Kopfzeile, nicht in der
   const row = marked[0].parentElement;
   assert.equal(row.style.position, "sticky", "die Markierung sitzt nicht in der stehenden Datumszeile");
   assert.ok(row.style.gridTemplateColumns.includes("repeat(7,"), "die Datumszeile hat keine sieben Tagesspalten");
-  assert.equal(marked[0].firstElementChild.textContent, `${today.getDate()}.`, "die markierte Kopfzelle zeigt nicht den heutigen Tag");
+  assert.equal(marked[0].getAttribute("data-cal-dayhead"), "true", "die Markierung sitzt nicht in einer Kopfzelle");
+  // Der erste Kindknoten ist der Knopf, der die Tagesuebersicht oeffnet; die
+  // Tageszahl steht im Text der Zelle.
+  assert.ok(marked[0].textContent.startsWith(`${today.getDate()}.`), "die markierte Kopfzelle zeigt nicht den heutigen Tag");
 
   await act(async () => { root.unmount(); });
 });
 
 // ------------------------- Uhrzeit im Dialog, aus jeder Ansicht heraus --
 
-test("Monatsansicht: der Klick auf einen Termin-Chip fuellt die Uhrzeit des Termins", async () => {
-  // Der urspruenglich gemeldete Mangel: ein Termin, der aus der Monatsansicht
-  // geoeffnet wird, hatte keine Zeitfelder — weil der Monatskontext keine
-  // Uhrzeit mitbringt (`preset.time === null`) und der Dialog daraus
-  // "Ganztagestermin" ableitete. Hier steht der Nachweis, dass der Klick auf
-  // den *Chip* die Zeiten des Termins zeigt, nicht die einer Slot-Vorbelegung.
+test("Monatsansicht: der Klick auf einen Termin-Chip oeffnet die Tagesuebersicht, nicht den Termin", async () => {
+  // Der Chip ist bei mehreren Terminen auf einem Tag ein kleines Ziel: wer
+  // den Nachbarn trifft, landete frueher im falschen Termin-Dialog. Jeder
+  // Klick in den Tag oeffnet deshalb die Uebersicht; der Chip ist dort nur
+  // einer von mehreren Eintraegen. Dass die *Zeiten* des gewaehlten Termins
+  // im Dialog stehen, prueft der zweite Schritt — jetzt ueber die Liste.
   const { root } = await mount();
 
   const chip = chipWith("Teammeeting");
@@ -809,8 +836,21 @@ test("Monatsansicht: der Klick auf einen Termin-Chip fuellt die Uhrzeit des Term
   await act(async () => { chip.dispatchEvent(new win.Event("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 
+  // Die Uebersicht ist aufgegangen, der Termin-Dialog nicht.
+  assert.ok(sheet(), "der Klick auf den Chip hat die Tagesuebersicht nicht geoeffnet");
+  assert.equal(byId("calendar-title"), null, "der Klick auf den Chip ging direkt in den Termin-Dialog");
+  const rows = [...sheet().querySelectorAll("button")].filter(
+    (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
+  );
+  assert.equal(rows.length, 2, "die Uebersicht zeigt nicht alle Termine des Tages");
+
+  // Und erst die Zeile fuehrt in den Dialog — mit den Zeiten des Termins.
+  const meeting = rows.find((row) => row.textContent.includes("Teammeeting"));
+  await act(async () => { meeting.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
   const title = byId("calendar-title");
-  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.ok(title, "der Termin-Dialog ging aus der Uebersicht nicht auf");
   assert.equal(title.value, "Teammeeting", "der Dialog hat einen anderen Termin geladen");
   assert.equal(byId("calendar-start-date").value, formatDay(EVENT_DAY), "das Startdatum fehlt");
   assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Beginnzeit des Termins fehlt");
@@ -821,10 +861,11 @@ test("Monatsansicht: der Klick auf einen Termin-Chip fuellt die Uhrzeit des Term
   await act(async () => { root.unmount(); });
 });
 
-test("Wochenansicht: der Klick auf einen Termin im Zeitraster fuellt die Uhrzeit", async () => {
-  // Dieselbe Zusage fuer das Zeitraster: dort kommt der Termin aus einem
-  // absolut positionierten Block, nicht aus einem Chip. Der Block traegt
-  // seine Uhrzeit im `title` — darueber wird er gefunden.
+test("Wochenansicht: der Klick auf einen Terminblock oeffnet die Tagesuebersicht, nicht den Termin", async () => {
+  // Im Zeitraster ist der Block ein duennes Ziel, und der Nachbarblock liegt
+  // direkt daneben. Der Klick oeffnet deshalb die Uebersicht des Tages, auf
+  // dem der Block liegt — gewaehlt wird in der Liste. Der Block traegt seine
+  // Uhrzeit im `title`; darueber wird er gefunden.
   const { root } = await mount();
 
   await act(async () => { buttonWith("Woche").click(); });
@@ -837,8 +878,19 @@ test("Wochenansicht: der Klick auf einen Termin im Zeitraster fuellt die Uhrzeit
   await act(async () => { block.dispatchEvent(new win.Event("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
 
+  assert.ok(sheet(), "der Klick auf den Terminblock hat die Tagesuebersicht nicht geoeffnet");
+  assert.equal(byId("calendar-title"), null, "der Klick auf den Block ging direkt in den Termin-Dialog");
+  const rows = [...sheet().querySelectorAll("button")].filter(
+    (button) => button.textContent.includes("Teammeeting") || button.textContent.includes("Urlaub"),
+  );
+  assert.equal(rows.length, 2, "die Uebersicht zeigt nicht alle Termine des Tages");
+
+  const meeting = rows.find((row) => row.textContent.includes("Teammeeting"));
+  await act(async () => { meeting.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
   const title = byId("calendar-title");
-  assert.ok(title, "der Termin-Dialog ging nicht auf");
+  assert.ok(title, "der Termin-Dialog ging aus der Uebersicht nicht auf");
   assert.equal(title.value, "Teammeeting", "der Dialog hat einen anderen Termin geladen");
   assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Beginnzeit des Termins fehlt");
   assert.equal(inputWith("Ende (Uhrzeit)").value, "16:30", "die Endzeit des Termins fehlt");
@@ -847,16 +899,15 @@ test("Wochenansicht: der Klick auf einen Termin im Zeitraster fuellt die Uhrzeit
   await act(async () => { root.unmount(); });
 });
 
-// ------------------------- die Terminliste als Zwischenschritt --
+// ------------------------- die Tagesuebersicht als Zwischenschritt --
 
-test("Terminliste: die gewaehlte Zeile oeffnet ihren Termin, nicht den ersten", async () => {
+test("Tagesuebersicht: die gewaehlte Zeile oeffnet ihren Termin, nicht den ersten", async () => {
   await withMobile(async () => {
     const { root } = await mount();
 
     const chip = chipWith("Teammeeting");
     const cell = chip.closest("[data-cal-cell]");
-    await act(async () => { cell.dispatchEvent(new win.Event("click", { bubbles: true })); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    await openDay(cell);
 
     const rows = [...win.document.querySelectorAll("button")]
       .filter((button) => /Urlaub|Teammeeting/.test(button.textContent));
@@ -877,20 +928,19 @@ test("Terminliste: die gewaehlte Zeile oeffnet ihren Termin, nicht den ersten", 
   });
 });
 
-test("Terminliste: „Neuer Termin\" oeffnet einen leeren Dialog am Tag der Liste", async () => {
+test("Tagesuebersicht: „Termin hinzufügen“ oeffnet einen leeren Dialog am Tag der Uebersicht", async () => {
   await withMobile(async () => {
     const { root } = await mount();
 
     const chip = chipWith("Teammeeting");
     const cell = chip.closest("[data-cal-cell]");
-    await act(async () => { cell.dispatchEvent(new win.Event("click", { bubbles: true })); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    await openDay(cell);
 
-    // Der Knopf im Fuss der Liste — nicht der in der Kalender-Kopfzeile, der
-    // den Termin am gewaehlten Tag des Kalenders anlegt.
+    // Der Knopf im Fuss der Uebersicht — nicht der in der Kalender-Kopfzeile,
+    // der den Termin am gewaehlten Tag des Kalenders anlegt.
     const create = [...sheet().querySelectorAll("button")]
-      .find((button) => button.textContent.trim() === deMessages["calendar.newEvent"]);
-    assert.ok(create, "der Knopf „Neuer Termin\" fehlt in der Liste");
+      .find((button) => button.textContent.trim() === deMessages["calendar.addEvent"]);
+    assert.ok(create, "der Knopf „Termin hinzufügen\" fehlt in der Uebersicht");
 
     await act(async () => { create.click(); });
     await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
@@ -908,7 +958,7 @@ test("Terminliste: „Neuer Termin\" oeffnet einen leeren Dialog am Tag der List
   });
 });
 
-test("Terminliste: zwoelf Termine stehen vollstaendig im DOM und die Liste scrollt", async () => {
+test("Tagesuebersicht: zwoelf Termine stehen vollstaendig im DOM und die Liste scrollt", async () => {
   // Ein Tag mit mehr Terminen, als auf einen Bildschirm passen: die Liste darf
   // keinen davon verschlucken und muss selbst scrollen, statt den Dialog auf
   // die volle Hoehe wachsen zu lassen.
@@ -931,8 +981,7 @@ test("Terminliste: zwoelf Termine stehen vollstaendig im DOM und die Liste scrol
       const chip = chipWith("Termin 1");
       assert.ok(chip, "der erste Termin wurde nicht gerendert");
       const cell = chip.closest("[data-cal-cell]");
-      await act(async () => { cell.dispatchEvent(new win.Event("click", { bubbles: true })); });
-      await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+      await openDay(cell);
 
       const rows = [...sheet().querySelectorAll("button")]
         .filter((button) => /^Termin \d+/.test(button.textContent.trim()));
@@ -948,6 +997,87 @@ test("Terminliste: zwoelf Termine stehen vollstaendig im DOM und die Liste scrol
   } finally {
     serverEvents = EVENTS;
   }
+});
+
+// ------------------------- die Tageszelle als Knopf --
+
+test("die Tageszelle ist ein Knopf, dessen Name Datum und Zahl der Termine nennt", async () => {
+  const { root } = await mount();
+
+  const chip = chipWith("Teammeeting");
+  assert.ok(chip, "der Termin-Chip wurde nicht gerendert");
+  const button = dayButton(chip.closest("[data-cal-cell]"));
+  assert.ok(button, "die Tageszelle hat keinen Knopf");
+  assert.equal(button.tagName, "BUTTON", "die Tageszelle ist kein Knopf");
+  assert.equal(button.getAttribute("type"), "button", "der Knopf hat keinen Typ");
+  assert.equal(
+    button.getAttribute("aria-label"),
+    `${formatGermanLongDate(EVENT_DAY)}, ${deMessages["calendar.eventCountMany"].replace("{count}", "2")}`,
+    "der Name des Tagesknopfs nennt nicht Datum und Zahl der Termine",
+  );
+
+  // Ein leerer Tag sagt das ebenfalls — in der Einzahl, wenn nur ein Termin da ist.
+  const empty = [...win.document.querySelectorAll("[data-cal-cell]")]
+    .find((cell) => !cell.querySelector("[data-cal-chip]"));
+  assert.ok(empty, "es gibt keine leere Tageszelle im Raster");
+  assert.match(
+    dayButton(empty).getAttribute("aria-label"),
+    new RegExp(`, ${deMessages["calendar.noEvents"]}$`),
+    "der Name des leeren Tages nennt die Leere nicht",
+  );
+
+  await act(async () => { root.unmount(); });
+});
+
+test("die Uebersicht gibt den Fokus an die Tageszelle zurueck", async () => {
+  const { root } = await mount();
+
+  const button = dayButton(chipWith("Teammeeting").closest("[data-cal-cell]"));
+  button.focus();
+  // Erst der Beweis, dass der Harness Fokus kennt — sonst pruefen die beiden
+  // assert.equal unten nur zwei `undefined`.
+  assert.equal(win.document.activeElement, button, "der Harness kennt keinen Fokus");
+
+  await openDay(button.closest("[data-cal-cell]"));
+  assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
+
+  const close = [...sheet().querySelectorAll("button")]
+    .find((element) => element.textContent.trim() === deMessages["calendar.close"]);
+  assert.ok(close, "der Schliessen-Knopf fehlt in der Uebersicht");
+  await act(async () => { close.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  assert.equal(sheet(), null, "die Uebersicht ist nicht geschlossen");
+  assert.equal(win.document.activeElement, button, "der Fokus kehrt nicht zur Tageszelle zurueck");
+
+  await act(async () => { root.unmount(); });
+});
+
+test("Wochenansicht: die Kopfzelle eines Tages oeffnet dieselbe Tagesuebersicht", async () => {
+  const { root } = await mount();
+
+  await act(async () => { buttonWith(deMessages["calendar.week"]).click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  const head = win.document.querySelector(`[data-cal-dayhead][data-cal-date="${EVENT_DAY}"]`);
+  assert.ok(head, "die Kopfzelle des Tages fehlt in der Wochenansicht");
+  const button = dayButton(head);
+  assert.ok(button, "die Kopfzelle hat keinen Knopf");
+  assert.match(
+    button.getAttribute("aria-label"),
+    new RegExp(`, ${deMessages["calendar.eventCountMany"].replace("{count}", "2")}$`),
+    "der Name der Kopfzelle nennt nicht beide Termine",
+  );
+
+  await act(async () => { button.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+  assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
+  const rows = [...sheet().querySelectorAll("button")]
+    .filter((element) => /Urlaub|Teammeeting/.test(element.textContent));
+  assert.equal(rows.length, 2, "die Uebersicht zeigt nicht beide Termine");
+
+  await act(async () => { root.unmount(); });
 });
 
 // ------------------------- die Kapazitaetsrechnung der Monatszelle --

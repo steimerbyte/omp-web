@@ -21,6 +21,7 @@ import {
   MINUTES_PER_DAY,
   eventSegmentForDay,
   eventSpansDay,
+  eventsForDay,
   moveEventToDay,
   moveEventToSlot,
   shiftMonth,
@@ -149,13 +150,20 @@ export function CalendarView() {
   const [anchor, setAnchor] = useState<string>(todayDateString);
   const [editing, setEditing] = useState<EditingState | null>(null);
   /**
-   * Der Tag, dessen Terminliste gerade offen ist — oder `null`.
+   * Der Tag, dessen Tagesuebersicht gerade offen ist — oder `null`.
    *
-   * Die Liste ist der Zwischenschritt zwischen Monatszelle und Dialog: ein
-   * Tag mit mehr Terminen, als in die Zelle passen, laesst sich sonst nicht
-   * auswaehlen.
+   * Ein Klick auf einen Tag oeffnet sie immer, in jeder Ansicht und auf jeder
+   * Breite: Datum, jeder Termin, und darunter der Knopf zum Anlegen.
    */
   const [dayList, setDayList] = useState<string | null>(null);
+  /**
+   * Die Tageszelle, die die Uebersicht geoeffnet hat.
+   *
+   * Nach dem Schliessen geht der Fokus dorthin zurueck. Beim Wechsel in den
+   * Termin-Dialog wird der Ref vorher geleert: sonst zoege das schliessende
+   * Sheet den Fokus aus dem gerade geoeffneten Dialog.
+   */
+  const dayListTrigger = useRef<HTMLElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -230,8 +238,11 @@ export function CalendarView() {
     setEditing({ event, preset: { date: event.start.slice(0, 10), time: null } });
   }, []);
 
-  /** Oeffnet die Terminliste eines Tages — der Zwischenschritt zum Dialog. */
-  const openDayList = useCallback((date: string) => setDayList(date), []);
+  /** Oeffnet die Tagesuebersicht eines Tages — aus einer Zelle heraus. */
+  const openDayList = useCallback((date: string, trigger: HTMLElement | null) => {
+    dayListTrigger.current = trigger;
+    setDayList(date);
+  }, []);
 
   /** Speichert den Termin aus dem Dialog. */
   const handleSave = useCallback(async (input: CalendarEventInput, id: string | null) => {
@@ -577,8 +588,6 @@ export function CalendarView() {
           events={allEvents}
           holidays={holidays}
           compact={isMobile}
-          onCreate={openCreate}
-          onEdit={openEdit}
           onMove={moveEvent}
           onOpenDay={openDayList}
         />
@@ -589,27 +598,29 @@ export function CalendarView() {
           holidays={holidays}
           compact={isMobile}
           onCreate={openCreate}
-          onEdit={openEdit}
           onMove={moveEvent}
+          onOpenDay={openDayList}
         />
       )}
 
       {dayList ? (
         <DayEventsSheet
           date={dayList}
-          // Alle Termine des Tages, nach Beginn sortiert — dieselbe Reihenfolge
-          // wie im Raster.
-          events={allEvents
-            .filter((event) => eventSpansDay(event, dayList))
-            .sort((left, right) => (left.start < right.start ? -1 : left.start > right.start ? 1 : 0))}
+          // Alle Termine des Tages, Ganztags zuerst, dann nach Beginn —
+          // dieselbe Reihenfolge wie im Raster.
+          events={eventsForDay(allEvents, dayList)}
+          returnFocus={dayListTrigger}
           onSelect={(event) => {
             // Erst die Liste schliessen, dann den Dialog oeffnen: der Dialog
             // ist modal, und zwei modale Ebenen uebereinander faengt der
-            // Fokus falsch ein.
+            // Fokus falsch ein. Der Ref wird geleert, damit das schliessende
+            // Sheet dem Dialog nicht den Fokus entzieht.
+            dayListTrigger.current = null;
             setDayList(null);
             openEdit(event);
           }}
           onCreate={(date) => {
+            dayListTrigger.current = null;
             setDayList(null);
             openCreate(date, null);
           }}
@@ -760,8 +771,6 @@ function MonthGrid({
   events,
   holidays,
   compact,
-  onCreate,
-  onEdit,
   onMove,
   onOpenDay,
 }: {
@@ -771,11 +780,9 @@ function MonthGrid({
   holidays: Map<string, string>;
   /** Schmaler Bildschirm: alle sieben Spalten in der Panelbreite. */
   compact: boolean;
-  onCreate: (date: string, time: string | null) => void;
-  onEdit: (event: CalendarEvent) => void;
   onMove: (event: CalendarEvent, target: MoveTarget) => void;
-  /** Oeffnet die Terminliste eines Tages. */
-  onOpenDay: (date: string) => void;
+  /** Oeffnet die Tagesuebersicht; `trigger` ist die angeklickte Zelle. */
+  onOpenDay: (date: string, trigger: HTMLElement | null) => void;
 }) {
   const t = useCalendarText();
   const month = anchor.slice(0, 7);
@@ -863,12 +870,6 @@ function MonthGrid({
     return () => observer.disconnect();
   }, [eventCount]);
 
-  /** Die Termine eines Tages, nach Beginn sortiert. */
-  const eventsOf = (date: string) =>
-    events
-      .filter((event) => eventSpansDay(event, date))
-      .sort((left, right) => (left.start < right.start ? -1 : left.start > right.start ? 1 : 0));
-
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       {/*
@@ -951,7 +952,7 @@ function MonthGrid({
             }}
           >
         {days.map((date) => {
-          const dayEvents = eventsOf(date);
+          const dayEvents = eventsForDay(events, date);
           const outside = date.slice(0, 7) !== month;
           const weekend = weekdayIndex(date) >= 5;
           const holiday = holidays.get(date);
@@ -977,32 +978,26 @@ function MonthGrid({
           );
           const shownEvents = dayEvents.slice(0, visibleEvents.shown);
           const hiddenCount = dayEvents.length - visibleEvents.shown;
+          const dayLabel = dayEvents.length === 0
+            ? t("calendar.noEvents")
+            : t(dayEvents.length === 1 ? "calendar.eventCountOne" : "calendar.eventCountMany", { count: dayEvents.length });
 
           return (
             <div
               key={date}
               data-cal-cell="true"
+              data-cal-date={date}
               data-cal-today={isToday ? "true" : undefined}
               data-cal-weekend={weekend ? "true" : undefined}
-              onClick={() => {
-                // Die Liste oeffnet nur, wenn es etwas zu waehlen gibt — und
-                // dann aus einem der beiden Gruende:
-                //
-                // 1. `compact` — auf einem Handy ist die Zelle das Ziel, nicht
-                //    der Chip: 51 Pixel breit und 17 Pixel hoch trifft kein
-                //    Finger, und ein Direktklick (`onCreate`) wuerde dort
-                //    staendig einen Termin anlegen wollen, statt den gemeinten
-                //    zu oeffnen.
-                // 2. `hiddenCount > 0` — auf dem Desktop gibt es das Problem
-                //    nicht, solange alle Termine in die Zelle passen; dann ist
-                //    der Klick auf die Flaeche das Anlegen. Erst wenn die
-                //    Zelle Termine verschluckt („N weitere"), ist die Liste
-                //    der einzige Weg zu ihnen.
-                //
-                // Ein leerer Tag legt in beiden Faellen direkt an: eine Liste
-                // ohne Eintraege waere ein Zwischenschritt ohne Auswahl.
-                if (dayEvents.length > 0 && (compact || hiddenCount > 0)) onOpenDay(date);
-                else onCreate(date, null);
+              // Der Klick haengt an der Zelle, nicht am Knopf darueber: der
+              // Knopf liegt flach unter dem Inhalt, und ein Treffer auf einem
+              // Termin-Chip muss dieselbe Uebersicht oeffnen wie ein Treffer
+              // daneben. Bei vielen Terminen ist der Chip ein kleines Ziel —
+              // wer ihn verfehlt, landete sonst im falschen Termin-Dialog.
+              // Gewaehlt wird erst in der Uebersicht. Die Tastatur geht
+              // weiterhin ueber den Knopf: sein Klick blubbert hierher.
+              onClick={(clickEvent) => {
+                onOpenDay(date, clickEvent.currentTarget.querySelector<HTMLElement>("[data-cal-open-day]"));
               }}
               onDragEnter={(event) => {
                 // `dragenter` ist das Ereignis, das Chromium beim *Betreten*
@@ -1047,6 +1042,26 @@ function MonthGrid({
                 cursor: "pointer",
               }}
             >
+              {/* Der Tag selbst ist ein Knopf: er liegt flach unter allem
+                  anderen. Nativ statt `role="button"` auf der Zelle, weil
+                  Aktivierung per Enter/Leertaste und die Fokusbarkeit damit
+                  mitkommen; sein Klick blubbert in den Zell-Handler oben.
+                  Die Zelle behaelt ihre Zieh-Handler; `drop` blubbert vom
+                  Knopf hierher. */}
+              <button
+                type="button"
+                data-cal-open-day="true"
+                aria-label={`${formatGermanLongDate(date)}, ${dayLabel}`}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  zIndex: 0,
+                  padding: 0,
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                }}
+              />
               {/* Die Tageszeile ist ein *Geschwister* des Chips, nicht sein
                   Vorfahr. Sie darf den Zug deshalb nicht auffangen — sonst
                   waere ueber der Tageszahl kein Fall moeglich. */}
@@ -1086,10 +1101,6 @@ function MonthGrid({
                 <EventChip
                   key={`${event.id}-${date}`}
                   event={event}
-                  onClick={(clickEvent) => {
-                    clickEvent.stopPropagation();
-                    onEdit(event);
-                  }}
                   onDragStart={(dragEvent) => {
                     dragEvent.dataTransfer.setData("text/plain", event.id);
                     dragEvent.dataTransfer.effectAllowed = "move";
@@ -1098,41 +1109,33 @@ function MonthGrid({
               ))}
 
               {/* Die Termine, die nicht mehr passen, werden nicht
-                  verschwiegen: der Hinweis nennt ihre Zahl und oeffnet
-                  dieselbe Liste wie ein Klick auf den Tag. */}
+                  verschwiegen: der Hinweis nennt ihre Zahl. Er ist kein
+                  eigener Knopf mehr — ein Klick auf die Zelle oeffnet
+                  ohnehin die Uebersicht, und ein zweites Ziel in derselben
+                  Zelle waere ein zweiter Tab-Stopp ohne eigene Wirkung. */}
               {hiddenCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={(clickEvent) => {
-                    clickEvent.stopPropagation();
-                    onOpenDay(date);
-                  }}
+                <div
                   title={t("calendar.more", { count: hiddenCount })}
                   style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
+                    position: "relative",
+                    zIndex: 1,
+                    pointerEvents: "none",
                     marginTop: 2,
                     padding: compact ? "2px 2px" : "0 5px",
-                    border: "none",
-                    borderRadius: 4,
-                    background: "none",
                     color: "var(--text-muted)",
                     fontSize: 10,
                     lineHeight: 1.4,
-                    fontFamily: "inherit",
-                    cursor: "pointer",
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                   }}
                 >
                   {t("calendar.more", { count: hiddenCount })}
-                </button>
+                </div>
               ) : null}
 
               {dayEvents.length === 0 && !holiday && isToday ? (
-                <div style={{ fontSize: 10, color: "var(--text-dim)" }}>
+                <div style={{ position: "relative", zIndex: 1, pointerEvents: "none", fontSize: 10, color: "var(--text-dim)" }}>
                   {t("calendar.noEvents")}
                 </div>
               ) : null}
@@ -1190,8 +1193,8 @@ function TimeGrid({
   holidays,
   compact,
   onCreate,
-  onEdit,
   onMove,
+  onOpenDay,
 }: {
   days: string[];
   events: CalendarEvent[];
@@ -1199,8 +1202,9 @@ function TimeGrid({
   /** Schmaler Bildschirm: alle Spalten in der Panelbreite, ohne Scrollen. */
   compact: boolean;
   onCreate: (date: string, time: string | null) => void;
-  onEdit: (event: CalendarEvent) => void;
   onMove: (event: CalendarEvent, target: MoveTarget) => void;
+  /** Oeffnet die Tagesuebersicht: aus der Kopfzelle und aus einem Terminblock eines Tages. */
+  onOpenDay: (date: string, trigger: HTMLElement | null) => void;
 }) {
   const t = useCalendarText();
   /** Der heutige Tag — die Kopfzelle, die der Schein markiert. */
@@ -1284,31 +1288,57 @@ function TimeGrid({
             <div />
             {days.map((date) => {
               const weekend = weekdayIndex(date) >= 5;
+              const dayCount = events.filter((event) => eventSpansDay(event, date)).length;
+              const dayLabel = dayCount === 0
+                ? t("calendar.noEvents")
+                : t(dayCount === 1 ? "calendar.eventCountOne" : "calendar.eventCountMany", { count: dayCount });
               return (
                 <div
                   key={date}
+                  data-cal-dayhead="true"
+                  data-cal-date={date}
                   data-cal-today={date === todayDate ? "true" : undefined}
                   data-cal-weekend={weekend ? "true" : undefined}
+                  onClick={(clickEvent) => {
+                    onOpenDay(date, clickEvent.currentTarget.querySelector<HTMLElement>("[data-cal-open-day]"));
+                  }}
                   style={{
+                    position: "relative",
                     padding: compact ? "3px 2px" : "4px 6px",
                     borderRight: "1px solid var(--border)",
                     background: weekend ? WEEKEND_BG : "none",
                   }}
                 >
-                  <div style={{ fontSize: 11, fontWeight: 600, color: weekend ? "var(--accent)" : "var(--text-muted)" }}>
+                  {/* Dieselbe Tagesuebersicht wie in der Monatszelle: die
+                      Kopfzelle ist in dieser Ansicht der Tag, und der Klick
+                      haengt aus demselben Grund an ihr statt am Knopf — auch
+                      ein Ganztags-Chip oeffnet die Uebersicht. Der
+                      Stundenklick darunter legt weiterhin direkt an — dort
+                      zielt der Nutzer auf eine Stunde, nicht auf einen Tag. */}
+                  <button
+                    type="button"
+                    data-cal-open-day="true"
+                    aria-label={`${formatGermanLongDate(date)}, ${dayLabel}`}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      zIndex: 0,
+                      padding: 0,
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                    }}
+                  />
+                  <div style={{ position: "relative", zIndex: 1, pointerEvents: "none", fontSize: 11, fontWeight: 600, color: weekend ? "var(--accent)" : "var(--text-muted)" }}>
                     {Number(date.slice(8, 10))}.
                   </div>
                   {holidays.get(date) ? (
-                    <div style={{ fontSize: 10, color: "var(--danger)" }}>{holidays.get(date)}</div>
+                    <div style={{ position: "relative", zIndex: 1, pointerEvents: "none", fontSize: 10, color: "var(--danger)" }}>{holidays.get(date)}</div>
                   ) : null}
                   {allDayOf(date).map((event) => (
                     <EventChip
                       key={event.id}
                       event={event}
-                      onClick={(clickEvent) => {
-                        clickEvent.stopPropagation();
-                        onEdit(event);
-                      }}
                       onDragStart={(dragEvent) => {
                         dragEvent.dataTransfer.setData("text/plain", event.id);
                       }}
@@ -1400,9 +1430,13 @@ function TimeGrid({
                     dragEvent.dataTransfer.setData("text/plain", event.id);
                     dragEvent.dataTransfer.effectAllowed = "move";
                   }}
-                  onClick={(clickEvent) => {
-                    clickEvent.stopPropagation();
-                    onEdit(event);
+                  // Der Block oeffnet die Uebersicht seines Tages, nicht den
+                  // Termin: ein kurzer Termin ist im Raster ein duennes Ziel,
+                  // und der Nachbarblock liegt daneben. Der Fokus kehrt an
+                  // den Tageskopf zurueck — derselbe Weg wie aus der
+                  // Monatszelle.
+                  onClick={() => {
+                    onOpenDay(date, document.querySelector<HTMLElement>(`[data-cal-dayhead][data-cal-date="${date}"] [data-cal-open-day]`));
                   }}
                   title={`${event.title} · ${event.start.slice(11)}–${event.end.slice(11)}`}
                   style={{
@@ -1454,8 +1488,14 @@ function TimeGrid({
  *
  * Der Chip ist der Griff zum Ziehen. `draggable` auf dem Chip und nicht auf
  * der ganzen Zelle: der Ziehen-Mauszeiger soll nur ueber dem Termin
- * erscheinen, und ein Klick auf die freie Flaeche der Zelle soll einen
- * *neuen* Termin anlegen, nicht den vorhandenen zu greifen.
+ * erscheinen.
+ *
+ * Einen eigenen Klick hat der Chip nicht: sein Klick blubbert in die Zelle
+ * der Monatsansicht (oder in den Tageskopf der Wochenansicht) und oeffnet
+ * dort die Tagesuebersicht — wie jeder andere Klick in den Tag. Ein Klick auf
+ * einen Chip fuehrte frueher direkt in den Termin-Dialog; bei vielen Terminen
+ * auf einem Tag traf man dabei leicht den Nachbarn. Gewaehlt wird jetzt erst
+ * in der Uebersicht, wo die Zeilen 44 Pixel hoch sind und die Liste scrollt.
  *
  * ### Warum der gezogene Termin im `dataTransfer` reist und nicht im State
  *
@@ -1471,18 +1511,15 @@ function TimeGrid({
  */
 function EventChip({
   event,
-  onClick,
   onDragStart,
 }: {
   event: CalendarEvent;
-  onClick: (event: React.MouseEvent) => void;
   onDragStart: (event: React.DragEvent) => void;
 }) {
   return (
     <div
       draggable
       data-cal-chip="true"
-      onClick={onClick}
       onDragStart={onDragStart}
       title={`${event.title} · ${formatGermanDate(event.start.slice(0, 10))}`}
       style={{

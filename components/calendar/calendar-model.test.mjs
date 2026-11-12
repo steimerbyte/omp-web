@@ -11,6 +11,7 @@ const {
   eventDurationMinutes,
   eventSegmentForDay,
   eventSpansDay,
+  eventsForDay,
   moveEventToDay,
   moveEventToSlot,
   shiftMonth,
@@ -178,4 +179,39 @@ test("moving an all-day event to a slot turns it into a timed event", () => {
   assert.equal(moved.start, "2026-03-16T09:00");
   assert.equal(moved.end, "2026-03-16T10:00");
   assert.equal(moved.allDay, false);
+});
+
+// --- Die Tagesuebersicht ---------------------------------------------------------------
+
+test("the overview of a day holds every event that touches it, sorted by its start", () => {
+  const events = [
+    timed({ id: "late", start: "2026-03-14T17:00", end: "2026-03-14T18:00" }),
+    allDay({ id: "holiday", start: "2026-03-14", end: "2026-03-14" }),
+    timed({ id: "early", start: "2026-03-14T09:00", end: "2026-03-14T09:30" }),
+    timed({ id: "other-day", start: "2026-03-15T09:00", end: "2026-03-15T09:30" }),
+    // Ueber Mitternacht: gehoert zu beiden Tagen, steht an beiden mit seinem
+    // eigenen Beginn — hier also vor dem 09:00-Termin und sogar vor dem
+    // Ganztagestermin, weil sein Datum das fruehere ist.
+    timed({ id: "overnight", start: "2026-03-13T23:00", end: "2026-03-14T01:00" }),
+  ];
+  // „Ganztags zuerst" ist keine eigene Regel: ein Ganztagestermin traegt
+  // `2026-03-14`, ein Termin mit Uhrzeit `2026-03-14T15:00`, und das kuerzere
+  // Datum ist das kleinere.
+  assert.deepEqual(
+    eventsForDay(events, "2026-03-14").map((event) => event.id),
+    ["overnight", "holiday", "early", "late"],
+    "die Tagesuebersicht sortiert nicht nach Beginn",
+  );
+  assert.deepEqual(eventsForDay(events, "2026-03-15").map((event) => event.id), ["other-day"]);
+  assert.deepEqual(eventsForDay(events, "2026-03-16"), []);
+});
+
+test("a multi-day event appears on every day it spans", () => {
+  const trip = allDay({ id: "trip", start: "2026-03-14", end: "2026-03-16" });
+  assert.deepEqual(
+    ["2026-03-13", "2026-03-14", "2026-03-15", "2026-03-16", "2026-03-17"].flatMap((day) =>
+      eventsForDay([trip], day).map(() => day),
+    ),
+    ["2026-03-14", "2026-03-15", "2026-03-16"],
+  );
 });
