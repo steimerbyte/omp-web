@@ -3,7 +3,8 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
-## Unreleased
+## v0.26.0
+Released 2026-11-12.
 
 - **Ein Klick auf einen Kalendertag öffnet die Tagesübersicht, überall.** Die
   Monatszelle und die Kopfzelle der Wochen-/Tagesansicht öffnen bei *jedem*
