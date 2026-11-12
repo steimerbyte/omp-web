@@ -129,6 +129,7 @@ app/api/
 
 lib/
   agent-client.ts      typed fetch helper for /api/agent commands
+  auto-name-result.ts  typed outcome of POST /api/sessions/[id]/auto-name (a skip is not an error)
   chat-collapse.ts     the collapse rule for old transcript output (pure)
   draft-store.ts       local draft persistence helpers
   file-access.ts       allowed file roots for /api/files and worktrees
@@ -324,6 +325,24 @@ chronological compaction point** — after the kept messages, before the
 post-compaction turns. It is not the LLM context, where the summary comes first.
 `entryIds` is a parallel array to `messages` and is walked locally because omp's
 `buildSessionContext` does not return entry ids.
+
+### Chat titles come from the button, and the source must survive a low-signal opener
+The auto-name button is the only title generator (web sessions pass no
+`autoTitle`). `lib/session-title.ts` takes the first operator turn whose text
+passes omp's `isLowSignalTitleInput`, else the compaction summary, else the raw
+first user turn — omp returns `null` for a low-signal source and a web session
+never sends the next user message its retry waits for, so when the opener yields
+nothing the module retries once with the SDK's own
+`buildReplanTitleContext(messages)`; measured on the prod host, that recovered 18
+of 19 sessions the tiny model and the session's own model had both declined
+(2026-11-12). Every source is capped at 2000 characters: a full 15 749 B summary
+produced `null`/`"<chat>"`, its head a title in ~200 ms (measured 2026-11-12).
+`setSessionName` refuses `"auto"` once the user renamed the session, so the
+button writes `"user"` and the route reports that refusal as 409. A title answer
+that is markup (`<chat>`, `<title/>`) or a sentinel is a decline, because omp's
+parser counts markup as a successful title and would otherwise never reach its
+fallback model (5 of 109 real sessions on the prod host answered `<chat>`,
+measured 2026-11-12).
 
 ### Old chat output collapses to one line
 

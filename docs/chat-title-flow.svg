@@ -1,0 +1,166 @@
+<svg viewBox="0 0 980 1300" width="980" height="1300" xmlns="http://www.w3.org/2000/svg"
+     font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" role="img" aria-labelledby="t d">
+  <title id="t">Informationsfluss zum Chat-Titelmodell</title>
+  <desc id="d">Vom Auto-name-Button über die Quellenwahl und omp's Titelmodell-Kette bis zum Schreiben in die Session-Datei, mit Ablehnungs- und Wiederholungspfad.</desc>
+  <style>
+    svg {
+      --ink: var(--text, #1a1d23);
+      --ink-muted: var(--text-muted, #6c6c6c);
+      --line: var(--border, #d8dbe0);
+      --good: var(--success, #1f8b4c);
+      --warn: var(--warning, #9a7326);
+      --bad: var(--danger, #aa5555);
+      --sdk: var(--violet, #6b4d9e);
+    }
+    @media (prefers-color-scheme: dark) {
+      svg {
+        --ink: var(--text, #e8ecf4);
+        --ink-muted: var(--text-muted, #9ca3b0);
+        --line: var(--border, #2a3038);
+        --good: var(--success, #00ff88);
+        --warn: var(--warning, #ffb347);
+        --bad: var(--danger, #ff4757);
+        --sdk: var(--violet, #9b6fd8);
+      }
+    }
+  </style>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-muted)"/>
+    </marker>
+  </defs>
+
+  <!-- main column: trigger, source -->
+  <rect x="60" y="24" width="600" height="58" rx="8" fill="none" stroke="var(--line)" stroke-width="1.2"/>
+  <text x="74" y="45" font-size="14" font-weight="600" fill="var(--ink)">Auto-name-Button (Sidebar)</text>
+  <text x="74" y="63" font-size="12.5" fill="var(--ink-muted)">POST /api/sessions/:id/auto-name</text>
+
+  <rect x="60" y="102" width="600" height="76" rx="8" fill="none" stroke="var(--line)" stroke-width="1.2"/>
+  <text x="74" y="123" font-size="14" font-weight="600" fill="var(--ink)">Zugriff + Session</text>
+  <text x="74" y="141" font-size="12.5" fill="var(--ink-muted)">requireSessionAccess → fremde Session: 403/404</text>
+  <text x="74" y="158" font-size="12.5" fill="var(--ink-muted)">getRpcSession oder startRpcSession + waitUntilReady</text>
+
+  <rect x="60" y="198" width="600" height="58" rx="8" fill="none" stroke="var(--line)" stroke-width="1.2"/>
+  <text x="74" y="219" font-size="14" font-weight="600" fill="var(--ink)">buildSessionContext()</text>
+  <text x="74" y="237" font-size="12.5" fill="var(--ink-muted)">messages des aktiven Branches</text>
+
+  <rect x="60" y="276" width="600" height="112" rx="8" fill="none" stroke="var(--line)" stroke-width="1.2"/>
+  <text x="74" y="297" font-size="14" font-weight="600" fill="var(--ink)">findFirstTitleSource — erste greifende Regel</text>
+  <text x="74" y="315" font-size="12.5" fill="var(--ink-muted)">1. erster Operator-Turn mit Signal (attribution ≠ agent)</text>
+  <text x="74" y="332" font-size="12.5" fill="var(--ink-muted)">2. sonst die erste Compaction-Summary</text>
+  <text x="74" y="349" font-size="12.5" fill="var(--ink-muted)">3. sonst roher erster User-Turn — omp darf ablehnen</text>
+  <text x="74" y="366" font-size="12.5" fill="var(--ink-muted)">jede Quelle auf 2000 Zeichen gekürzt</text>
+
+  <!-- decision: low signal -->
+  <rect x="60" y="408" width="600" height="58" rx="8" fill="none" stroke="var(--warn)" stroke-width="1.2"/>
+  <text x="74" y="429" font-size="14" font-weight="600" fill="var(--ink)">omp: isLowSignalTitleInput?</text>
+  <text x="74" y="447" font-size="12.5" fill="var(--ink-muted)">Gruß · Ack · nackte Zahl → null, ohne Modellaufruf</text>
+
+  <!-- omp internals -->
+  <rect x="60" y="486" width="600" height="76" rx="8" fill="none" stroke="var(--sdk)" stroke-width="1.2"/>
+  <text x="74" y="507" font-size="14" font-weight="600" fill="var(--ink)">omp: getTitleModels</text>
+  <text x="74" y="525" font-size="12.5" fill="var(--ink-muted)">tiny → commit → smol Rollen</text>
+  <text x="74" y="542" font-size="12.5" fill="var(--ink-muted)">+ Sitzungsmodell und dessen Fallback-Kette</text>
+
+  <rect x="60" y="582" width="600" height="76" rx="8" fill="none" stroke="var(--sdk)" stroke-width="1.2"/>
+  <text x="74" y="603" font-size="14" font-weight="600" fill="var(--ink)">formatTitleUserMessage</text>
+  <text x="74" y="621" font-size="12.5" fill="var(--ink-muted)">Code · XML · ANSI raus, mittig auf 2000 gekürzt</text>
+  <text x="74" y="638" font-size="12.5" fill="var(--ink-muted)">&lt;chat&gt;-Envelope läuft unverändert durch</text>
+
+  <rect x="60" y="678" width="600" height="76" rx="8" fill="none" stroke="var(--sdk)" stroke-width="1.2"/>
+  <text x="74" y="699" font-size="14" font-weight="600" fill="var(--ink)">completeSimple — ein Modell nach dem anderen</text>
+  <text x="74" y="717" font-size="12.5" fill="var(--ink-muted)">System: Titel-Prompt + &lt;title&gt;-Marker · maxTokens 1024</text>
+  <text x="74" y="734" font-size="12.5" fill="var(--ink-muted)">temperature 0 · disableReasoning</text>
+
+  <rect x="60" y="774" width="600" height="76" rx="8" fill="none" stroke="var(--sdk)" stroke-width="1.2"/>
+  <text x="74" y="795" font-size="14" font-weight="600" fill="var(--ink)">extractGeneratedTitle</text>
+  <text x="74" y="813" font-size="12.5" fill="var(--ink-muted)">sichtbarer &lt;title&gt;…&lt;/title&gt;,</text>
+  <text x="74" y="830" font-size="12.5" fill="var(--ink-muted)">sonst der rohe Antworttext</text>
+
+  <rect x="60" y="870" width="600" height="94" rx="8" fill="none" stroke="var(--sdk)" stroke-width="1.2"/>
+  <text x="74" y="891" font-size="14" font-weight="600" fill="var(--ink)">normalizeGeneratedTitle</text>
+  <text x="74" y="909" font-size="12.5" fill="var(--ink-muted)">erste Zeile · ≤ 80 Zeichen · ≤ 12 Wörter</text>
+  <text x="74" y="926" font-size="12.5" fill="var(--ink-muted)">&lt;title/&gt;, "none", 0 Wörter → null</text>
+  <text x="74" y="943" font-size="12.5" fill="var(--ink-muted)">Casing gegen die Quelle abgeglichen</text>
+
+  <!-- omp-web guard + write -->
+  <rect x="60" y="984" width="600" height="58" rx="8" fill="none" stroke="var(--warn)" stroke-width="1.2"/>
+  <text x="74" y="1005" font-size="14" font-weight="600" fill="var(--ink)">omp-web: isUsableSessionTitle?</text>
+  <text x="74" y="1023" font-size="12.5" fill="var(--ink-muted)">Markup · Sentinel · kein Buchstabe/Zahl → null</text>
+
+  <rect x="60" y="1062" width="600" height="58" rx="8" fill="none" stroke="var(--good)" stroke-width="1.2"/>
+  <text x="74" y="1083" font-size="14" font-weight="600" fill="var(--ink)">setSessionName(title, "user")</text>
+  <text x="74" y="1101" font-size="12.5" fill="var(--ink-muted)">false, wenn der Titel schon von Hand gesetzt ist</text>
+
+  <rect x="60" y="1140" width="600" height="58" rx="8" fill="none" stroke="var(--good)" stroke-width="1.2"/>
+  <text x="74" y="1161" font-size="14" font-weight="600" fill="var(--ink)">invalidateSessionListCache() → { title }</text>
+  <text x="74" y="1179" font-size="12.5" fill="var(--ink-muted)">Client: success, Sidebar lädt neu</text>
+
+  <rect x="60" y="1218" width="360" height="58" rx="8" fill="none" stroke="var(--bad)" stroke-width="1.2"/>
+  <text x="74" y="1239" font-size="14" font-weight="600" fill="var(--ink)">409 — Titel nicht geschrieben</text>
+  <text x="74" y="1257" font-size="12.5" fill="var(--ink-muted)">von Hand umbenannt oder Session weg</text>
+
+  <!-- decline lane -->
+  <rect x="690" y="408" width="250" height="58" rx="8" fill="none" stroke="var(--ink-muted)" stroke-width="1.2"/>
+  <text x="704" y="429" font-size="14" font-weight="600" fill="var(--ink)">null</text>
+  <text x="704" y="447" font-size="12.5" fill="var(--ink-muted)">entschieden oder Kette erschöpft</text>
+
+  <rect x="690" y="486" width="250" height="76" rx="8" fill="none" stroke="var(--ink-muted)" stroke-width="1.2"/>
+  <text x="704" y="507" font-size="14" font-weight="600" fill="var(--ink)">replanTitleSource()</text>
+  <text x="704" y="525" font-size="12.5" fill="var(--ink-muted)">buildReplanTitleContext</text>
+  <text x="704" y="542" font-size="12.5" fill="var(--ink-muted)">&lt;chat&gt; aus den echten Turns</text>
+
+  <rect x="690" y="582" width="250" height="76" rx="8" fill="none" stroke="var(--ink-muted)" stroke-width="1.2"/>
+  <text x="704" y="603" font-size="14" font-weight="600" fill="var(--ink)">omp-Kette erneut</text>
+  <text x="704" y="621" font-size="12.5" fill="var(--ink-muted)">gleiches Sitzungsmodell</text>
+  <text x="704" y="638" font-size="12.5" fill="var(--ink-muted)">Antwort gleich geprüft</text>
+
+  <polygon points="810,668 832,690 810,712 788,690" fill="none" stroke="var(--ink-muted)" stroke-width="1.2"/>
+
+  <rect x="690" y="1150" width="250" height="58" rx="8" fill="none" stroke="var(--ink-muted)" stroke-width="1.2"/>
+  <text x="704" y="1171" font-size="14" font-weight="600" fill="var(--ink)">{ title: null, skipped: true }</text>
+  <text x="704" y="1189" font-size="12.5" fill="var(--ink-muted)">Client: skipped · Tooltip · 5 s</text>
+
+  <!-- main flow edges -->
+  <g fill="none" stroke="var(--ink-muted)" stroke-width="1.5">
+    <path d="M360 82V102" marker-end="url(#arr)"/>
+    <path d="M360 178V198" marker-end="url(#arr)"/>
+    <path d="M360 256V276" marker-end="url(#arr)"/>
+    <path d="M360 388V408" marker-end="url(#arr)"/>
+    <path d="M360 466V486" marker-end="url(#arr)"/>
+    <path d="M360 562V582" marker-end="url(#arr)"/>
+    <path d="M360 658V678" marker-end="url(#arr)"/>
+    <path d="M360 754V774" marker-end="url(#arr)"/>
+    <path d="M360 850V870" marker-end="url(#arr)"/>
+    <path d="M360 964V984" marker-end="url(#arr)"/>
+    <path d="M360 1042V1062" marker-end="url(#arr)"/>
+    <path d="M360 1120V1140" marker-end="url(#arr)"/>
+
+    <!-- model loop -->
+    <path d="M60 917H40V716H60" marker-end="url(#arr)"/>
+
+    <!-- null bus into the decline lane -->
+    <path d="M660 437H676"/>
+    <path d="M660 917H676V437"/>
+    <path d="M660 1013H676V437"/>
+    <path d="M676 437H690" marker-end="url(#arr)"/>
+
+    <!-- decline lane -->
+    <path d="M810 466V486" marker-end="url(#arr)"/>
+    <path d="M810 562V582" marker-end="url(#arr)"/>
+    <path d="M810 658V668" marker-end="url(#arr)"/>
+
+    <!-- retry outcome -->
+    <path d="M788 690H744V1091H660" marker-end="url(#arr)"/>
+    <path d="M810 712V1150" marker-end="url(#arr)"/>
+
+    <!-- write refused -->
+    <path d="M60 1091H40V1247H60" marker-end="url(#arr)"/>
+  </g>
+
+  <text x="754" y="1000" font-size="11.5" fill="var(--ink-muted)">Titel</text>
+  <text x="820" y="950" font-size="11.5" fill="var(--ink-muted)">null</text>
+  <text transform="rotate(-90 50 840)" x="50" y="840" font-size="11.5" fill="var(--ink-muted)">nächstes Modell</text>
+</svg>

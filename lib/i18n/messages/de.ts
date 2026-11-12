@@ -72,6 +72,8 @@ export const deLocale: LocalePlugin = {
     "title.unsaved": "Die Titelgenerierung ist verfügbar, sobald die Session gespeichert wurde",
     "title.noMessages": "Senden Sie eine Nachricht, bevor Sie diese Session benennen",
     "title.generateSession": "Session-Titel generieren",
+    "title.skipped": "Kein Titel",
+    "title.skippedHint": "Kein Titel erzeugt: die erste Nachricht nennt keine Aufgabe, und es gibt keine Zusammenfassung, aus der sich ein Titel ziehen lässt.",
     "system.prompt": "System-Prompt",
     "system.empty": "System-Prompt ist leer (Tools sind deaktiviert)",
     "system.load": "Senden Sie eine Nachricht, um den System-Prompt zu laden",

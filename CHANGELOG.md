@@ -5,6 +5,18 @@ upstream line — see the Provenance section in the README.
 
 ## Unreleased
 
+- **Der Titel-Knopf benennt eine Session jetzt auch dann, wenn die erste
+  Nachricht nur „hi" war.** Die Titelquelle ist die erste Äußerung mit Signal,
+  sonst die Kompaktierungs-Zusammenfassung, sonst die rohe erste Nachricht; die
+  Zusammenfassung wird auf 2000 Zeichen gekürzt (eine 15 749 B lange lieferte
+  `null`/`"<chat>"`, ihr Kopf einen Titel in ~200 ms). Ein bewusstes „kein
+  Titel" zeigt der Knopf neutral statt als roten Fehler, und ein Schreibversuch
+  nach einer manuellen Umbenennung meldet 409 statt stumm 200. Markup-Antworten
+  (`<chat>`) werden abgelehnt, statt als Session-Name geschrieben zu werden; ein
+  abgelehnter Opener bekommt einen zweiten Versuch mit dem Replan-Kontext
+  (`buildReplanTitleContext`), der 18 von 19 sonst namenlosen Sessions einen
+  Titel gab (gemessen 2026-11-12).
+
 - **Der heutige Tag im Kalender trägt einen Rahmen statt eines drehenden
   Scheins.** Der Conic-Verlauf füllte die ganze Zelle; seine Drehung wanderte
   als Keil unter Tageszahl und Terminen hindurch und las sich als Bewegung der

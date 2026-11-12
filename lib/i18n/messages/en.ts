@@ -72,6 +72,8 @@ export const enLocale: LocalePlugin = {
     "title.unsaved": "Title generation is available after the session is saved",
     "title.noMessages": "Send a message before naming this session",
     "title.generateSession": "Generate a session title",
+    "title.skipped": "No title",
+    "title.skippedHint": "No title generated: the first message names no task, and there is no summary to name the chat from.",
     "system.prompt": "System prompt",
     "system.empty": "System prompt is empty (tools are disabled)",
     "system.load": "Send a message to load the system prompt",

@@ -52,7 +52,16 @@ export async function POST(
       return NextResponse.json({ title: null, skipped: true });
     }
 
-    await session.inner.sessionManager.setSessionName(result.title, "auto");
+    // The button is an explicit action like `/rename`, so it writes with source
+    // "user": omp refuses an "auto" write after a manual rename, and that
+    // refusal used to be ignored (HTTP 200 with the title untouched).
+    const named = await session.inner.sessionManager.setSessionName(result.title, "user");
+    if (!named) {
+      return NextResponse.json(
+        { error: "The session's title could not be written. It was renamed by hand or the session was closed." },
+        { status: 409 },
+      );
+    }
     invalidateSessionListCache();
     return NextResponse.json({ title: result.title });
   } catch (error) {

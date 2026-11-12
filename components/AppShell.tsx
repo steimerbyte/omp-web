@@ -39,6 +39,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useAudio } from "@/hooks/useAudio";
+import { interpretAutoNameResponse } from "@/lib/auto-name-result";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
@@ -76,6 +77,7 @@ type AutoNameStatus =
   | { kind: "idle" }
   | { kind: "naming" }
   | { kind: "success" }
+  | { kind: "skipped" }
   | { kind: "error"; message: string };
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
@@ -946,18 +948,23 @@ export function AppShell() {
       const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-name`, {
         method: "POST",
       });
-      const body = (await response.json().catch(() => ({}))) as { title?: string; error?: string };
-      if (!response.ok || !body.title) {
-        throw new Error(body.error || `HTTP ${response.status}`);
+      const body: unknown = await response.json().catch(() => ({}));
+      const result = interpretAutoNameResponse(response.ok, response.status, body);
+
+      if (result.kind === "success") {
+        const title = result.title;
+        setRefreshKey((key) => key + 1);
+        if (activeSessionIdRef.current !== sessionId) return;
+        setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
+        setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
+        setAutoNameStatus({ kind: "success" });
+        autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
+        return;
       }
 
-      const title = body.title.trim();
-      setRefreshKey((key) => key + 1);
       if (activeSessionIdRef.current !== sessionId) return;
-      setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
-      setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
-      setAutoNameStatus({ kind: "success" });
-      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
+      setAutoNameStatus(result.kind === "skipped" ? { kind: "skipped" } : { kind: "error", message: result.message });
+      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
     } catch (error) {
       if (activeSessionIdRef.current !== sessionId) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -1645,6 +1652,7 @@ export function AppShell() {
                 );
                 const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
                 const isSuccess = autoNameStatus.kind === "success";
+                const isSkipped = autoNameStatus.kind === "skipped";
                 const isError = autoNameStatus.kind === "error";
                 const label = autoNameStatus.kind === "naming"
                    ? translate("title.generating")
@@ -1652,14 +1660,18 @@ export function AppShell() {
                     ? translate("title.updated")
                     : isError
                       ? translate("title.failed")
-                      : translate("title.generate");
+                      : isSkipped
+                        ? translate("title.skipped")
+                        : translate("title.generate");
                 const title = !selectedSession || selectedSession.transient
                    ? translate("title.unsaved")
                    : !hasMessages
                      ? translate("title.noMessages")
                      : isError
                        ? autoNameStatus.message
-                       : translate("title.generateSession");
+                       : isSkipped
+                         ? translate("title.skippedHint")
+                         : translate("title.generateSession");
 
                 return (
                   <button

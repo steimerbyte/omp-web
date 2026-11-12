@@ -72,6 +72,8 @@ export const zhCNLocale: LocalePlugin = {
     "title.unsaved": "会话保存后才能生成标题",
     "title.noMessages": "请先发送消息，再为会话命名",
     "title.generateSession": "生成会话标题",
+    "title.skipped": "未生成标题",
+    "title.skippedHint": "未生成标题：第一条消息没有说明任务，也没有可用于命名会话的摘要。",
     "system.prompt": "系统提示词",
     "system.empty": "系统提示词为空（工具已禁用）",
     "system.load": "发送消息以加载系统提示词",
