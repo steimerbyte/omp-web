@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ModalBackdrop, ModalPanel } from "@/components/motion/Enter";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Pressable } from "@/components/motion/Pressable";
 import { useI18n } from "@/hooks/useI18n";
 import {
@@ -56,24 +56,23 @@ export function NewProjectDialog({
   const canSubmit = !busy && trimmed !== "" && !invalid;
 
   return (
-    <ModalBackdrop
-      onClick={busy ? undefined : onCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        zIndex: 200,
-      }}
-    >
-      <ModalPanel
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
+    // Von aussen gesteuert; Escape und der Klick daneben melden nur den Wunsch
+    // nach dem Schliessen. Waehrend der Anfrage gibt es keinen.
+    <Dialog open onOpenChange={(next) => { if (!next && !busy) onCancel(); }}>
+      <DialogContent
+        bare
+        showCloseButton={false}
         aria-modal="true"
         aria-label={t("projects.new")}
+        overlayClassName="supports-backdrop-filter:backdrop-blur-none"
+        overlayStyle={{
+          background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          zIndex: 200,
+        }}
         style={{
           width: "100%",
           maxWidth: 430,
@@ -221,8 +220,8 @@ export function NewProjectDialog({
             {busy ? t("projects.create.working") : t("projects.create.submit")}
           </Pressable>
         </div>
-      </ModalPanel>
-    </ModalBackdrop>
+      </DialogContent>
+    </Dialog>
   );
 }
 

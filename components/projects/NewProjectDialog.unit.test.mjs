@@ -42,6 +42,26 @@ const win = dom.window;
 restoreLinkedomPrototypesOnExit(win);
 const fakeNavigator = { userAgent: "test", languages: ["de-DE"], language: "de-DE", platform: "linux" };
 win.getComputedStyle = () => new Proxy({}, { get: (_t, p) => (typeof p === "string" && p.startsWith("get") ? () => "" : "0px") });
+// linkedom hat keinen Fokus: `document.activeElement` ist `undefined` und
+// `focus()` tut nichts. Beides wird ersetzt, sonst ist der Fokus-Rueckweg
+// zum Ausloeser nicht messbar.
+let activeElement = win.document.body;
+Object.defineProperty(win.document, "activeElement", {
+  get: () => (activeElement?.isConnected === false ? win.document.body : activeElement),
+  configurable: true,
+});
+/** Eigener Setter statt `activeElement = this`: `no-this-alias` verbietet das. */
+function setActive(element) {
+  activeElement = element;
+}
+win.HTMLElement.prototype.focus = function focus() {
+  const tag = this.tagName;
+  if (!(tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || tag === "A" || tag === "SELECT") && !this.hasAttribute("tabindex")) return;
+  setActive(this);
+};
+// React baut `onSelect` aus `selectionStart`/`getSelection`; linkedom hat
+// beides nicht. Ohne den Ersatz wirft schon ein `keyup` im Feld.
+win.getSelection = () => ({ anchorNode: null, anchorOffset: 0, focusNode: null, focusOffset: 0 });
 globalThis.window = new Proxy(win, {
   get(target, prop) {
     if (prop === "navigator") return fakeNavigator;
@@ -106,6 +126,15 @@ const PRIORITIES = [
 const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); }); };
 const buttons = () => [...win.document.querySelectorAll("button")];
 const buttonWith = (text) => buttons().find((button) => button.textContent.trim() === text);
+// Radix haengt den Dialog als Portal an `document.body`; der Komponenten-
+// Container enthaelt ihn also nicht mehr.
+const dialog = () => win.document.querySelector('[role="dialog"]');
+const escape = () => Object.assign(new win.Event("keydown", { bubbles: true, cancelable: true }), { key: "Escape", code: "Escape" });
+// `button: 1`: bei der linken Taste wartet Radix auf den folgenden `click` und
+// liest dann das `target` des schon versandten `pointerdown` — linkedom hat es
+// zu dem Zeitpunkt bereits verworfen. Die mittlere Taste nimmt den direkten
+// Weg und prueft dieselbe Absicht.
+const pointerDownOutside = () => Object.assign(new win.Event("pointerdown", { bubbles: true, cancelable: true }), { button: 1, pointerType: "mouse" });
 
 /** Tippt in ein React-Feld: native Setter, dann die Ereignisse, die React liest. */
 async function type(input, value) {
@@ -124,9 +153,9 @@ async function type(input, value) {
 
 async function mount(props) {
   win.document.body.innerHTML = "";
-  const container = win.document.createElement("div");
-  win.document.body.appendChild(container);
-  const root = createRoot(container);
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host);
   await act(async () => {
     root.render(React.createElement(I18nProvider, null, React.createElement(NewProjectDialog, {
       home: "/home/alice",
@@ -138,7 +167,9 @@ async function mount(props) {
     })));
   });
   await flush();
-  return { container, root };
+  // Der Dialog selbst steht als Portal neben `host`; alle Abfragen laufen
+  // deshalb ueber `document.body`.
+  return { container: win.document.body, root };
 }
 
 test("die Regel fuer Ordnernamen: Kebab-case, keine Pfade, keine Fuehrungszeichen", () => {
@@ -237,14 +268,52 @@ test("waehrend des Anlegens ist der Knopf aus und nennt den Zustand", async () =
 
 test("Abbrechen und der Klick daneben schliessen, der Klick im Panel nicht", async () => {
   const calls = [];
-  const { container, root } = await mount({ onCancel: () => calls.push("cancel") });
-  const panel = container.querySelector('[role="dialog"]');
+  const { root } = await mount({ onCancel: () => calls.push("cancel") });
+  const panel = dialog();
   assert.ok(panel);
-  await act(async () => { panel.querySelector("h2").click(); });
+  await act(async () => { panel.querySelector("h2").dispatchEvent(pointerDownOutside()); });
   assert.deepEqual(calls, []);
-  await act(async () => { container.querySelector('[role="dialog"]').parentElement.click(); });
+  await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });
   assert.deepEqual(calls, ["cancel"]);
   await act(async () => { buttonWith(de["common.cancel"]).click(); });
   assert.deepEqual(calls, ["cancel", "cancel"]);
   await act(async () => { root.unmount(); });
+});
+
+test("Escape schliesst den Dialog", async () => {
+  const calls = [];
+  const { root } = await mount({ onCancel: () => calls.push("cancel") });
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  await flush();
+  assert.deepEqual(calls, ["cancel"]);
+  await act(async () => { root.unmount(); });
+});
+
+test("der Fokus steht im Dialog und nach dem Schliessen wieder auf dem Ausloeser", async () => {
+  win.document.body.innerHTML = "";
+  const trigger = win.document.createElement("button");
+  trigger.id = "new-project";
+  trigger.textContent = "new";
+  win.document.body.appendChild(trigger);
+  trigger.focus();
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(I18nProvider, null, React.createElement(NewProjectDialog, {
+      home: "/home/alice",
+      priorities: PRIORITIES,
+      busy: false,
+      onSubmit: () => {},
+      onCancel: () => {},
+    })));
+  });
+  await flush();
+
+  const panel = dialog();
+  assert.ok(panel.contains(win.document.activeElement), `Fokus liegt ausserhalb des Dialogs: ${win.document.activeElement?.tagName}`);
+
+  await act(async () => { root.unmount(); });
+  await flush();
+  assert.equal(win.document.activeElement, trigger, "der Fokus ist nicht zum Ausloeser zurueckgekehrt");
 });
