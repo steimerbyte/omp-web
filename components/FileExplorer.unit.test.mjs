@@ -359,6 +359,31 @@ test("Trefferflaechen der Zeilenwerkzeuge: Chevron, Mention, Vorschau und Downlo
   assert.equal(download.style.minWidth, "24px");
 });
 
+test("Mobil ist die Baumzeile 36 px hoch und der Baum remountet dabei nicht in Schleife", async () => {
+  const originalMatchMedia = win.matchMedia;
+  win.matchMedia = () => ({
+    matches: true, media: "(max-width: 640px)", addEventListener() {}, removeEventListener() {},
+    addListener() {}, removeListener() {}, dispatchEvent() { return false; }, onchange: null,
+  });
+  try {
+    const container = await mount();
+    const row = rowByName("notes.txt");
+    assert.ok(row, "die Zeile fehlt");
+    assert.equal(row.firstElementChild.style.height, "36px", "mobil ist die Zeile 36 px hoch");
+    // Ein instabiler Schluessel wuerde den Baum bei jedem Rendern neu bauen;
+    // dieselbe DOM-Zeile nach mehreren Renders belegt das Gegenteil.
+    await settle(60);
+    assert.equal(rowByName("notes.txt"), row, "der Baum wurde ohne Anlass neu gebaut");
+  } finally {
+    win.matchMedia = originalMatchMedia;
+  }
+
+  // Desktop behaelt die 24 px.
+  const desktop = await mount();
+  assert.equal(rowByName("notes.txt").firstElementChild.style.height, "24px");
+  assert.ok(desktop);
+});
+
 test("Auswahl per Ctrl-Klick, Properties fuer Datei und Ordner, Escape schliesst", async () => {
   const container = await mount();
   const notes = rowByName("notes.txt");

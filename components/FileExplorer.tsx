@@ -32,6 +32,7 @@ import { FileImagePreview } from "./FileImagePreview";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type FileTab } from "./TabBar";
 import { useI18n } from "@/hooks/useI18n";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { ModalBackdrop, ModalPanel, Spin } from "./motion/Enter";
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -1443,8 +1444,14 @@ function ExplorerToolbar({
  * `react-window` ueberhaupt rendert, die Einrueckung muss in der Zeile UND in
  * ihrer Hoehe uebereinstimmen, und die untere Luefte haelt die letzte Zeile
  * vom Rand des Panels weg.
+ *
+ * `TREE_ROW_HEIGHT` ist die Desktop-Dichte; auf Touch-Geraeten gilt
+ * `TREE_ROW_HEIGHT_TOUCH`, weil 24 px kein Daumen-Ziel sind. Welche der beiden
+ * gilt, entscheidet `useIsMobile` an einer Stelle (`ExplorerTree`), die Zeile
+ * liest das Ergebnis aus dem Kontext.
  */
 const TREE_ROW_HEIGHT = 24;
+const TREE_ROW_HEIGHT_TOUCH = 36;
 const TREE_INDENT = 14;
 const TREE_EMPTY_ROW_HEIGHT = 22;
 const TREE_BOTTOM_GAP = 8;
@@ -1510,6 +1517,8 @@ interface ExplorerTreeProps {
  */
 interface TreeRowContext {
   cwd: string;
+  /** Zeilenhoehe in Pixeln: Desktop 24, Touch 36. Arborist braucht feste Werte. */
+  rowHeight: number;
   loadingPaths: Set<string>;
   highlightedPaths: Set<string>;
   gitStatusByPath: Map<string, GitFileStatus>;
@@ -1579,7 +1588,7 @@ function FileTreeLabel({
         alignItems: "center",
         gap: 4,
         paddingRight: 8,
-        height: TREE_ROW_HEIGHT,
+        height: ctx.rowHeight,
         cursor: "pointer",
         userSelect: "none",
       }}
@@ -1648,7 +1657,7 @@ function FileTreeLabel({
         </Spin>
       )}
       {isEmptyOpenFolder(node) && (
-        <div style={{ position: "absolute", left: 8 + node.level * TREE_INDENT, top: TREE_ROW_HEIGHT, height: TREE_EMPTY_ROW_HEIGHT, display: "flex", alignItems: "center", fontSize: 11, color: "var(--text-dim)" }}>
+        <div style={{ position: "absolute", left: 8 + node.level * TREE_INDENT, top: ctx.rowHeight, height: TREE_EMPTY_ROW_HEIGHT, display: "flex", alignItems: "center", fontSize: 11, color: "var(--text-dim)" }}>
           {ctx.t("files.emptyNode")}
         </div>
       )}
@@ -1860,6 +1869,9 @@ function ExplorerTree({
   const wrapRef = useRef<HTMLDivElement>(null);
   const treeRef = useRef<TreeApi<FileNode> | undefined>(undefined);
   const [height, setHeight] = useState(TREE_MIN_HEIGHT);
+  // Ein Wechsel der Dichte baut den Baum ueber `key` neu; der Wert haengt nur
+  // am Breakpoint, also passiert das hoechstens einmal pro Fenstergroesse.
+  const rowHeightPx = useIsMobile() ? TREE_ROW_HEIGHT_TOUCH : TREE_ROW_HEIGHT;
 
   // Zwei Werte, die die Callbacks brauchen, ohne dass sie bei jedem Werten
   // eine neue Funktion erzeugen muessen. Beide werden waehrend des Renderns
@@ -2021,8 +2033,8 @@ function ExplorerTree({
   }, []);
 
   const rowHeight = useCallback((node: NodeApi<FileNode>) => (
-    isEmptyOpenFolder(node) ? TREE_ROW_HEIGHT + TREE_EMPTY_ROW_HEIGHT : TREE_ROW_HEIGHT
-  ), []);
+    isEmptyOpenFolder(node) ? rowHeightPx + TREE_EMPTY_ROW_HEIGHT : rowHeightPx
+  ), [rowHeightPx]);
 
   const accessId = useCallback((node: FileNode) => node.fullPath, []);
 
@@ -2053,6 +2065,7 @@ function ExplorerTree({
    */
   const ctx = useMemo<TreeRowContext>(() => ({
     cwd,
+    rowHeight: rowHeightPx,
     loadingPaths,
     highlightedPaths,
     gitStatusByPath,
@@ -2064,7 +2077,7 @@ function ExplorerTree({
     onOpenImage,
     t,
   }), [
-    cwd, loadingPaths, highlightedPaths, gitStatusByPath, changedDirectoryPaths,
+    cwd, rowHeightPx, loadingPaths, highlightedPaths, gitStatusByPath, changedDirectoryPaths,
     imagePreviewEnabled, handleRowClick, handleRowContextMenu, onAtMention, onOpenImage, t,
   ]);
 
@@ -2127,7 +2140,10 @@ function ExplorerTree({
   return (
     <div ref={wrapRef} style={{ position: "relative", height }}>
       <Tree<FileNode>
-        key={resetKey}
+        // Arborist liest die Zeilenhoehe beim Aufbau; ein Dichte-Wechsel
+        // braucht deshalb einen frischen Baum. Beide Werte im Schluessel sind
+        // stabil, der Remount passiert also nur beim Breakpoint-Wechsel.
+        key={`${resetKey}:${rowHeightPx}`}
         ref={treeRef}
         data={data}
         idAccessor={accessId}
