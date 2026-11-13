@@ -145,19 +145,22 @@ function assertBoundedRow(rowValue, context) {
 }
 
 test("the settings window binds its grid row to the window height", () => {
-  const body = ruleBody(css, ".window");
-
-  assert.match(body, /display:\s*grid/,
+  assert.match(ruleBody(css, ".window"), /display:\s*grid/,
     ".window muss ein Grid-Container sein — ohne grid entfällt die Zeile ganz.");
 
+  // The rail is the settings panel's own layout, not the window shell's: the
+  // accounts confirm dialog wears `.window` alone and must not inherit a
+  // navigation column. Its text used to wrap into that 82 px track.
+  const body = ruleBody(css, ".withRail");
+
   // The cause, and the only assertion that carries it.
-  assertBoundedRow(declaration(body, "grid-template-rows"), ".window");
+  assertBoundedRow(declaration(body, "grid-template-rows"), ".withRail");
 
   // Two columns, the second taking the rest of the row and allowed to shrink.
   // Deliberately NOT the 238px: that width is design. If someone re-sizes the
   // sidebar, nothing here should fail.
   const columns = declaration(body, "grid-template-columns");
-  assert.ok(columns, ".window braucht grid-template-columns.");
+  assert.ok(columns, ".withRail braucht grid-template-columns.");
   const tracks = columns.split(/\s+(?![^(]*\))/);
   assert.equal(tracks.length, 2,
     `.window erwartet zwei Spalten, gefunden: ${tracks.length} (${columns})`);
@@ -253,10 +256,10 @@ test("the narrow-viewport override cannot widen the row again", () => {
   let mobileWindow = null;
   // `{` gehoert zu den Grenzen: `.window` kann die erste Regel im Block sein,
   // seit der Fix vor `bare`-Fenstern kein eigenes `.backdrop`-Padding mehr setzt.
-  for (const m of block.matchAll(/(?:^|[{},])\s*\.window\s*\{([^}]*)\}/g)) {
+  for (const m of block.matchAll(/(?:^|[{},])\s*\.withRail\s*\{([^}]*)\}/g)) {
     mobileWindow = m[1];  // last wins, as in CSS
   }
-  assert.ok(mobileWindow, ".window wird im Mobile-Block nicht ueberschrieben");
+  assert.ok(mobileWindow, ".withRail wird im Mobile-Block nicht ueberschrieben");
 
   const row = declaration(mobileWindow, "grid-template-rows");
   if (row === undefined) {
@@ -264,7 +267,7 @@ test("the narrow-viewport override cannot widen the row again", () => {
     // state we ship in, and it is correct.
     return;
   }
-  assertBoundedRow(row, ".window @media (max-width: 760px)");
+  assertBoundedRow(row, ".withRail @media (max-width: 760px)");
 });
 /**
  * The panel must leave 2.5 % per side, not touch the screen — and must keep
@@ -278,30 +281,35 @@ test("the narrow-viewport override cannot widen the row again", () => {
  *
  * The cap is the other half of the requirement: the desktop window was
  * 1180 px and is not supposed to grow into 95 % of a 1440 px screen (that is
- * 1368 px — wider, not smaller). A street release of this rule as plain
- * `width: 95%` is the defect the second branch catches.
+ * 1368 px — wider, not smaller). Shipping the rule as plain `width: 95%` is
+ * the defect the second branch catches.
+ *
+ * One class, not two: `.window` is worn by the settings panel and by the
+ * accounts confirm dialog, and both are meant to be the same size. The
+ * `viewportInset` helper that kept the confirm out is gone — a leftover would
+ * be dead code and a second source for the same number.
  *
  * `dvh` and not `vh`: the address bar of a mobile browser reduces the visible
  * height, and the panel has to be sized against what is actually visible.
  * Width stays in `%` and not `vw`, because `vw` counts the scrollbar.
  *
- * jsdom computes no geometry, so the rule is pinned where it lives and the
- * two widths are evaluated against the declaration itself. Both a revert to
- * 100 % and a lost cap fail here.
+ * jsdom computes no geometry, so the declaration is pinned where it lives and
+ * the two widths are evaluated against it. A revert to 100 %, a lost cap, a
+ * re-added helper class or a re-widened mobile block all fail here.
  */
-test("the settings panel leaves 2.5 % per side and keeps its 1180 px cap", () => {
-  const body = ruleBody(css, ".window.viewportInset");
+test("the settings window leaves 2.5 % per side and keeps its 1180 px cap", () => {
+  const body = ruleBody(css, ".window");
 
   const height = declaration(body, "height");
   assert.equal(height, "95dvh",
-    `.window.viewportInset: height muss 95dvh sein — dvh rechnet mit der ` +
-    `sichtbaren Hoehe (Adressleiste), nicht mit der statischen; gefunden: ${height}`);
+    `.window: height muss 95dvh sein — dvh rechnet mit der sichtbaren Hoehe ` +
+    `(Adressleiste), nicht mit der statischen; gefunden: ${height}`);
 
   const width = declaration(body, "width");
   const capped = width?.match(/^min\(\s*(\d+(?:\.\d+)?)px\s*,\s*(\d+(?:\.\d+)?)%\s*\)$/);
   assert.ok(capped,
-    `.window.viewportInset: width muss die Form min(<px>, <%)> haben — nur sie ` +
-    `haelt den Desktop-Deckel und die 95 % mobil in einer Zeile; gefunden: ${width}`);
+    `.window: width muss die Form min(<px>, <%)> haben — nur sie haelt den ` +
+    `Desktop-Deckel und die 95 % mobil in einer Zeile; gefunden: ${width}`);
   const cap = Number(capped[1]);
   const fraction = Number(capped[2]) / 100;
 
@@ -320,9 +328,31 @@ test("the settings panel leaves 2.5 % per side and keeps its 1180 px cap", () =>
     `bei 1440 px muss der Deckel greifen (1180 px); die Regel liefert ${desktop}px — ` +
     `95 % waeren 1368 px, also breiter als das Fenster vorher`);
 
-  // The rule is only worth something when the settings panel wears it.
-  const source = readFileSync(new URL("./SettingsConfig.tsx", import.meta.url), "utf8");
-  assert.match(source, /styles\.window\}\s*\$\{styles\.viewportInset\}/,
-    "SettingsConfig muss dem Fenster beide Klassen geben (`styles.window` und " +
-    "`styles.viewportInset`), sonst bleibt die Regel unbenutzt.");
+  // The one class is the whole story now.
+  assert.ok(!css.includes("viewportInset"),
+    "die Hilfsklasse `viewportInset` gibt es nicht mehr — ihre Aufgabe ist in " +
+    "`.window` aufgegangen, eine Wiederkehr waere eine zweite Quelle fuer dieselbe Zahl");
+  const settingsSource = readFileSync(new URL("./SettingsConfig.tsx", import.meta.url), "utf8");
+  assert.match(settingsSource, /className=\{`\$\{styles\.window\} \$\{styles\.withRail\}`\}/,
+    "SettingsConfig muss dem Fenster `styles.window` und die Navigationsspalte " +
+    "`styles.withRail` geben —");
+  const usersSource = readFileSync(new URL("./UsersConfig.tsx", import.meta.url), "utf8");
+  assert.match(usersSource, /className=\{styles\.window\}/,
+    "UsersConfig muss dem Bestaetigungs-Fenster genau `styles.window` geben — " +
+    "kein `withRail`, sonst umbricht sein Text in der 82-px-Navigationsspalte");
+
+  // The narrow-viewport block must not reintroduce a size of its own: with
+  // equal specificity and a later position it would silently win at ≤ 760 px.
+  const mobileStart = css.indexOf("@media (max-width: 760px)");
+  assert.notEqual(mobileStart, -1, "@media (max-width: 760px) fehlt");
+  let mobileWindow = null;
+  for (const m of css.slice(mobileStart).matchAll(/(?:^|[{},])\s*\.window\s*\{([^}]*)\}/g)) {
+    mobileWindow = m[1];  // last wins, as in CSS
+  }
+  assert.ok(mobileWindow, ".window wird im Mobile-Block nicht mehr angepasst");
+  for (const property of ["width", "height"]) {
+    assert.equal(declaration(mobileWindow, property), undefined,
+      `der 760px-Block darf kein \`${property}\` auf .window setzen — die ` +
+      `95 % der Basisregel wuerden sonst bei gleicher Spezifitaet ueberschrieben`);
+  }
 });

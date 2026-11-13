@@ -6,11 +6,35 @@
 }
 
 .window {
-  width: min(1180px, calc(100vw - 36px));
-  height: min(860px, calc(100dvh - 36px));
+  /* Das Fenster deckt 95 % jeder Achse, also 2,5 % Rand je Seite. Ein Fenster
+     auf 100 % legt seine Bedienelemente an die Kante, wo auf dem Telefon
+     Statusleiste, Gestenrand und Daumen sitzen; 2,5 % je Seite sind der Rand,
+     den der Operator als kleinsten noch treffbaren Abstand vorgibt.
+     `min()` haelt zwei Zweige in einer Zeile: 390px → 370,5px (95 %), 1440px →
+     1180px (Deckel). Der Deckel ist Absicht — ein Fenster ueber 1368 px wird
+     nicht besser lesbar, nur breiter. `dvh` und nicht `vh`, weil die
+     Adressleiste des mobilen Browsers die sichtbare Hoehe verkleinert; Breite
+     in `%` und nicht `vw`, weil `vw` die Bildlaufleiste mitzaehlt (derselbe
+     Grund wie in `CalendarEventDialog`).
+     Das ist die einzige Groesse dieser Art in der Anwendung: `.window` traegt
+     das Einstellungs-Fenster und das Bestaetigungs-Fenster der
+     Kontenverwaltung, und beide sollen gleich gross sein. Die Spalten fuer die
+     Navigation haengen deshalb NICHT hier, sondern in `.withRail` — sonst
+     erbte die Konten-Rueckfrage ein Raster, in dessen erster Spalte (82px
+     mobil) ihr gesamter Text auf einen Buchstaben pro Zeile umbricht. */
+  width: min(1180px, 95%);
+  height: 95dvh;
   display: grid;
-  grid-template-columns: 238px minmax(0, 1fr);
-  /* Die Zeile muss ausdruecklich auf die Fensterhoehe laufen. Ohne diese Regel
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
+}
+
+/* Nur das Einstellungs-Fenster hat eine Navigationsspalte. Die Zeile muss
+   ausdruecklich auf die Fensterhoehe laufen. Ohne diese Regel
      entsteht genau eine implizite Zeile mit `auto`, und `auto` misst sich am
      Inhalt: sie wurde 967px hoch, waehrend das Fenster per `height` 828px
      misst. `overflow: hidden` schneidet dann still ab — kein Scrollbalken,
@@ -28,41 +52,9 @@
      Grid-Items und werden auf die Zeile gestreckt; `.nav` (flex:1,
      overflow-y:auto) misst danach clientHeight 730 gegen scrollHeight 871 und
      scrollt. Ein zusaetzliches `min-height: 0` dort aendert nichts Messbares. */
+.withRail {
+  grid-template-columns: 238px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--bg);
-  color: var(--text);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
-}
-
-/* Das Einstellungs-Fenster selbst — nicht die Fenster, die nur seine Optik
- * borgen (das Bestaetigungs-Fenster der Kontenverwaltung, siehe unten).
- *
- * 95 % je Achse heisst 2,5 % Abstand auf jeder Seite. Ein Fenster auf 100 %
- * legt seine Bedienelemente an die Kante, wo auf dem Telefon Statusleiste,
- * Gestenrand und Daumen sitzen; 2,5 % je Seite sind der Rand, den der Operator
- * als kleinster noch treffbarer Abstand vorgibt.
- *
- * Der 1180-px-Deckel bleibt: ein Fenster, das auf einem 1440er Schirm ueber
- * 1368 px laeuft, wird nicht besser lesbar, sondern nur breiter — die
- * Beschwerde galt der Kante auf dem Telefon, nicht dem Desktop. `min()` laesst
- * beide Zweige in einer Zeile stehen: 390px → 370,5px (95 %), 1440px → 1180px
- * (Deckel).
- *
- * `dvh` und nicht `vh`: die Adressleiste des mobilen Browsers verkleinert die
- * sichtbare Hoehe, und das Fenster soll mit der sichtbaren rechnen. Die Breite
- * ist `%` und nicht `vw`, weil `vw` die Bildlaufleiste mitzaehlt (derselbe
- * Grund wie in `CalendarEventDialog`).
- *
- * Zwei Klassen, damit die Regel nur dieses Fenster trifft: `.window` traegt
- * auch das Bestaetigungs-Fenster der Kontenverwaltung, dessen Groesse
- * unveraendert bleibt. `.window.viewportInset` gewinnt gegen die Basisregel
- * und gegen den 760px-Block unabhaengig von der Reihenfolge im Stylesheet. */
-.window.viewportInset {
-  width: min(1180px, 95%);
-  height: 95dvh;
 }
 
 .sidebar {
@@ -453,8 +445,12 @@
 }
 .addPhrase:hover { background: var(--bg-hover); color: var(--text); }
 
+/* Kein `width`/`height` im Mobile-Block: die 95 % der Basisregel gelten auf
+   jeder Breite, und eine zweite Groessenangabe an dieser Stelle wuerde sie bei
+   gleicher Spezifitaet und spaeterer Position wieder ueberschreiben. */
 @media (max-width: 760px) {
-  .window { width: calc(100vw - 16px); height: calc(100dvh - 16px); grid-template-columns: 82px minmax(0, 1fr); border-radius: 10px; }
+  .window { border-radius: 10px; }
+  .withRail { grid-template-columns: 82px minmax(0, 1fr); }
   .brand { padding: 14px 6px 9px; text-align: center; }
   .eyebrow, .context, .searchWrap, .navLabel, .closeButton span:first-child { display: none; }
   .title { font-size: 12px; }
