@@ -1,10 +1,6 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: 18px;
   background: color-mix(in srgb, #000 48%, transparent);
   backdrop-filter: blur(8px);
 }
@@ -430,7 +426,6 @@
 .addPhrase:hover { background: var(--bg-hover); color: var(--text); }
 
 @media (max-width: 760px) {
-  .backdrop { padding: 8px; }
   .window { width: calc(100vw - 16px); height: calc(100dvh - 16px); grid-template-columns: 82px minmax(0, 1fr); border-radius: 10px; }
   .brand { padding: 14px 6px 9px; text-align: center; }
   .eyebrow, .context, .searchWrap, .navLabel, .closeButton span:first-child { display: none; }

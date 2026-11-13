@@ -52,6 +52,8 @@ function DialogContent({
   overlayClassName,
   overlayStyle,
   bare = false,
+  layer = 50,
+  style,
   children,
   showCloseButton = true,
   onCloseAutoFocus,
@@ -61,9 +63,21 @@ function DialogContent({
   /**
    * Laesst die Panel-Klassen des Primaerformulars weg. Fuer Fenster, die ihre
    * Groesse selbst mitbringen (Modul-CSS oder Inline): die Klassen wuerden
-   * sonst Breite, Padding, Gap und Ring dazwischensetzen.
+   * sonst Breite, Padding, Gap und Ring dazwischensetzen. Die Lage (mittig,
+   * ueber dem Hintergrund) bleibt — die gehoert dem Primitiv, nicht dem
+   * Aufrufer.
    */
   bare?: boolean
+  /**
+   * Die Ebene des Paares aus Hintergrund und Fenster.
+   *
+   * Beide sind Geschwister im Portal, ein `z-index` am Hintergrund alleine
+   * legt also auch das Fenster darunter (gemessen: Einstellungen standen
+   * hinter ihrem eigenen `backdrop-filter`). Deshalb bekommen beide denselben
+   * Wert; das Fenster steht im DOM hinter dem Hintergrund und gewinnt bei
+   * Gleichstand.
+   */
+  layer?: number
   /** Der Hintergrund gehoert dem Aufrufer — Modul-Klasse und Inline-Werte wie zuvor. */
   overlayClassName?: string
   overlayStyle?: React.CSSProperties
@@ -88,9 +102,17 @@ function DialogContent({
   )
   return (
     <DialogPortal>
-      <DialogOverlay className={overlayClassName} style={overlayStyle} />
+      <DialogOverlay className={overlayClassName} style={{ zIndex: layer, ...overlayStyle }} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        // Inline und nicht als Klasse: die Modul-Klassen der `bare`-Panels
+        // liegen ausserhalb der Utility-Layer und gewinnen gegen jede
+        // Tailwind-Klasse. Ein eigenes `style` des Aufrufers gewinnt dagegen.
+        style={{
+          ...(bare && { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)" }),
+          zIndex: layer,
+          ...style,
+        }}
         onCloseAutoFocus={
           onCloseAutoFocus ??
           ((event) => {

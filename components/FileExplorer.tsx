@@ -514,6 +514,7 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent
         bare
+        layer={1400}
         showCloseButton={false}
         aria-modal="true"
         aria-labelledby={titleId}
@@ -526,18 +527,9 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
           // Ueber dem grossen Explorer-Fenster (1300), weil dieser Dialog
           // von dessen innerer Instanz geoeffnet werden kann und dann als
           // eigenes Portal nicht mehr in dessen Stapelkontext liegt.
-          zIndex: 1400,
           background: "rgba(0,0,0,0.4)",
         }}
         style={{
-          // Das Primaerformular zentriert seinen Inhalt selbst; `bare` bringt
-          // keine Positionierung mit, deshalb hier — gleiche Lage wie zuvor
-          // im zentrierten Backdrop.
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          zIndex: 1401,
           width: 360,
           maxWidth: "calc(100vw - 32px)",
           display: "flex",
@@ -959,21 +951,12 @@ function FileExplorerWindow({
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent
         bare
+        layer={1300}
         showCloseButton={false}
         aria-modal="true"
         aria-labelledby={titleId}
         overlayClassName={windowStyles.backdrop}
         onEscapeKeyDown={onEscapeKeyDown}
-        style={{
-          // `bare` bringt keine Positionierung mit: das Fenster zentriert sich
-          // wie zuvor im Backdrop (90vw/90vh aus der Modul-Klasse) und liegt
-          // ueber seinem eigenen Hintergrund.
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          zIndex: 1301,
-        }}
         className={windowStyles.panel}
       >
         <div className={windowStyles.header}>

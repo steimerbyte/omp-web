@@ -383,6 +383,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
     <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
       <DialogContent
         bare
+        layer={1000}
         showCloseButton={false}
         aria-modal="true"
         aria-label="Settings"

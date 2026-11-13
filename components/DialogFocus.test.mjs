@@ -168,6 +168,7 @@ const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconf
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 const { ProjectTrustDialog } = await jiti.import("./ProjectTrustDialog.tsx");
 const { DirectoryPicker } = await jiti.import("./DirectoryPicker.tsx");
+const { Dialog, DialogContent } = await jiti.import("./ui/dialog.tsx");
 const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -316,6 +317,34 @@ test("Beide Dialoge tragen ihre z-Ebene am Overlay und am Panel", async () => {
     // haelt die Ebene zwischen den uebrigen Overlays.
     assert.equal(overlay.style.zIndex, String(zIndex));
     assert.equal(content.style.zIndex, String(zIndex));
+
+    await act(async () => { root.unmount(); });
+  }
+});
+
+test("Ein `bare`-Fenster liegt ueber seinem eigenen Hintergrund und mittig", async () => {
+  function Harness({ layer }) {
+    return React.createElement(Dialog, { open: true },
+      React.createElement(DialogContent, { bare: true, layer, "aria-label": "Probe" },
+        React.createElement("p", null, "Panel")));
+  }
+  for (const [layer, expected] of [[1000, "1000"], [undefined, "50"]]) {
+    const { root } = await mount(React.createElement(Harness, { layer }));
+    await settle();
+
+    const overlay = win.document.querySelector('[data-slot="dialog-overlay"]');
+    const content = win.document.querySelector('[data-slot="dialog-content"]');
+    assert.ok(overlay && content, `kein Paar bei layer=${layer}`);
+
+    // Gemessen 2026-11-13 am Einstellungs-Fenster vor dem Fix: `bare` liess
+    // `position` und `z-index` weg, das Fenster stand statisch im Fluss und
+    // das Overlay (z-index 1000, `backdrop-filter: blur(8px)`) deckte es zu.
+    // Der Klick auf "Settings" blurrte also die Seite, ohne ein Fenster zu
+    // zeigen.
+    assert.equal(content.style.position, "fixed", "das Fenster positioniert sich nicht selbst");
+    assert.equal(overlay.style.zIndex, expected);
+    assert.equal(content.style.zIndex, expected, "Fenster und Hintergrund muessen dieselbe Ebene tragen");
+    assert.equal(overlay.nextElementSibling, content, "das Fenster muss hinter dem Hintergrund im DOM stehen");
 
     await act(async () => { root.unmount(); });
   }

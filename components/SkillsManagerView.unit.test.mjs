@@ -343,6 +343,11 @@ test("Escape und der Klick daneben schliessen den Loeschdialog", async () => {
   assert.equal(deleteDialog(), null, "Escape hat den Dialog nicht geschlossen");
 
   await act(async () => { button(container, "Delete").click(); });
+  // Radix meldet seinen `pointerdown`-Waechter erst in einem `setTimeout(0)` an.
+  // Ein `pointerdown` im Panel vorher setzt `isPointerInsideReactTree` und der
+  // Waechter setzt es nie zurueck; der folgende Klick daneben gilt dann als
+  // Klick im Panel. Gemessen: ohne diese Pause 1 von 3 Laeufen rot.
+  await flush();
   await act(async () => { deleteDialog().dispatchEvent(pointerDownOutside()); });
   assert.ok(deleteDialog(), "ein Klick im Panel hat geschlossen");
   await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });

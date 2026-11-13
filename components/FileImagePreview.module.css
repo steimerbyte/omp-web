@@ -6,7 +6,6 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1302;
   background: rgba(0, 0, 0, 0.6);
 }
 

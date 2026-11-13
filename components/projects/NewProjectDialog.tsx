@@ -61,18 +61,12 @@ export function NewProjectDialog({
     <Dialog open onOpenChange={(next) => { if (!next && !busy) onCancel(); }}>
       <DialogContent
         bare
+        layer={200}
         showCloseButton={false}
         aria-modal="true"
         aria-label={t("projects.new")}
         overlayClassName="supports-backdrop-filter:backdrop-blur-none"
-        overlayStyle={{
-          background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          zIndex: 200,
-        }}
+        overlayStyle={{ background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)" }}
         style={{
           width: "100%",
           maxWidth: 430,

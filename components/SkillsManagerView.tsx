@@ -675,18 +675,12 @@ export function SkillsManagerView({
         <Dialog open onOpenChange={(next) => { if (!next && !deleting) setDeleteOpen(false); }}>
           <DialogContent
             bare
+            layer={1200}
             showCloseButton={false}
             aria-modal="true"
             aria-label={t("skills.deleteTitle", { name: detail.skill.name })}
             overlayClassName="supports-backdrop-filter:backdrop-blur-none"
-            overlayStyle={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "rgba(0,0,0,0.45)",
-              padding: 16,
-              zIndex: 1200,
-            }}
+            overlayStyle={{ background: "rgba(0,0,0,0.45)" }}
             style={{
               width: 420,
               maxWidth: "100%",

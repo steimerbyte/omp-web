@@ -40,6 +40,7 @@ export function ConfirmDialog({
     <Dialog open onOpenChange={(next) => { if (!next && !busy) onCancel(); }}>
       <DialogContent
         bare
+        layer={200}
         showCloseButton={false}
         role="alertdialog"
         aria-modal="true"
@@ -47,14 +48,7 @@ export function ConfirmDialog({
         // Der alte Hintergrund war flach; `backdrop-blur-none` haelt die
         // Weichzeichnung des Primaerformulars draussen.
         overlayClassName="supports-backdrop-filter:backdrop-blur-none"
-        overlayStyle={{
-          background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          zIndex: 200,
-        }}
+        overlayStyle={{ background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)" }}
         style={{
           width: "100%",
           maxWidth: 430,

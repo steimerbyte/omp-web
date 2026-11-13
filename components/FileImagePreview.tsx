@@ -388,21 +388,13 @@ export function FileImagePreview({
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent
         bare
+        layer={1302}
         showCloseButton={false}
         aria-modal="true"
         aria-labelledby={titleId}
         overlayClassName={styles.backdrop}
         onEscapeKeyDown={onEscapeKeyDown}
         className={styles.panel}
-        style={{
-          // `bare` positioniert nicht: die Vorschau zentriert sich selbst und
-          // liegt ueber dem grossen Explorer-Fenster (1301).
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          zIndex: 1303,
-        }}
       >
         <div className={styles.header}>
           <span id={titleId} className={styles.title} title={filePath}>{title}</span>

@@ -352,6 +352,7 @@ export function UsersConfig() {
         <Dialog open onOpenChange={(next) => { if (!next) setPending(null); }}>
           <DialogContent
             bare
+            layer={1000}
             showCloseButton={false}
             aria-modal="true"
             aria-label="Confirm"

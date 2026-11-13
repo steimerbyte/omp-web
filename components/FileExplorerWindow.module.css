@@ -40,22 +40,12 @@
  * Die Farben kommen aus den Theme-Tokens; hier steht nur Layout und Fokusring.
  */
 
-/* Ueber allen anderen Overlays: das Fenster traegt einen Explorer, und der
- * Explorer kann selbst Overlays oeffnen (Kontextmenue 320, Bildvorschau
- * 1200, Zielordner-Dialog 1100). Damit die nicht hinter dem Backdrop
- * verschwinden, liegt es ueber `FileImagePreview` (1200). */
+/* Die Ebene (`layer` 1300) setzt der Aufrufer, nicht diese Klasse: Overlay und
+ * Fenster sind Geschwister im Portal, und ein `z-index` allein am Hintergrund
+ * legt das Fenster darunter. Die Klasse traegt nur die Flaeche. */
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Die Haelfte des Randes, den das Panel sich selbst zuteilt. 5vw/5vh
-   * passen genau zu den 90vw/90vh des Panels: der Rahmen um das Fenster
-   * ist damit in beiden Richtungen gleich, und der Wert haengt nicht an
-   * einer festen Pixelzahl, die auf einem Telefon den Rand wegisst. */
-  padding: 5vh 5vw;
   background: rgba(0, 0, 0, 0.6);
   /* Weichzeichnet die Anwendung unter dem Fenster, statt sie nur dunkel zu
    * ueberdecken. Zweierlei Nutzen, und der zweite ist der eigentliche:
