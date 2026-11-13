@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { Skeleton } from "./motion/Skeleton";
+import { Toggle } from "./ui/toggle";
 import type {
   SkillInfo as Skill,
   SkillInstallScope,
@@ -42,56 +43,6 @@ function updateKey(skill: Skill): string | null {
 
 function shortVersion(version?: string): string {
   return version ? version.slice(0, 8) : "unknown";
-}
-
-function Toggle({
-  enabled,
-  loading,
-  onToggle,
-}: {
-  enabled: boolean;
-  loading: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <button
-      onClick={onToggle}
-      disabled={loading}
-      title={
-        enabled
-          ? t("i18n.visibleInPrompt")
-          : t("i18n.hiddenFromPrompt")
-      }
-      style={{
-        flexShrink: 0,
-        width: 40,
-        height: 22,
-        borderRadius: 11,
-        border: "none",
-        padding: 0,
-        cursor: loading ? "wait" : "pointer",
-        background: enabled ? "var(--accent)" : "var(--border)",
-        position: "relative",
-        transition: "background 0.18s",
-        outline: "none",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 3,
-          left: enabled ? 21 : 3,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "var(--bg)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
-          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
-        }}
-      />
-    </button>
-  );
 }
 
 function SkillDetail({
@@ -174,9 +125,10 @@ function SkillDetail({
             {displayPath(skill.filePath)}
           </span>
           <Toggle
-            enabled={enabled}
-            loading={toggling}
-            onToggle={() => onToggle(skill)}
+            checked={enabled}
+            disabled={toggling}
+            onChange={() => onToggle(skill)}
+            label={enabled ? t("i18n.visibleInPrompt") : t("i18n.hiddenFromPrompt")}
           />
         </div>
         <div

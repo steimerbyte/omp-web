@@ -6,6 +6,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import type { PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
 import { Skeleton } from "./motion/Skeleton";
+import { Toggle } from "./ui/toggle";
 
 type PluginScope = PluginPackageInfo["scope"];
 type PluginAction = "install" | "remove" | "update" | "disable" | "enable";
@@ -183,57 +184,6 @@ function buttonStyle(disabled?: boolean, danger?: boolean): React.CSSProperties 
     fontSize: 12,
     opacity: disabled ? 0.5 : 1,
   };
-}
-
-function Toggle({
-  enabled,
-  loading,
-  onToggle,
-  label,
-}: {
-  enabled: boolean;
-  loading: boolean;
-  onToggle: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      disabled={loading}
-      title={label}
-      aria-label={label}
-      aria-pressed={enabled}
-      style={{
-        flexShrink: 0,
-        width: 40,
-        height: 22,
-        borderRadius: 11,
-        border: "none",
-        padding: 0,
-        cursor: loading ? "wait" : "pointer",
-        background: enabled ? "var(--accent)" : "var(--border)",
-        position: "relative",
-        transition: "background 0.18s",
-        outline: "none",
-        opacity: loading ? 0.65 : 1,
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 3,
-          left: enabled ? 21 : 3,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "var(--bg)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
-          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
-        }}
-      />
-    </button>
-  );
 }
 
 function SegmentedScope({
@@ -486,9 +436,9 @@ function PackageDetail({
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, minWidth: 0, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 }}>
           <Toggle
-            enabled={enabled}
-            loading={busy || reloadBusy}
-            onToggle={() => onAction(pkg.disabled ? "enable" : "disable", pkg)}
+            checked={enabled}
+            disabled={busy || reloadBusy}
+            onChange={() => onAction(pkg.disabled ? "enable" : "disable", pkg)}
             label={pkg.disabled ? t("i18n.enablePackage") : t("i18n.disablePackage")}
           />
           <ScopeTag scope={pkg.scope} />
