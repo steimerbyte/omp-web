@@ -298,6 +298,19 @@ test("Laufende und unbenutzte Sessions zeigen ihre Indikatoren", async () => {
   storage.clear();
 });
 
+test("ohne Animationen steht der Unread-Puls still", async () => {
+  storage.clear();
+  storage.set("omp-web:unread-session-ids", JSON.stringify(["s1"]));
+  storage.set("omp-animations", "off");
+  runningIds = [];
+  const { container } = await mount();
+  assert.ok(container.querySelector('[title="New activity"]'), "der Unread-Indikator fehlt");
+  // SMIL kennt weder `data-omp-animations` noch reduced motion — mit
+  // abgeschalteten Animationen darf kein <animate> im DOM stehen.
+  const smil = [...container.querySelectorAll("*")].filter((node) => /^animate/i.test(node.tagName));
+  assert.equal(smil.length, 0);
+});
+
 test("Sessionzeile ist per Enter bedienbar und meldet die Auswahl", async () => {
   storage.clear();
   runningIds = [];

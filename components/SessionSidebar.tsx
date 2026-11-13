@@ -11,6 +11,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
+import { Spin } from "./motion/Enter";
+import { useAnimationPreference } from "./motion/AnimationProvider";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 
@@ -2162,30 +2164,25 @@ function RunningSessionIndicator() {
         color: "var(--accent)",
       }}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-        <g>
+      <Spin style={{ display: "flex", width: 14, height: 14 }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
           <path
             d="M21 12a9 9 0 1 1-3.8-7.4"
             stroke="currentColor"
             strokeWidth="2.8"
             strokeLinecap="round"
           />
-          <animateTransform
-            attributeName="transform"
-            type="rotate"
-            from="0 12 12"
-            to="360 12 12"
-            dur="0.9s"
-            repeatCount="indefinite"
-          />
-        </g>
-      </svg>
+        </svg>
+      </Spin>
     </span>
   );
 }
 
 function UnreadSessionIndicator() {
   const { t } = useI18n();
+  // SMIL kennt weder `data-omp-animations` noch reduced motion; mit
+  // abgeschalteten Animationen bleibt deshalb nur der stehende Punkt.
+  const animationsOff = useAnimationPreference() === "off";
   return (
     <span
       title={t("sidebar.newActivity")}
@@ -2203,8 +2200,12 @@ function UnreadSessionIndicator() {
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" style={{ display: "block" }}>
         <circle cx="7" cy="7" r="2.5" fill="currentColor" />
         <circle cx="7" cy="7" r="3" stroke="currentColor" strokeWidth="1.4" opacity="0.32">
-          <animate attributeName="r" values="3;6;3" dur="1.6s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.32;0;0.32" dur="1.6s" repeatCount="indefinite" />
+          {!animationsOff && (
+            <>
+              <animate attributeName="r" values="3;6;3" dur="1.6s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.32;0;0.32" dur="1.6s" repeatCount="indefinite" />
+            </>
+          )}
         </circle>
       </svg>
     </span>
@@ -2230,12 +2231,11 @@ function showProjectActivity(
           aria-label={`${t("sidebar.agentRunning")} (${activity.running})`}
           style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "var(--accent)", fontSize: 10, fontFamily: "var(--font-mono)" }}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-            <g>
+          <Spin style={{ display: "flex", width: 10, height: 10 }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
               <path d="M21 12a9 9 0 1 1-3.8-7.4" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
-              <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite" />
-            </g>
-          </svg>
+            </svg>
+          </Spin>
           {activity.running}
         </span>
       )}
