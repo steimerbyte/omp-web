@@ -677,7 +677,7 @@ export function FileActionToast({ notice, onDismiss }: { notice: FileActionNotic
         onClick={onDismiss}
         title={t("files.dismissError")}
         aria-label={t("files.dismissError")}
-        style={{ width: 18, height: 18, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: "none", borderRadius: 4, background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
+        style={{ width: 24, height: 24, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: "none", borderRadius: 4, background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
           <path d="m6 6 12 12" />

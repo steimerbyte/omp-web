@@ -739,8 +739,12 @@ test("FileActionToast meldet Erfolg als status und Fehler als alert und laesst s
   let toast = win.document.querySelector('[role="status"]');
   assert.ok(toast);
   assert.match(toast.textContent, /fertig/);
+  const closeButton = toast.querySelector("button");
+  // Trefferflaeche, nicht Optik: das Kreuz bleibt 12 px, der Knopf 24.
+  assert.equal(closeButton.style.width, "24px");
+  assert.equal(closeButton.style.height, "24px");
   await act(async () => {
-    toast.querySelector("button").click();
+    closeButton.click();
   });
   assert.equal(dismissed, 1);
 
