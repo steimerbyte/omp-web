@@ -427,7 +427,8 @@ type SidebarRow =
   | { kind: "more"; key: string; project: string };
 
 /** Session rows are the majority of the list and have a fixed height, so this
- *  is both the item height and Virtuoso's pre-measurement estimate. */
+ *  is both the item height and Virtuoso's pre-measurement estimate. It is the
+ *  desktop density; mobile rows grow to 44px so the 44px row buttons fit. */
 const SESSION_ROW_HEIGHT = 40;
 
 /** Virtuoso drives paddingTop/paddingBottom on the list element itself, so only
@@ -443,6 +444,10 @@ function SidebarVirtuosoFooter() {
 
 export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onShowScheduledTasks, showScheduledTasks, onShowSkills, showSkills, onBackgroundTaskDone }: Props) {
   const { t } = useI18n();
+  // `.sidebar-row-action` is 44px on touch (globals.css), so the desktop row
+  // height would clip it there. One derived value feeds the row CSS,
+  // Virtuoso's estimate and the loading skeletons.
+  const rowHeight = useIsMobile() ? 44 : SESSION_ROW_HEIGHT;
   // Der Kalender ist ein deutsches Kalendersystem — auch sein Knopf im
   // Kopfbereich heisst auf Deutsch. Siehe `components/calendar/useCalendarText.ts`.
   const calendarText = useCalendarText();
@@ -1106,6 +1111,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
             }} />
           )}
           <SessionItem
+            rowHeight={rowHeight}
             session={row.session}
             isSelected={row.session.id === selectedSessionId}
             isRunning={runningSessionIds.has(row.session.id)}
@@ -1409,7 +1415,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
               // instead of jumping from nothing to N rows.
               <div style={{ padding: "4px 8px", display: "flex", flexDirection: "column", gap: 2 }} aria-hidden>
                 {Array.from({ length: 6 }, (_, index) => (
-                  <Skeleton key={index} height={SESSION_ROW_HEIGHT} />
+                  <Skeleton key={index} height={rowHeight} />
                 ))}
               </div>
             )}
@@ -1440,7 +1446,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
             ref={sessionListRef}
             data={sidebarRows}
             computeItemKey={(_index, row) => row.key}
-            defaultItemHeight={SESSION_ROW_HEIGHT}
+            defaultItemHeight={rowHeight}
             rangeChanged={handleVisibleRangeChange}
             components={{ List: SidebarVirtuosoList, Footer: SidebarVirtuosoFooter }}
             style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, height: "auto" }}
@@ -2268,6 +2274,7 @@ function showProjectActivity(
 
 function SessionItem({
   session,
+  rowHeight,
   isSelected,
   isRunning,
   isUnread,
@@ -2281,6 +2288,7 @@ function SessionItem({
   onToggleCollapse,
 }: {
   session: SessionInfo;
+  rowHeight: number;
   isSelected: boolean;
   isRunning?: boolean;
   isUnread?: boolean;
@@ -2429,7 +2437,7 @@ function SessionItem({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
-        height: SESSION_ROW_HEIGHT,
+        height: rowHeight,
         display: "flex",
         alignItems: "center",
         paddingLeft: depth > 0 ? depth * 10 + 8 : 8,

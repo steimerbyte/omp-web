@@ -14,8 +14,11 @@ import { captureLinkedomPrototypes } from "../lib/test-linkedom.mjs";
  * SessionItem, Polling, Menues) laufen unveraendert.
  */
 const { forwardRef, useImperativeHandle } = React;
+// Letzter Props-Satz der Liste, damit `defaultItemHeight` pruefbar ist.
+const virtuosoProps = [];
 mock.module("react-virtuoso", () => {
   const Virtuoso = forwardRef(function VirtuosoMock(props, ref) {
+    virtuosoProps.push(props);
     useImperativeHandle(ref, () => ({
       scrollToIndex() {},
       scrollTo() {},
@@ -344,6 +347,27 @@ test("mobil sind die drei Aktionen ohne Hover im DOM", async () => {
     assert.ok(actions.every(Boolean), "die drei Aktionen fehlen mobil");
     // Die Klasse traegt die 44-px-Regel aus globals.css.
     assert.ok(actions.every((node) => node.classList.contains("sidebar-row-action")));
+  } finally {
+    mobileViewport = false;
+  }
+});
+
+test("Sessionzeile ist mobil 44px hoch und auf dem Desktop 40", async () => {
+  storage.clear();
+  runningIds = [];
+  const desktop = await mount();
+  const desktopRow = [...desktop.container.querySelectorAll("div")]
+    .find((node) => node.getAttribute("title") === "hello there").parentElement;
+  assert.equal(desktopRow.style.height, "40px");
+  assert.equal(virtuosoProps.at(-1).defaultItemHeight, 40);
+
+  mobileViewport = true;
+  try {
+    const mobile = await mount();
+    const mobileRow = [...mobile.container.querySelectorAll("div")]
+      .find((node) => node.getAttribute("title") === "hello there").parentElement;
+    assert.equal(mobileRow.style.height, "44px");
+    assert.equal(virtuosoProps.at(-1).defaultItemHeight, 44);
   } finally {
     mobileViewport = false;
   }
