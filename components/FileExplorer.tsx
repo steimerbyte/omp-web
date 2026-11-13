@@ -12,7 +12,6 @@ import {
   type TreeApi,
 } from "react-arborist";
 import { getFileIcon, FolderIcon } from "./FileIcons";
-import { createPortal } from "react-dom";
 import { Pressable } from "./motion/Pressable";
 import { Skeleton } from "./motion/Skeleton";
 import windowStyles from "./FileExplorerWindow.module.css";
@@ -34,7 +33,7 @@ import { TabBar, type FileTab } from "./TabBar";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { ModalBackdrop, ModalPanel, Spin } from "./motion/Enter";
+import { Spin } from "./motion/Enter";
 type Translate = ReturnType<typeof useI18n>["t"];
 
 /**
@@ -774,20 +773,13 @@ function FileExplorerWindow({
   onClose: () => void;
   t: Translate;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  /**
-   * Wohin das Fenster gerendert wird. `null`, solange es den Server nicht
-   * gibt — dort existiert `document` nicht, und ein Render dorthin waere ein
-   * harter Absturz beim Build.
-   *
-   * Das Portal ist keine Formalie: die Sidebar, in der diese Komponente
-   * haengt, setzt `overflow-x: hidden` auf ihren Explore-Behaelter, und das
-   * schneidet jedes Fenster am Rand der Sidebar ab. `position: fixed` loest das
-   * nicht, denn es bezieht sich nur dann auf das Fenster, wenn kein Vorfahr
-   * clippt. An `document.body` haengend liegt es ueber allem. Dasselbe Muster
-   * nutzen `DirectoryPicker` und `FileContextMenu`.
+  /*
+   * Das Fenster haengt am `Dialog`-Primitiv. Das portalt selbst an
+   * `document.body` — noetig, weil die Sidebar `overflow-x: hidden` auf ihren
+   * Explore-Behaelter setzt und ein Fenster darin am Rand abgeschnitten
+   * wuerde. Fokusfalle, Escape und der Fokus-Rueckweg kommen von dort; der
+   * fruehere `document`-Escape-Listener entfaellt.
    */
-  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const titleId = useId();
   const [tabs, setTabs] = useState<FileTab[]>(() => [
     { kind: "explorer", id: EXPLORER_TAB_ID, label: t("files.explorerWindowTitle"), filePath: "" },
@@ -953,64 +945,36 @@ function FileExplorerWindow({
     });
   }, [tabs]);
 
-  useEffect(() => {
-    setPortalTarget(document.body);
+  // Escape schliesst das Fenster — es sei denn, im Fenster liegt noch ein
+  // Dialog der inneren Explorer-Instanz. Der Zielordner-Dialog
+  // (`FileBrowserDialog`) hat seinen eigenen `document`-Listener und ist kein
+  // Radix-Layer; ohne diesen Halt schloessen beide Ebenen auf einen
+  // Tastendruck. Verschachtelte Radix-Dialoge regeln das selbst.
+  const onEscapeKeyDown = useCallback((event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("[data-nested-overlay]")) event.preventDefault();
   }, []);
 
-  useEffect(() => {
-    /**
-     * Der Fokus wandert mit dem Portal: der erste Render gibt `null` zurueck,
-     * weil es `document.body` auf dem Server nicht gibt. Ohne `portalTarget` in
-     * der Abhaengigkeit laeuft dieser Effekt genau einmal, bevor das Panel
-     * existiert, und `panelRef.current` ist `null` — der Dialog stuende dann
-     * ohne Fokus im Hintergrund und bekäme keinen Tastendruck.
-     */
-    if (!portalTarget) return;
-    panelRef.current?.focus();
-  }, [portalTarget]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      /**
-       * In diesem Fenster liegen die Dialoge der inneren Explorer-Instanz:
-       * Bildvorschau, Zielordner und Properties. Jeder von ihnen hat seinen
-       * eigenen `document`-Listener, und `stopPropagation` wirkt zwischen
-       * Geschwistern auf demselben Knoten nicht — ein Tastendruck wuerde sonst
-       * alle Ebenen auf einmal schliessen. Deshalb entscheidet nicht die
-       * Reihenfolge der Listener, sondern das DOM: ist der Tastendruck in
-       * einer Ebene gelandet, die selbst noch etwas offen haelt, schliesst
-       * dieses Fenster nicht.
-       *
-       * `preventDefault` genuegt als Signal, weil die Bildvorschau es fuer ihre
-       * Zoomtasten setzt, aber nicht fuer Escape. Der Test auf einen tieferen
-       * Dialog ist deshalb der verlaessliche: er fragt ab, ob zwischen dem
-       * Tastendruck und diesem Fenster noch etwas liegt.
-       */
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-nested-overlay]")) return;
-      onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
-  if (!portalTarget) return null;
-
-  return createPortal(
-    <ModalBackdrop
-      className={windowStyles.backdrop}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <ModalPanel
-        ref={panelRef}
-        className={windowStyles.panel}
-        role="dialog"
+  return (
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent
+        bare
+        showCloseButton={false}
         aria-modal="true"
         aria-labelledby={titleId}
-        tabIndex={-1}
+        overlayClassName={windowStyles.backdrop}
+        onEscapeKeyDown={onEscapeKeyDown}
+        style={{
+          // `bare` bringt keine Positionierung mit: das Fenster zentriert sich
+          // wie zuvor im Backdrop (90vw/90vh aus der Modul-Klasse) und liegt
+          // ueber seinem eigenen Hintergrund.
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 1301,
+        }}
+        className={windowStyles.panel}
       >
         <div className={windowStyles.header}>
           <span id={titleId} className={windowStyles.title} title={cwd}>
@@ -1128,9 +1092,8 @@ function FileExplorerWindow({
             <div className={windowStyles.empty}>{t("files.explorerWindowNoTab")}</div>
           ) : null}
         </div>
-      </ModalPanel>
-    </ModalBackdrop>,
-    portalTarget,
+      </DialogContent>
+    </Dialog>
   );
 }
 
