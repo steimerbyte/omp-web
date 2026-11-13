@@ -241,11 +241,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
       // beim Verschieben ausgetrennt werden muss, und das erledigt der
       // `onMouseDown` am Trigger weiter unten.
       onValueChange={onSelectTab}
-      className="data-horizontal:flex-row h-9 shrink-0 items-stretch gap-0 overflow-x-auto bg-card"
+      className="data-horizontal:flex-row h-9 max-sm:h-11 shrink-0 items-stretch gap-0 overflow-x-auto bg-card"
     >
       <TabsList
         variant="default"
-        className="group-data-horizontal/tabs:h-9 w-max items-stretch justify-start gap-0 rounded-none bg-transparent p-0"
+        className="group-data-horizontal/tabs:h-9 max-sm:group-data-horizontal/tabs:h-11 w-max items-stretch justify-start gap-0 rounded-none bg-transparent p-0"
       >
         {tabs.map((tab, index) => {
           const isActive = tab.id === activeTabId;
@@ -346,7 +346,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorder }
                 // weist ihn ohnehin zurueck, und ein Knopf, der dann nichts
                 // tut, waere schlechter als keiner.
                 className={
-                  "mr-1.5 my-auto flex size-6 shrink-0 items-center justify-center rounded border-0 bg-transparent p-0 " +
+                  "mr-1.5 my-auto flex size-6 max-sm:size-11 shrink-0 items-center justify-center rounded border-0 bg-transparent p-0 " +
                   "text-text-dim transition-colors hover:bg-bg-hover hover:text-foreground " +
                   (tab.kind === "explorer" ? "hidden" : "")
                 }
