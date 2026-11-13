@@ -21,6 +21,22 @@ const win = dom.window;
 restoreLinkedomPrototypesOnExit(win);
 const nav = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
 win.getComputedStyle = () => new Proxy({}, { get: (_t, p) => (typeof p === "string" && p.startsWith("get") ? () => "" : "0px") });
+// linkedom hat keinen Fokus; ohne Ersatz ist weder "Fokus liegt im Fenster"
+// noch der Rueckweg zum Ausloeser messbar.
+let activeElement = win.document.body;
+Object.defineProperty(win.document, "activeElement", {
+  get: () => (activeElement?.isConnected === false ? win.document.body : activeElement),
+  configurable: true,
+});
+/** Eigener Setter statt `activeElement = this`: `no-this-alias` verbietet das. */
+function setActive(element) {
+  activeElement = element;
+}
+win.HTMLElement.prototype.focus = function focus() {
+  const tag = this.tagName;
+  if (!(tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || tag === "A" || tag === "SELECT") && !this.hasAttribute("tabindex")) return;
+  setActive(this);
+};
 win.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false });
 globalThis.window = new Proxy(win, {
   get(target, prop) {
@@ -171,7 +187,9 @@ async function mount({ respond, initialSection = "themes", isAdmin = true, cwd =
   });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
   return {
-    container,
+    // Das Fenster steht als Portal neben `host`; alle Abfragen laufen deshalb
+    // ueber `document.body`.
+    container: win.document.body,
     calls,
     async unmount() { await act(async () => { root.unmount(); }); globalThis.fetch = originalFetch; },
   };
@@ -180,6 +198,11 @@ async function mount({ respond, initialSection = "themes", isAdmin = true, cwd =
 function button(container, text) {
   return [...container.querySelectorAll("button")].find((node) => (node.textContent ?? "").trim() === text);
 }
+const escape = () => Object.assign(new win.Event("keydown", { bubbles: true, cancelable: true }), { key: "Escape", code: "Escape" });
+// `button: 1`: bei der linken Taste liest Radix das `target` des `pointerdown`
+// erst beim folgenden `click` — linkedom hat es dann schon verworfen. Die
+// mittlere Taste nimmt den direkten Weg und prueft dieselbe Absicht.
+const pointerDownOutside = () => Object.assign(new win.Event("pointerdown", { bubbles: true, cancelable: true }), { button: 1, pointerType: "mouse" });
 
 function navButton(container, text) {
   return [...container.querySelectorAll("nav button")].find((node) => (node.textContent ?? "").trim() === text);
@@ -462,15 +485,51 @@ test("the Chat section toggles hidden messages without a settings request", asyn
 
 test("closing calls both callbacks, and the backdrop only closes on itself", async () => {
   const { container, calls, unmount } = await mount();
-  const backdrop = container.querySelector('[role="dialog"]').parentElement;
-  await act(async () => {
-    backdrop.querySelector('[role="dialog"]').dispatchEvent(new win.Event("mousedown", { bubbles: true }));
-  });
-  assert.equal(calls.some((call) => call.url === "close"), false);
-  await act(async () => { backdrop.dispatchEvent(new win.Event("mousedown", { bubbles: true })); });
+  const closing = () => calls.some((call) => call.url === "close");
+  await act(async () => { container.querySelector('[role="dialog"]').dispatchEvent(pointerDownOutside()); });
+  assert.equal(closing(), false);
+  await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });
+  assert.ok(closing());
+  assert.ok(calls.some((call) => call.url === "models-changed"));
+  await unmount();
+});
+
+test("Escape closes the window through the same callbacks", async () => {
+  const { container, calls, unmount } = await mount();
+  assert.ok(container.querySelector('[role="dialog"]'));
+  await act(async () => { win.document.dispatchEvent(escape()); });
   assert.ok(calls.some((call) => call.url === "close"));
   assert.ok(calls.some((call) => call.url === "models-changed"));
   await unmount();
+});
+
+test("the focus enters the window and returns to the opener when it closes", async () => {
+  win.document.body.innerHTML = "";
+  const trigger = win.document.createElement("button");
+  trigger.id = "open-settings";
+  trigger.textContent = "settings";
+  win.document.body.appendChild(trigger);
+  trigger.focus();
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(I18nProvider, null, React.createElement(SettingsConfig, {
+      cwd: CWD,
+      sessionId: SESSION,
+      onClose: () => {},
+      onModelsChanged: () => {},
+      onReloaded: () => {},
+    })));
+  });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+
+  const windowNode = win.document.querySelector('[role="dialog"]');
+  assert.ok(windowNode.contains(win.document.activeElement), `focus is outside the window: ${win.document.activeElement?.tagName}`);
+
+  await act(async () => { root.unmount(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+  assert.equal(win.document.activeElement, trigger, "the focus did not return to the opener");
 });
 
 test("the close rail also calls the close callback", async () => {

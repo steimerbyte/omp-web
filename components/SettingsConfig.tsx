@@ -12,6 +12,7 @@ import { AnimationsConfig } from "./AnimationsConfig";
 import { Skeleton } from "./motion/Skeleton";
 import { SearchableSelect } from "./SearchableSelect";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { refreshOmpTheme, useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { refreshDisplaySettings } from "@/hooks/useDisplaySettings";
@@ -379,8 +380,15 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
   };
 
   return (
-    <div className={styles.backdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <div className={styles.window} role="dialog" aria-modal="true" aria-label="Settings">
+    <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+      <DialogContent
+        bare
+        showCloseButton={false}
+        aria-modal="true"
+        aria-label="Settings"
+        overlayClassName={styles.backdrop}
+        className={styles.window}
+      >
         <aside className={styles.sidebar}>
           <div className={styles.brand}><div className={styles.eyebrow}>omp /settings</div><h1 className={styles.title}>Settings</h1><code className={styles.context} title={cwd ?? "Global configuration"}>{cwd ?? "Global configuration"}</code></div>
           <div className={styles.searchWrap}><svg className={styles.searchIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input className={styles.search} value={query} placeholder="Search /settings" onChange={(event) => setQuery(event.target.value)} /></div>
@@ -395,8 +403,8 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
         <main className={styles.content}>
           {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : section === "scheduled" ? <ScheduledTasksSettings /> : section === "chat" ? <ChatDisplayConfig /> : section === "animations" ? <AnimationsConfig /> : renderGenericSettings()}
         </main>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
