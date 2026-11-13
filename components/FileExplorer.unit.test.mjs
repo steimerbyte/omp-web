@@ -323,6 +323,42 @@ test("Ordner laedt beim Aufklappen nach; Hover zeigt Mention und Bildvorschau", 
   });
 });
 
+test("Trefferflaechen der Zeilenwerkzeuge: Chevron, Mention, Vorschau und Download sind 24 px", async () => {
+  const container = await mount({
+    props: {
+      onAtMention: () => {},
+      initialViewState: { currentPath: "/work", expandedPaths: new Set(["/work/src"]), history: { paths: ["/work"], index: 0 } },
+    },
+  });
+  const src = rowByName("src");
+  await hover(src);
+  const chevron = src.querySelector('[role="button"][aria-label]');
+  assert.ok(chevron, "der Chevron fehlt");
+  // border-box: 24 px Aussenmass, die 14-px-Optik steckt in den Polstern.
+  assert.equal(chevron.style.width, "24px");
+  assert.equal(chevron.style.height, "24px");
+  assert.equal(chevron.style.padding, "5px");
+  assert.equal(chevron.style.margin, "-5px", "negative Raender halten den Fluss bei 14 px");
+
+  const mention = src.querySelector('[title="Insert path into chat"]');
+  assert.ok(mention, "der Mention-Knopf fehlt");
+  assert.equal(mention.style.height, "24px");
+  assert.equal(mention.style.minWidth, "24px");
+
+  const photo = rowByName("photo.png");
+  await hover(photo);
+  const image = photo.querySelector('[title="Open image in large view"]');
+  assert.ok(image, "der Bild-Knopf fehlt");
+  assert.equal(image.style.width, "24px");
+  assert.equal(image.style.height, "24px");
+
+  const notes = rowByName("notes.txt");
+  const download = notes.querySelector("a[download]");
+  assert.ok(download, "der Download-Anker fehlt");
+  assert.equal(download.style.height, "24px");
+  assert.equal(download.style.minWidth, "24px");
+});
+
 test("Auswahl per Ctrl-Klick, Properties fuer Datei und Ordner, Escape schliesst", async () => {
   const container = await mount();
   const notes = rowByName("notes.txt");

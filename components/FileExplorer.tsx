@@ -262,8 +262,9 @@ interface PendingConflict {
  * Von rechts nach links stehen damit: Download (im Fluss), grosse Vorschau
  * (`ROW_ACTION_RIGHT_IMAGE`), Mention (`ROW_ACTION_RIGHT_MENTION_FILE` bei
  * Dateien, `ROW_ACTION_RIGHT_MENTION_DIR` bei Ordnern — ein Ordner hat keinen
- * Download-Knopf). Die beiden Bildwerkzeuge sind 22 Pixel breit (20 plus je ein
- * Pixel Rahmen); zwischen ihnen bleiben 4 Pixel Luft.
+ * Download-Knopf). Die beiden Bildwerkzeuge sind 24 Pixel breit (die
+ * Trefferflaeche, Rahmen und Polster inklusive); zwischen ihnen bleiben 4
+ * Pixel Luft.
  *
  * Die Mention-Schaltflaeche traegt Text und ist je nach Sprache unterschiedlich
  * breit; sie steht deshalb ganz links. Ihre Breite kann so wachsen, wie es die
@@ -271,7 +272,7 @@ interface PendingConflict {
  */
 const ROW_DOWNLOAD_FLOW_WIDTH = 35;
 const ROW_ACTION_RIGHT_IMAGE = ROW_DOWNLOAD_FLOW_WIDTH + 4;
-const ROW_ACTION_RIGHT_MENTION_FILE = ROW_ACTION_RIGHT_IMAGE + 22 + 4;
+const ROW_ACTION_RIGHT_MENTION_FILE = ROW_ACTION_RIGHT_IMAGE + 24 + 4;
 const ROW_ACTION_RIGHT_MENTION_DIR = 4;
 
 /**
@@ -1589,7 +1590,10 @@ function FileTreeLabel({
           tabIndex={-1}
           aria-label={node.isOpen ? ctx.t("files.collapseFolder") : ctx.t("files.expandFolder")}
           onClick={(event) => { event.stopPropagation(); node.toggle(); }}
-          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, flexShrink: 0, cursor: "pointer" }}
+          // 24 px Trefferflaeche bei 14 px Optik: die Polster liegen im
+          // border-box, die negativen Raender halten den Fluss bei 14 px,
+          // damit die Zeile nicht wandert.
+          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, padding: 5, margin: -5, flexShrink: 0, cursor: "pointer" }}
         >
           <svg
             width="10" height="10" viewBox="0 0 10 10" fill="none"
@@ -1666,7 +1670,8 @@ function FileTreeLabel({
             justifyContent: "center",
             gap: 4,
             padding: "0 8px",
-            height: 20,
+            minWidth: 24,
+            height: 24,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 4,
@@ -1701,8 +1706,8 @@ function FileTreeLabel({
             alignItems: "center",
             justifyContent: "center",
             padding: 0,
-            width: 20,
-            height: 20,
+            width: 24,
+            height: 24,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 4,
@@ -1735,7 +1740,8 @@ function FileTreeLabel({
             justifyContent: "center",
             gap: 4,
             padding: "0 5px",
-            height: 20,
+            minWidth: 24,
+            height: 24,
             marginLeft: 4,
             flexShrink: 0,
             background: "var(--bg-panel)",
