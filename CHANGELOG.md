@@ -3,6 +3,157 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.29.0
+Released 2026-11-13.
+
+### Seitenleiste
+
+- **Session-Zeilen lassen sich mit der Tastatur bedienen.** Die Zeile ist ein
+  Knopf im Fokusfluss, Enter/Space wählt die Session, der Fokusring ist
+  sichtbar; die Kontextmenü-Aktion bleibt erreichbar, ohne die Zeile erst mit
+  der Maus zu treffen.
+
+- **Das Suchfeld der Seitenleiste zeigt seinen Fokus.** Es hatte keinen eigenen
+  Fokusring — der Knopf daneben hatte einen. Die Regel liegt jetzt in
+  `app/globals.css` neben den übrigen Eingabefeldern.
+
+- **Auf Touch-Geräten bleiben die Session-Aktionen sichtbar.** Umbenennen,
+  Löschen und die übrigen Zeilen-Aktionen hingen an `hovered` und waren auf
+  einem Gerät ohne Hover damit unerreichbar; mobil rendern sie dauerhaft
+  (Desktop unverändert nur beim Überfahren).
+
+- **Laden zeigt Skeletons, ein Fehler einen „Erneut laden"-Knopf.** Sechs
+  Zeilen in der echten Zeilenhöhe halten die Höhe der Liste, statt von nichts
+  auf N Zeilen zu springen; die Fehlermeldung war vorher eine Sackgasse, jetzt
+  holt `sidebar.retry` die Liste neu.
+
+- **Die Session-Indikatoren halten sich an abgeschaltete Animationen.** Der
+  laufende Kreis war ein SVG-`animateTransform` und drehte sich auch bei
+  „Animationen aus" weiter; er kommt jetzt aus `components/motion` (`Spin`) und
+  steht in diesem Modus still.
+
+- **Eine Session-Zeile ist mobil 44 px hoch.** Vorher standen die 44-px-Knöpfe
+  in einer 40-px-Zeile und wurden beschnitten. Die Höhe kommt aus einem
+  abgeleiteten Wert, den Zeile, Virtuoso-Schätzung und die Lade-Skeletons
+  gemeinsam lesen.
+
+### Explorer
+
+- **Baumzeilen sind auf Touch 36 px hoch, auf dem Desktop bleiben es 24.**
+  Die Höhe wird einmal in `ExplorerTree` gewählt und an die Zeile
+  weitergereicht; Zeilen-Renderer, leere Ordner und Arborists `rowHeight`
+  lesen denselben Wert. Ein Dichte-Wechsel steht im Baum-Schlüssel, damit der
+  Baum einmal neu aufbaut, statt mit halber Höhe zu rechnen.
+
+- **Die Werkzeuge der Baumzeile haben 24 px Trefferfläche.** Chevron (14 px
+  Optik mit unsichtbarem Polster), Mention, Bildvorschau und Download waren
+  kleiner als die 24 px, die ein Zeiger braucht; die rechten Kanten der
+  absoluten Werkzeuge wandern mit, die Zeilenhöhe bleibt 24 px. Dasselbe für
+  das Schließen-Kreuz des Datei-Toasts: 18 → **24 px**, das Kreuz bleibt 12 px.
+
+- **Das Dateifenster trägt keine falsche Listenrolle mehr.** Liste und Raster
+  hatten `role="listbox"`, obwohl die Einträge Knöpfe sind und selbst sagen,
+  was sie sind — und `aria-selected` gab es nie. Die Pfeiltasten liegen
+  weiterhin am Dialog-Container; der Test belegt sie unverändert.
+
+- **Die Tab-Leiste und ihr Schließen-Knopf sind mobil 44 px hoch**
+  (`max-sm:h-11`, `max-sm:size-11`). Auf dem Desktop bleibt die 36-px-Leiste.
+
+### Composer
+
+- **Die Composer-Leiste zeigt Fokus, und das Textfeld hat einen Namen.** Das
+  Textfeld hat `outline: none`; die Leiste reagiert jetzt über einen
+  React-Zustand am Wrapper und färbt ihre 1-px-Kante, die Geometrie des
+  Gradient-Rings bleibt unberührt. Das Textfeld heißt im Accessibility-Baum,
+  was es ist, statt namenlos zu sein.
+
+- **Die Popups des Composers hängen per ARIA am Textfeld.** Das Feld meldet
+  `aria-expanded`/`aria-controls`/`aria-activedescendant`, die Verlaufs-,
+  Slash- und @-Listen sind Listboxen mit Optionen und `aria-selected`, und der
+  Modell-Knopf kündigt seine Listbox an. Nur Attribute — die Pfeiltasten-Logik
+  ist unangetastet.
+
+- **Die letzten englischen Beschriftungen des Composers laufen über den
+  Katalog.** Acht Schlüssel in `en`/`de`/`zh-CN` für Modell-Banner,
+  Verlaufs-Kopf, Steer-/Follow-up-Hinweise und den Modell-Umschalter, damit
+  eine übersetzte Oberfläche nicht mitten im Composer auf Englisch umschlägt.
+
+- **Der Modell-Knopf nennt das aktuelle Modell und reserviert seinen Platz.**
+  Die 220-px-Ellipse verdeckte den Namen und der Tooltip nannte nur die Aktion;
+  jetzt steht dort „<Modell> — Change model", und während die Liste lädt, hält
+  ein 32-px-Skeleton die Zeile, statt dass der Picker zu spät erscheint und die
+  Leiste verschiebt.
+
+- **Der Modell-Spinner kommt aus `components/motion`.** Der Inline-String
+  `spin 0.8s` funktionierte nur, weil eine andere Komponente die Keyframes
+  zufällig mitlieferte, und drehte sich auch bei abgeschalteten Animationen
+  weiter. `Spin` besitzt die Drehung und steht in diesem Modus still. Im
+  selben Zug bekam das Textfeld `role="combobox"`: der Linter hatte das im
+  ARIA-Durchgang ergänzte `aria-expanded` an `role="textbox"` als nicht
+  unterstützt gemeldet.
+
+### Querschnitt: Farben & Kontraste
+
+- **59 hartkodierte Farben laufen über Theme-Variablen.** Die vier Flächen und
+  der Composer hatten fünf Rot-Töne für eine Bedeutung, eigene Amber-, Grün-
+  und Blau-Töne neben `--danger`/`--warning`/`--success` und Indigo-Tints als
+  `rgba`. Alle Literale — samt ihrer Transparenz-Washes über `color-mix` aus
+  dem Token — sind ersetzt. Die Git-Status-Map bekam vier eigene Variablen je
+  Theme (`--git-modified/added/deleted/renamed`), weil die alten Hues im
+  dunklen Modus lesbar waren und im hellen nicht; `#0891b2` (ungelesen) und
+  `#3b82f6` (neu hochgeladen) hatten keine Semantik in der Palette und teilen
+  sich jetzt `--accent`.
+
+- **Die Kontraste der Text- und Symbolpaare sind messbar besser.**
+  `--text-dim` lag bei 11-px-Text bei **2,83:1** (hell auf `#ffffff`) bzw.
+  **3,67:1** (dunkel auf `#151820`); jetzt sind es **4,83:1** und **5,38:1**,
+  und die Farbe bleibt als Icon-Farbe dunkler als vorher statt heller. Das alte
+  `#4ade80` maß **1,74:1** auf Weiß; das neue `--git-added` im hellen Theme
+  (`#1a7f45`) misst **4,75:1** auf dem Panel-Hintergrund `#f8f8f8`. Im
+  Dateifenster bleibt der Primärknopf im Hover auf `--accent`, `--accent-hover`
+  (2,34:1 mit weißer Schrift) ist nur noch die Kante. `lib/theme-contrast.test.mjs`
+  rechnet die Paare beider Theme-Blöcke mit der WCAG-Luminanz nach und wird rot,
+  sobald `--text-dim` wieder aufhellt.
+
+- **Auswahl sieht überall gleich aus: Fläche plus 2-px-Akzentkante.** Das galt
+  schon für die Sidebar-Zeile, nicht für den Explorer-Baum und den
+  Listeneintrag im Dateifenster. Die nicht gewählte Zeile trägt dieselbe Kante
+  in transparent, damit beim Auswählen kein Text springt. In der Tab-Leiste
+  ersetzt die Kante unten (Tabs stehen nebeneinander) die Inversion
+  `data-active:bg-background`; die Fläche bleibt `--bg-selected`, `h-9` bleibt.
+
+- **Drei Geometrie-Tokens statt 32-mal derselben Zahl.** `--radius-control`
+  (6 px, Knöpfe/Eingaben/Zeilen), `--radius-panel` (10 px, Menüs/Dialoge/Cards)
+  und `--duration-hover` (120 ms) stehen in beiden Theme-Blöcken; alle zwölf
+  Längen in `transition`-Strings laufen jetzt über die Dauer, auch die
+  `.sidebar-nav-button`-Regel mit 0,3 s. Zahlen, die an eine Größe statt an eine
+  Rolle gebunden sind (4 px in 24/28-px-Zeilen, 1 px Haarlinien, 0 buendige
+  Kanten, 14/999 für Leiste und Pillen, 160/150 ms für Transform-Animationen),
+  bleiben Zahlen; `lib/theme-tokens.test.mjs` prüft die Tokens in beiden Blöcken.
+
+### Dialoge
+
+- **Das große Explorer-Fenster, der Eigenschaften-Dialog und die Bildvorschau
+  laufen über `components/ui/dialog`.** Portal, Fokus beim Öffnen, Escape, die
+  Fokusfalle und die Fokus-Rückgabe kommen vom Primitiv; `panelRef`,
+  `portalTarget` und die eigenen `document`-Listener entfallen. Die
+  Geometrien bleiben (960 px/88vh/32 px Rand für die Vorschau, 360 px für die
+  Eigenschaften), der Eigenschaften-Dialog liegt als eigenes Portal über dem
+  großen Fenster (z 1400/1401). Nur der Zielordner-Dialog ist noch ein eigenes
+  Overlay; für ihn hält `onEscapeKeyDown` das Fenster offen, bis er selbst
+  geschlossen ist. Der neue Test misst beide Dialoge an Fokus, Escape und
+  Rückgabe sowie an beiden Verschachtelungen.
+
+- **Die Bildvorschau bringt einen Portal-Fund mit.** Radix hängt den Inhalt
+  erst im zweiten Render ein, deshalb sehen Mount-Effekte, die die Bühne messen
+  oder das Rad-Zoom anhängen, `null` — beides hängt jetzt an einem
+  Callback-Ref statt an `stageRef`. Die Markierung `data-nested-overlay` ist an
+  der Vorschau gestrichen: im großen Fenster schließt Radix nur die oberste
+  Ebene (im Test belegt), der Zielordner-Dialog behält seine Markierung.
+
+- Gate: **3116 pass, 3 skip, 0 fail** (3119 Tests in 395 Dateien), Coverage
+  4340/5054 Funktionen = 85,9 %, 18 Debt. `bun run typecheck` grün.
+
 ## v0.28.0
 Released 2026-11-13.
 
