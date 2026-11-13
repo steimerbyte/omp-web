@@ -22,7 +22,7 @@
   max-height: 80vh;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: var(--bg);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
 }
@@ -58,7 +58,7 @@
   flex-shrink: 0;
   padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -119,7 +119,7 @@
   padding: 2px 5px;
   overflow: hidden;
   border: none;
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -171,7 +171,7 @@
   gap: 4px;
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -214,7 +214,7 @@
   height: 24px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -269,7 +269,7 @@
   padding: 7px 4px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -352,7 +352,7 @@
   padding: 4px 8px;
   border: none;
   border-left: 2px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -481,7 +481,7 @@
   overflow: hidden;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: var(--bg-panel);
   color: var(--text);
   font: 11px var(--font-mono);
@@ -493,7 +493,7 @@
   flex: 0 0 auto;
   padding: 5px 13px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;

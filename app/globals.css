@@ -83,6 +83,19 @@
      this colour (that mapper knows accent, success, error and warning only),
      so in an imported theme the violet stays with the application. */
   --violet: #6b4d9e;
+  /* Geometry, not colour, but declared in both blocks for the same reason as
+     `--violet`: a value that exists in one theme only would be invisible in
+     the other. `--radius-control` is the radius of buttons, inputs and the
+     rows of the dense lists, `--radius-panel` that of menus, dialogs and
+     cards, `--duration-hover` the one duration of a hover or state change.
+
+     Exceptions stay numbers because they are tied to a size, not a role:
+     `4` for the 24/28-px tree and dialog rows, `1` for hairline bars, `0`
+     for flush edges, `14` and `999` for the composer bar and the pills.
+     Held by lib/theme-tokens.test.mjs. */
+  --radius-control: 6px;
+  --radius-panel: 10px;
+  --duration-hover: 120ms;
 }
 
 html.dark {
@@ -115,6 +128,10 @@ html.dark {
      calendar's colour swatches read the variable, and a variable that exists
      in only one of the two themes would be invisible in the other. */
   --violet: #9b6fd8;
+  /* Same geometry as the light theme; see the long note in `:root`. */
+  --radius-control: 6px;
+  --radius-panel: 10px;
+  --duration-hover: 120ms;
 }
 
 .catppuccin-file-icon {
@@ -1544,7 +1561,10 @@ html.dark .chat-session-column::before {
   letter-spacing: -0.01em;
   text-align: left;
   cursor: pointer;
-  transition: background 0.3s, color 0.3s, border-color 0.3s;
+  transition:
+    background var(--duration-hover),
+    color var(--duration-hover),
+    border-color var(--duration-hover);
 }
 .sidebar-nav-button:hover {
   background: var(--bg-selected);

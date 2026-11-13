@@ -546,7 +546,7 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
           padding: 14,
           background: "var(--bg)",
           border: "1px solid var(--border)",
-          borderRadius: 10,
+          borderRadius: "var(--radius-panel)",
           boxShadow: "0 8px 32px rgba(0,0,0,0.22)",
           outline: "none",
         }}
@@ -1579,7 +1579,7 @@ function FileTreeLabel({
           <svg
             width="10" height="10" viewBox="0 0 10 10" fill="none"
             stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transform: node.isOpen ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
+            style={{ transform: node.isOpen ? "rotate(90deg)" : "none", transition: "transform var(--duration-hover)" }}
           >
             <polyline points="3 2 7 5 3 8" />
           </svg>
@@ -2304,7 +2304,7 @@ function Breadcrumb({
                     padding: "1px 5px",
                     background: "transparent",
                     border: "none",
-                    borderRadius: 3,
+                    borderRadius: 4,
                     color: isLast ? "var(--text)" : "var(--text-muted)",
                     fontWeight: isLast ? 500 : 400,
                     fontSize: 11,
@@ -3335,7 +3335,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
               {uploadPhase === "uploading" && <span style={{ fontSize: 10 }}>{uploadProgress}%</span>}
             </div>
             {uploadPhase === "uploading" && (
-              <div style={{ height: 3, marginTop: 4, overflow: "hidden", borderRadius: 2, background: "var(--border)" }}>
+              <div style={{ height: 3, marginTop: 4, overflow: "hidden", borderRadius: 4, background: "var(--border)" }}>
                 <div style={{ width: `${uploadProgress}%`, height: "100%", background: "var(--text-muted)", transition: "width 120ms ease" }} />
               </div>
             )}
