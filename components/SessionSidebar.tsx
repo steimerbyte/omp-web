@@ -8,6 +8,7 @@ import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { useI18n } from "@/hooks/useI18n";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -2280,6 +2281,7 @@ function SessionItem({
   onToggleCollapse?: () => void;
 }) {
   const { t } = useI18n();
+  const isMobile = useIsMobile();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -2550,12 +2552,13 @@ function SessionItem({
             </Pressable>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && !session.transient && (
+          {/* Action buttons — on hover, and permanently on touch devices */}
+          {(hovered || isMobile) && !session.transient && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               <Pressable
                 onClick={startRename}
                 title={t("sidebar.rename")}
+                className="sidebar-row-action"
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 26, height: 26, padding: 0,
@@ -2582,6 +2585,7 @@ function SessionItem({
               <Pressable
                 onClick={performArchive}
                 title={t("sidebar.archive")}
+                className="sidebar-row-action"
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 26, height: 26, padding: 0,
@@ -2608,6 +2612,7 @@ function SessionItem({
               <button
                 onClick={handleDeleteClick}
                 title={t("sidebar.deleteWithShiftClick")}
+                className="sidebar-row-action"
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 26, height: 26, padding: 0,

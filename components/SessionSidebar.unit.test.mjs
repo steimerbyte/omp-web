@@ -102,6 +102,17 @@ installGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect()
 installGlobal("MutationObserver", class { observe() {} disconnect() {} takeRecords() { return []; } });
 installGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
 
+// `useIsMobile` liest die Media-Query am window-Objekt, und linkedoms window
+// teilt `matchMedia` mit dem Global — deshalb erst nach den installGlobal-
+// Aufrufen setzen, sonst ueberschreibt der Globale-Stub aus der Testdatei ihn.
+let mobileViewport = false;
+window.matchMedia = (query) => ({
+  matches: mobileViewport && query === "(max-width: 640px)",
+  media: query,
+  addEventListener() {},
+  removeEventListener() {},
+});
+
 test.after(() => {
   restorePrototypes();
   for (const [name, descriptor] of installed) {
@@ -303,6 +314,26 @@ test("Sessionzeile ist per Enter bedienbar und meldet die Auswahl", async () => 
   });
   await settle();
   assert.deepEqual(selected, ["s1"]);
+});
+
+test("mobil sind die drei Aktionen ohne Hover im DOM", async () => {
+  storage.clear();
+  runningIds = [];
+  mobileViewport = true;
+  try {
+    const { container } = await mount();
+    // Kein mouseover: die Aktionen muessen allein aus `isMobile` entstehen.
+    const actions = [
+      container.querySelector('[title="Rename"]'),
+      container.querySelector('[title="Archive (hide from list, restorable)"]'),
+      container.querySelector('[title="Delete (Shift+click to delete without confirmation)"]'),
+    ];
+    assert.ok(actions.every(Boolean), "die drei Aktionen fehlen mobil");
+    // Die Klasse traegt die 44-px-Regel aus globals.css.
+    assert.ok(actions.every((node) => node.classList.contains("sidebar-row-action")));
+  } finally {
+    mobileViewport = false;
+  }
 });
 
 test("Hover zeigt Aktionen; Umbenennen, Archivieren und Shift-Loeschen laufen ueber die API", async () => {
