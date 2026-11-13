@@ -3,6 +3,24 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.27.0
+Released 2026-11-13.
+
+- **Eine Plugin-Statuszeile erscheint nicht mehr unter dem Composer.** Ein
+  Plugin wie Ponytail setzte per `ui.setStatus(key, text)` eine Zeile unter das
+  Eingabefeld — im TUI ist das die Statuszeile unter dem Editor. Im Browser ist
+  `ui.setStatus` jetzt ein No-op wie `setFooter`: der UI-Kontext in
+  `lib/rpc-manager.ts` antwortet leer, statt einen `setStatus`-Frame zu senden.
+  Der Schnitt liegt an der Quelle, weil es im Browser keine Statuszeile gibt, in
+  die der Text gehört; ein Frame, den niemand rendert, hielte nur Zustand und
+  Komponente am Leben. Entfernt sind `components/ExtensionStatusBar.tsx` samt
+  Test, der Client-Zustand `extensionStatuses`, der `setStatus`-Zweig im
+  Event-Handler und der Schlüssel in `get_state`. Dialoge, Toasts, `setWidget`
+  (über und unter dem Editor), `setTitle` und `set_editor_text` sind unverändert.
+  Nicht verifiziert ist das Desktop-Bundle (`src-tauri`): geprüft ist der
+  Web-Pfad über die Unit-Tests und den Gate-Lauf, ein eigener Lauf in einer
+  Tauri-Hülle fand nicht statt.
+
 ## v0.26.0
 Released 2026-11-12.
 
