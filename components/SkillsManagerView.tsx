@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { UserSkill, UserSkillResponse, UserSkillsResponse } from "@/lib/api-types";
@@ -671,25 +672,21 @@ export function SkillsManagerView({
       </div>
 
       {deleteOpen && detail && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("skills.deleteTitle", { name: detail.skill.name })}
-          onClick={(event) => {
-            if (event.target === event.currentTarget && !deleting) setDeleteOpen(false);
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1200,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(0,0,0,0.45)",
-            padding: 16,
-          }}
-        >
-          <div
+        <Dialog open onOpenChange={(next) => { if (!next && !deleting) setDeleteOpen(false); }}>
+          <DialogContent
+            bare
+            showCloseButton={false}
+            aria-modal="true"
+            aria-label={t("skills.deleteTitle", { name: detail.skill.name })}
+            overlayClassName="supports-backdrop-filter:backdrop-blur-none"
+            overlayStyle={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(0,0,0,0.45)",
+              padding: 16,
+              zIndex: 1200,
+            }}
             style={{
               width: 420,
               maxWidth: "100%",
@@ -742,8 +739,8 @@ export function SkillsManagerView({
                 {deleting ? t("skills.deleting") : t("skills.delete")}
               </button>
             </div>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

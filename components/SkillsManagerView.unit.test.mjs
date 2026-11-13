@@ -18,6 +18,22 @@ const win = dom.window;
 restoreLinkedomPrototypesOnExit(win);
 const nav = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
 win.getComputedStyle = () => new Proxy({}, { get: (_t, p) => (typeof p === "string" && p.startsWith("get") ? () => "" : "0px") });
+// linkedom hat keinen Fokus; ohne Ersatz ist weder "Fokus liegt im Dialog"
+// noch der Rueckweg zum Ausloeser messbar.
+let activeElement = win.document.body;
+Object.defineProperty(win.document, "activeElement", {
+  get: () => (activeElement?.isConnected === false ? win.document.body : activeElement),
+  configurable: true,
+});
+/** Eigener Setter statt `activeElement = this`: `no-this-alias` verbietet das. */
+function setActive(element) {
+  activeElement = element;
+}
+win.HTMLElement.prototype.focus = function focus() {
+  const tag = this.tagName;
+  if (!(tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || tag === "A" || tag === "SELECT") && !this.hasAttribute("tabindex")) return;
+  setActive(this);
+};
 win.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false });
 globalThis.window = new Proxy(win, {
   get(target, prop) {
@@ -115,6 +131,16 @@ async function mount({ respond, cwd = CWD } = {}) {
 function button(container, text) {
   return [...container.querySelectorAll("button")].find((node) => (node.textContent ?? "").trim() === text);
 }
+
+const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); }); };
+// Radix haengt den Dialog als Portal an `document.body`; der Komponenten-
+// Container enthaelt ihn nicht mehr.
+const deleteDialog = () => win.document.querySelector('[aria-label="Delete skill alpha?"]');
+const escape = () => Object.assign(new win.Event("keydown", { bubbles: true, cancelable: true }), { key: "Escape", code: "Escape" });
+// `button: 1`: bei der linken Taste liest Radix das `target` des `pointerdown`
+// erst beim folgenden `click` — linkedom hat es dann schon verworfen. Die
+// mittlere Taste nimmt den direkten Weg und prueft dieselbe Absicht.
+const pointerDownOutside = () => Object.assign(new win.Event("pointerdown", { bubbles: true, cancelable: true }), { button: 1, pointerType: "mouse" });
 
 function row(container, name) {
   return [...container.querySelectorAll("button")].find((node) => {
@@ -254,7 +280,7 @@ test("deleting confirms, removes the skill, and reloads the store", async () => 
     },
   });
   await act(async () => { button(container, "Delete").click(); });
-  const dialog = container.querySelector('[aria-label="Delete skill alpha?"]');
+  const dialog = deleteDialog();
   assert.ok(dialog, "der Löschdialog fehlt");
   assert.match(dialog.textContent, /This removes the folder and everything in it/);
 
@@ -264,7 +290,7 @@ test("deleting confirms, removes the skill, and reloads the store", async () => 
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
   assert.equal(calls.find((call) => call.method === "DELETE").url, "/api/skills/user/alpha");
   assert.equal(calls.filter((call) => call.url === "/api/skills/user").length, 2);
-  assert.equal(container.querySelector('[aria-label="Delete skill alpha?"]'), null);
+  assert.equal(deleteDialog(), null);
   await unmount();
 });
 
@@ -278,13 +304,13 @@ test("a failed delete keeps the dialog open with the reason", async () => {
     },
   });
   await act(async () => { button(container, "Delete").click(); });
-  const dialog = container.querySelector('[aria-label="Delete skill alpha?"]');
+  const dialog = deleteDialog();
   await act(async () => {
     [...dialog.querySelectorAll("button")].find((node) => node.textContent.trim() === "Delete").click();
   });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
-  assert.match(container.textContent, /permission denied/);
-  assert.ok(container.querySelector('[aria-label="Delete skill alpha?"]'));
+  assert.match(win.document.body.textContent, /permission denied/);
+  assert.ok(deleteDialog());
   await unmount();
 });
 
@@ -298,13 +324,44 @@ test("deleting the last skill falls back to the empty state", async () => {
     },
   });
   await act(async () => { button(container, "Delete").click(); });
-  const dialog = container.querySelector('[aria-label="Delete skill alpha?"]');
+  const dialog = deleteDialog();
   await act(async () => {
     [...dialog.querySelectorAll("button")].find((node) => node.textContent.trim() === "Delete").click();
   });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
   assert.match(container.textContent, /No skills yet/);
   assert.match(container.textContent, /\+ New skill/);
+  await unmount();
+});
+
+test("Escape und der Klick daneben schliessen den Loeschdialog", async () => {
+  const { container, unmount } = await mount();
+  await act(async () => { button(container, "Delete").click(); });
+  assert.ok(deleteDialog(), "der Loeschdialog wurde nicht geoeffnet");
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  await flush();
+  assert.equal(deleteDialog(), null, "Escape hat den Dialog nicht geschlossen");
+
+  await act(async () => { button(container, "Delete").click(); });
+  await act(async () => { deleteDialog().dispatchEvent(pointerDownOutside()); });
+  assert.ok(deleteDialog(), "ein Klick im Panel hat geschlossen");
+  await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });
+  await flush();
+  assert.equal(deleteDialog(), null, "der Klick daneben hat nicht geschlossen");
+  await unmount();
+});
+
+test("der Fokus steht im Loeschdialog und danach wieder auf dem Loesch-Knopf", async () => {
+  const { container, unmount } = await mount();
+  const ask = button(container, "Delete");
+  await act(async () => { ask.focus(); ask.click(); });
+  await flush();
+  assert.ok(deleteDialog().contains(win.document.activeElement), `Fokus liegt ausserhalb: ${win.document.activeElement?.tagName}`);
+
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  await flush();
+  assert.equal(deleteDialog(), null);
+  assert.equal(win.document.activeElement, ask, "der Fokus ist nicht zum Ausloeser zurueckgekehrt");
   await unmount();
 });
 
