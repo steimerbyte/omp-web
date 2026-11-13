@@ -173,7 +173,7 @@ test("shows the optimistic model while a switch is pending and keeps the trigger
     "der Ausloeser bleibt waehrend eines Wechsels bedienbar — ein Klick wird gebucht, nicht verworfen",
   );
   assert.match(html, />DeepSeek V4 Flash</);
-  assert.match(html, /animation:spin 0\.8s linear infinite/);
+  assert.doesNotMatch(html, /animation:\s*spin/, "der Spinner kommt aus components/motion, nicht aus einem Inline-Keyframe");
 });
 
 test("a running turn does not lock the model trigger either", () => {

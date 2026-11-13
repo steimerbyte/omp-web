@@ -37,6 +37,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { usePopupPlacement } from "@/hooks/usePopupPlacement";
 import { computePopupPlacement, preferredPopupHeight, POPUP_GAP_PX, type PopupSide } from "@/lib/popup-placement";
 import { Pressable } from "./motion/Pressable";
+import { Spin } from "./motion/Enter";
 import { Skeleton } from "./motion/Skeleton";
 import { useGradientBorderBar } from "./motion/GradientBorder";
 import { Kbd } from "@/components/ui/kbd";
@@ -2413,6 +2414,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <textarea
             ref={textareaRef}
             aria-label={t("chat.messagePlaceholder")}
+            // Combobox ist die Rolle, die `aria-expanded`/`aria-controls`/
+            // `aria-activedescendant` fuer ein Textfeld mit Listen-Popup kennt.
+            role="combobox"
             aria-expanded={slashMenuOpen || atMenuOpen || historyMenuOpen}
             aria-controls={openPopupIds || undefined}
             aria-activedescendant={activeOptionId}
@@ -2697,9 +2701,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     title={`${currentName ? `${currentName} — ` : ""}${modelSwitching ? t("chat.modelSwitching") : modelOptions.length > 0 ? t("chat.changeModel") : t("chat.noModels")}`}
                   >
                     {modelSwitching ? (
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }} aria-hidden="true">
-                        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                      </svg>
+                      <Spin style={{ width: 11, height: 11, flexShrink: 0, display: "flex" }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                          <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                        </svg>
+                      </Spin>
                     ) : (
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="4" y="4" width="16" height="16" rx="2" />
