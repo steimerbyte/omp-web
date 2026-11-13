@@ -8,7 +8,7 @@ import { EASE_POP } from "./motion/animations";
 import { Pressable } from "./motion/Pressable";
 import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
 import { useI18n } from "@/hooks/useI18n";
-import { ModalBackdrop, ModalPanel } from "./motion/Enter";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 export interface FileImagePreviewProps {
   /** true rendert Backdrop und Panel, false rendert gar nichts. */
@@ -145,8 +145,17 @@ export function FileImagePreview({
     transform: FIT_TRANSFORM,
   });
   const [stageSize, setStageSize] = useState<Size | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
+  /**
+   * Das Portal des `Dialog`-Primitivs haengt seinen Inhalt erst in einem
+   * zweiten Render ein (der eigene Layout-Effekt des Portals). Ein Effekt, der
+   * beim Mounten nach der Buehne greift, sieht deshalb `null` — Messung und
+   * Rad-Zoom liefen ins Leere. Der Callback-Ref legt den Knoten in den State,
+   * sobald er wirklich im Dokument steht; beide Effekte haengen daran.
+   */
+  const [stageNode, setStageNode] = useState<HTMLDivElement | null>(null);
+  const attachStage = useCallback((node: HTMLDivElement | null) => {
+    setStageNode(node);
+  }, []);
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const titleId = useId();
@@ -235,22 +244,16 @@ export function FileImagePreview({
   }, [nativeZoom, normalize, updateZoom]);
 
   useEffect(() => {
-    if (!open) return;
-    const stage = stageRef.current;
-    if (!stage) return;
+    if (!open || !stageNode) return;
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((observations) => {
       const box = observations[0]?.contentRect;
       if (!box) return;
       setStageSize({ width: box.width, height: box.height });
     });
-    observer.observe(stage);
+    observer.observe(stageNode);
     return () => observer.disconnect();
-  }, [open]);
-
-  useEffect(() => {
-    panelRef.current?.focus();
-  }, [open]);
+  }, [open, stageNode]);
 
   /**
    * Ein aus dem Browsercache bedientes Bild feuert `load`, bevor React den
@@ -276,8 +279,8 @@ export function FileImagePreview({
   // passiv am Root und `preventDefault()` darin waere wirkungslos, sodass die
   // Seite beim Zoomen mitgescrollt wuerde.
   useEffect(() => {
-    const stage = stageRef.current;
-    if (!open || !stage) return;
+    if (!open || !stageNode) return;
+    const stage = stageNode;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const box = stage.getBoundingClientRect();
@@ -292,7 +295,7 @@ export function FileImagePreview({
     };
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
-  }, [applyZoom, open]);
+  }, [applyZoom, open, stageNode]);
 
   useEffect(() => {
     if (!open) return;
@@ -301,9 +304,7 @@ export function FileImagePreview({
       // Nicht in fremde Eingabefelder eingreifen, falls das Panel eingebettet
       // neben einem Formular steht.
       if (target && (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
-      if (event.key === "Escape") {
-        onClose();
-      } else if (event.key === "+" || event.key === "=") {
+      if (event.key === "+" || event.key === "=") {
         event.preventDefault();
         applyZoom(ZOOM_STEP);
       } else if (event.key === "-" || event.key === "_") {
@@ -322,7 +323,7 @@ export function FileImagePreview({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [applyZoom, fitToWindow, onClose, onNext, onPrev, open]);
+  }, [applyZoom, fitToWindow, onNext, onPrev, open]);
 
   if (!open) return null;
 
@@ -374,21 +375,34 @@ export function FileImagePreview({
     }
   };
 
+  // Escape schliesst die Vorschau (Radix). Nur in einem Eingabefeld der Seite
+  // bleibt es wirkungslos — wie zuvor beim eigenen Listener.
+  const onEscapeKeyDown = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (target && (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+      event.preventDefault();
+    }
+  };
+
   return (
-    <ModalBackdrop
-      className={styles.backdrop}
-      data-nested-overlay
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <ModalPanel
-        ref={panelRef}
-        className={styles.panel}
-        role="dialog"
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent
+        bare
+        showCloseButton={false}
         aria-modal="true"
         aria-labelledby={titleId}
-        tabIndex={-1}
+        overlayClassName={styles.backdrop}
+        onEscapeKeyDown={onEscapeKeyDown}
+        className={styles.panel}
+        style={{
+          // `bare` positioniert nicht: die Vorschau zentriert sich selbst und
+          // liegt ueber dem grossen Explorer-Fenster (1301).
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 1303,
+        }}
       >
         <div className={styles.header}>
           <span id={titleId} className={styles.title} title={filePath}>{title}</span>
@@ -439,7 +453,7 @@ export function FileImagePreview({
         </div>
 
         <div
-          ref={stageRef}
+          ref={attachStage}
           className={`${styles.stage} ${canPan ? styles.stagePannable : ""}`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -547,7 +561,7 @@ export function FileImagePreview({
             100%
           </Pressable>
         </div>
-      </ModalPanel>
-    </ModalBackdrop>
+      </DialogContent>
+    </Dialog>
   );
 }
