@@ -3,6 +3,82 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.30.0
+Released 2026-11-13.
+
+### Einstellungs-Fenster
+
+- **Das Fenster deckt 95 % jeder Achse, also 2,5 % Rand je Seite.** Es lief auf
+  dem Telefon bis auf 8 px an jede Kante; Bedienelemente lagen damit an
+  Statusleiste, Gestenrand und Daumen — ein Fenster, das exakt den Viewport
+  füllt, legt seine Knöpfe dorthin, wo sie mit dem Finger nicht mehr sicher zu
+  treffen sind. `width: min(1180px, 95%)` hält beide Zweige in einer Zeile
+  (Prozent statt `vw`: `vw` zählt die Bildlaufleiste mit), `height: 95dvh`
+  (die Adressleiste verkleinert die sichtbare Höhe). Die Größe steht direkt in
+  `.window`, weil die Klasse genau zwei Nutzer hat und beide dieselbe Größe
+  wollen; der Mobile-Block setzt kein `width`/`height` mehr, sonst hätte er die
+  95 % bei gleicher Spezifität still überschrieben. Der 1180-px-Deckel bleibt —
+  ein Zwischenstand ohne ihn war auf 1440 px 1368 px breit, also größer statt
+  kleiner. Gemessen 390×844 (DPR 2,34): 370,5×801,8 bei (9,75 / 21,1) — vorher
+  374×828 bei (8 / 8). 1440×900: 1180×855 bei (130 / 22,5) — vorher 1180×860
+  bei (130 / 20).
+- **Das Bestätigungs-Fenster der Kontenverwaltung nimmt dieselbe Größe.**
+  Beide Fenster benutzten `.window`, die Rückfrage stand mobil aber bei 98,1 %
+  Höhe (828 von 844 px aus dem 760-px-Block) und auf 1440 bei 860 px. Die
+  Hilfsklasse `viewportInset`, die sie vorher ausgenommen hatte, ist entfallen.
+  Die Navigationsspalten (238 px, mobil 82 px) sind nach `.withRail` gewandert,
+  das nur das Einstellungs-Fenster trägt: die Rückfrage erbte sie und brach
+  ihren Text in der 82-px-Spalte auf ein Wort pro Zeile um.
+  `components/SettingsConfig.layout.test.mjs` rechnet beide Zweige von `min()`
+  aus (390 → 370,5 px, 1440 → 1180 px) und wird rot bei `width: 95%` ohne
+  Deckel, bei einem `width` im 760-px-Block, bei fehlendem `withRail` am
+  Einstellungs-Fenster und bei `withRail` an der Rückfrage.
+
+### Zeilenmenüs
+
+- **Die Aktionsknöpfe der Sitzungszeile liegen in einem Drei-Punkte-Menü, das
+  immer sichtbar ist.** Drei Hover-Knöpfe (Umbenennen, Archivieren, Löschen)
+  werden ein Auslöser; der Hover-Halt `hovered || isMobile` war der Mobil-Fehler
+  der letzten Runde — auf dem Telefon gibt es kein Darüberfahren, die Aktionen
+  waren unsichtbar. Der Fork- und der Kollaps-Knopf bleiben, wo sie waren, und
+  die Zeilenhöhe (40/44 px) auch. Die Zeile bleibt ein Knopf im Fokusfluss; der
+  Auslöser hält den Klick an, damit er die Sitzung nicht mit auswählt. Die
+  Handler sind unverändert. Trefferfläche: 26 px Desktop, 44 px Touch über
+  `.sidebar-row-action`.
+- **Dasselbe im Explorer.** Aus einem sichtbaren und zwei Hover-Knöpfen wird
+  ein Menü mit Mention (nur mit `onAtMention` — das große Fenster kennt keinen
+  Chat), Bildvorschau (nur Bilder), Download (nur Dateien, bleibt ein Anker mit
+  `download`), Copy path und Delete. Copy path schreibt über `copyText` und
+  meldet den vorhandenen Toast; Delete springt über das neue `initialPhase` des
+  `FileContextMenu` direkt in dessen Rückfrage — dieselbe Route, derselbe
+  Bestätigungsschritt, derselbe Toast. Mit dem Hover-Zustand fallen die
+  absoluten Rechte-Kanten (`ROW_ACTION_RIGHT_*`) weg, Git-Badges müssen nicht
+  mehr vor dem Hover weichen, der Chevron bei Ordnern bleibt. Trefferfläche
+  24 px Desktop, auf Touch 44 px über ein Pseudo-Element außerhalb des Flusses
+  (die Zeile bleibt 36 px hoch).
+- **Das Menü ist ein eigenes Primitiv: `components/ui/dropdown-menu.tsx`.**
+  Root, Trigger, Content (mit Portal und `layer`) und Item, im Stil der übrigen
+  `components/ui`-Dateien, ohne neue Abhängigkeit — `radix-ui` 1.8.0 exportiert
+  `DropdownMenu` bereits. Der Content hält den Klick an: React-Portale blubbern
+  durch den **React**-Baum, ohne den Halt wählt ein Klick auf einen Eintrag die
+  Zeile aus, deren Knopf das Menü geöffnet hat. Ebene 50 als Default; das große
+  Explorer-Fenster gibt 1310, damit sein Menü über dem eigenen Panel (1300)
+  liegt. Tastatur: Enter öffnet, ArrowDown steht auf einem `menuitem`, Escape
+  schließt und gibt den Fokus an den Knopf zurück; Tests halten beides fest.
+- **Zwei bewusste Abgänge.** Der Shift-Klick-Schnellweg zum Löschen fällt weg —
+  ein Menüeintrag trägt keinen `shiftKey`, die Rückfrage ist jetzt immer
+  Pflicht (der i18n-Schlüssel `sidebar.deleteWithShiftClick` ist gelöscht).
+  Einen Unarchive-Eintrag gibt es nicht: archivierte Sessions haben ihren
+  eigenen Restore-Knopf. Das Rechtsklick-Menü der Dateien ist unangetastet.
+- Die Titel der beiden Auslöser stehen in allen drei Sprachpaketen
+  (`sidebar.sessionActions`, `files.rowActions`).
+- Gate: **3123 pass, 3 skip, 0 fail** (3126 Tests in 395 Dateien), Coverage
+  4358/5061 Funktionen = 86,1 %. `bun run typecheck` grün.
+
+- Nicht verifiziert: die Menüs sind nicht am Gerät gemessen — die 44 px stehen
+  als CSS-Regel und sind im Test gelesen; das Desktop-Bundle (`src-tauri`) ist
+  nicht geprüft.
+
 ## v0.29.1
 Released 2026-11-13.
 
