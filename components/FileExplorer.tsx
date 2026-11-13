@@ -33,6 +33,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type FileTab } from "./TabBar";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ModalBackdrop, ModalPanel, Spin } from "./motion/Enter";
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -480,12 +481,14 @@ interface FileMeta {
  * enthaltenen Eintraege. Eine Aenderungszeit liefert keine der beiden Routen
  * (das Listing fuellt `modified` bewusst nicht, `meta` kennt kein mtime) —
  * sie wuerde hier erfunden, also bleibt die Zeile weg.
+ *
+ * Escape, Fokusfalle und der Fokus-Rueckweg kommen vom `Dialog`-Primitiv; ein
+ * eigener `document`-Listener entfaellt damit.
  */
 function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onClose: () => void; t: Translate }) {
   const [meta, setMeta] = useState<FileMeta | null>(null);
   const [itemCount, setItemCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
   useEffect(() => {
@@ -508,28 +511,34 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
     return () => { cancelled = true; };
   }, [target]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
   return (
-    <ModalBackdrop
-      data-nested-overlay
-      style={{ position: "fixed", inset: 0, zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)" }}
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-    >
-      <ModalPanel
-        ref={panelRef}
-        role="dialog"
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent
+        bare
+        showCloseButton={false}
         aria-modal="true"
         aria-labelledby={titleId}
-        tabIndex={-1}
+        // Der alte Hintergrund war flach; `backdrop-blur-none` haelt die
+        // Weichzeichnung des Primaerformulars draussen.
+        overlayClassName="supports-backdrop-filter:backdrop-blur-none"
+        overlayStyle={{
+          position: "fixed",
+          inset: 0,
+          // Ueber dem grossen Explorer-Fenster (1300), weil dieser Dialog
+          // von dessen innerer Instanz geoeffnet werden kann und dann als
+          // eigenes Portal nicht mehr in dessen Stapelkontext liegt.
+          zIndex: 1400,
+          background: "rgba(0,0,0,0.4)",
+        }}
         style={{
+          // Das Primaerformular zentriert seinen Inhalt selbst; `bare` bringt
+          // keine Positionierung mit, deshalb hier — gleiche Lage wie zuvor
+          // im zentrierten Backdrop.
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 1401,
           width: 360,
           maxWidth: "calc(100vw - 32px)",
           display: "flex",
@@ -610,8 +619,8 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
             {t("files.cancel")}
           </Pressable>
         </div>
-      </ModalPanel>
-    </ModalBackdrop>
+      </DialogContent>
+    </Dialog>
   );
 }
 
