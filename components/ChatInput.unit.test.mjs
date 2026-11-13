@@ -283,6 +283,23 @@ test("the model menu opens, lists sorted options and closes on an outside moused
   await act(async () => { root.unmount(); });
 });
 
+test("the composer bar shows its focus in the border colour", { timeout: 30_000 }, async () => {
+  const ref = React.createRef();
+  const { container, root } = await mount(ref);
+  const bar = container.querySelector("textarea").parentElement;
+  assert.match(bar.getAttribute("style"), /color-mix\(in srgb, var\(--border\)/, "untätig trägt die Bar ihren eigenen Rand");
+
+  // Fokus und Blur bubblen vom Textfeld an die Bar; der Handler wird direkt
+  // gerufen, weil linkedom das `focusin` von React DOM nicht zustellt.
+  await act(async () => { reactProps(bar).onFocus({}); });
+  assert.match(bar.getAttribute("style"), /border:\s*1px solid var\(--accent\)/, "Fokus färbt den Rand");
+  assert.match(bar.getAttribute("style"), /border:\s*1px/, "die Randbreite bleibt 1 px");
+
+  await act(async () => { reactProps(bar).onBlur({}); });
+  assert.match(bar.getAttribute("style"), /color-mix\(in srgb, var\(--border\)/, "Blur nimmt die Farbe zurück");
+  await act(async () => { root.unmount(); });
+});
+
 test("replaceMessage only fills an empty composer", { timeout: 30_000 }, async () => {
   const ref = React.createRef();
   const { container, root } = await mount(ref);

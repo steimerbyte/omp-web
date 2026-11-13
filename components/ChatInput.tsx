@@ -565,6 +565,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // an agent works, and it leaves the bar's own box alone: the ring is painted
   // over the border box and the interior back over it.
   const gradientBorder = useGradientBorderBar({ running: isAgentRunning === true, suppressed: bashMode });
+  // Fokus-React-State statt `:focus-within`: die Bar ist inline gestylt, und
+  // die Regel in globals.css gehoert nicht diesem Bauteil.
+  const [composerFocused, setComposerFocused] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
@@ -2326,6 +2329,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           })()}
           <div
             className={gradientBorder.className}
+            // `onFocus`/`onBlur` bubblen von den Kindern hierher; damit traegt
+            // die ganze Bar den Fokuszustand, nicht nur das Textfeld.
+            onFocus={() => setComposerFocused(true)}
+            onBlur={() => setComposerFocused(false)}
             style={{
               minWidth: 0,
               display: "flex",
@@ -2337,9 +2344,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               // its box and nothing shifts.
               border: gradientBorder.active
                 ? "1px solid transparent"
-                : `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
-                  ? "rgba(234,179,8,0.4)"
-                  : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
+                : `1px solid ${composerFocused
+                  ? "var(--accent)"
+                  : bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
+                    ? "rgba(234,179,8,0.4)"
+                    : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: 14,
               padding: "10px 10px 10px 14px",
               boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
@@ -2354,6 +2363,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           )}
           <textarea
             ref={textareaRef}
+            aria-label={t("chat.messagePlaceholder")}
             value={value}
             onChange={(e) => {
               valueRef.current = e.target.value;
