@@ -106,11 +106,15 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
   eines offenen Menüs schließt `Escape` das Menü und bricht nicht den Lauf ab.
 - **Mobil**: Das Textfeld ist das **unterste** Element des Composers. Der Wrapper
   (`ChatInput.tsx`, `maxWidth: 820`) wird dort zur Flex-Spalte, die Leisten-Zeile (Kontext-Anzeige,
-  Anhänger/Modell/„Weitere Steuerung") bekommt `order: 1`, die Eingabe-Bar `order: 2`; die
+  Anhänger/Modell/„Weitere Steuerung") bekommt `order: 1`, der Anchor-Container mit der Eingabe-Bar
+  `order: 2` (die `order` gehört dorthin, nicht an die Bar — sie ist sein einziges Kind); die
   `marginTop`-Werte der Leisten werden zu `marginBottom`. Damit ist der Abstand Feld → Tastatur
   konstant 0 und unabhängig davon, wie hoch die Leisten gerade sind. Alle `focus()`-Aufrufe im
   Composer laufen mit `{ preventScroll: true }`: der WebView scrollt das Feld sonst selbst in die
-  Sicht und verschiebt es zusätzlich zur Seite.
+  Sicht und verschiebt es zusätzlich zur Seite. Der **Leerzustand** (`ChatWindow.tsx`, `isEmptyNew`)
+  hält den Composer mobil ebenfalls unten (`justifyContent: flex-end`, `paddingBottom: 0` statt der
+  Zentrierung); Desktop bleibt vertikal zentriert. Das hängt allein an `isMobile`, nicht am Fokus —
+  ein Layout, das beim Fokussieren springt, wäre der nächste Fehler.
 - **Ort**: `components/ChatInput.tsx:1095-1217` (`handleKeyDown`), `:1963` (Textfeld),
   `:2006` (Steer), `:2029` (Follow-up), `:2111` (Bild anhängen), `:2177` (Modell), `:2417`
   (mehr Steuerung), `:2677` (Komprimieren), `:2695` (Stopp), `:2766` (Steuerleiste einklappen)

@@ -47,7 +47,18 @@ globalThis.window = new Proxy(win, {
 });
 globalThis.document = win.document;
 globalThis.navigator = fakeNavigator;
-win.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null });
+// `useIsMobile` fragt genau diese Query; der Schalter erlaubt einem Test, den
+// Telefon-Fall zu mounten, ohne dass alle anderen Tests ihn sehen.
+let mobileViewport = false;
+win.matchMedia = (query) => ({
+  matches: mobileViewport && query === "(max-width: 640px)",
+  media: query,
+  addEventListener() {},
+  removeEventListener() {},
+  addListener() {},
+  removeListener() {},
+  onchange: null,
+});
 globalThis.matchMedia = win.matchMedia;
 win.getComputedStyle = () => new Proxy({}, { get: (_t, p) => (typeof p === "string" && p.startsWith("get") ? () => "" : "0px") });
 win.innerHeight = 900;
@@ -165,6 +176,27 @@ function reactProps(element) {
 
 async function tick(ms = 20) {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+}
+
+/** Der Leerzustand: neue Sitzung mit Arbeitsordner, noch ohne Nachrichten. */
+async function mountEmptyWindow() {
+  win.document.body.replaceChildren();
+  instances.length = 0;
+  const container = win.document.createElement("div");
+  win.document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(React.createElement(I18nProvider, null, React.createElement(ChatWindow, { session: null, newSessionCwd: "/work" })));
+  });
+  await tick(60);
+  return { container, root };
+}
+
+/** Der Container, der den Leerzustand ausrichtet. */
+function emptyStateBox(container) {
+  const box = [...container.querySelectorAll("div")].find((el) => el.style && el.style.justifyContent);
+  assert.ok(box, "der Leerzustand traegt eine justifyContent-Angabe");
+  return box;
 }
 
 async function mountChatWindow() {
@@ -562,4 +594,24 @@ test("a custom extension panel renders ANSI lines and forwards key, paste and te
   await sendEvent({ type: "extension_ui_request", method: "custom", id: "custom-1", lines: [], closed: true });
   assert.equal(container.querySelector('[role="dialog"]'), null);
   await act(async () => { root.unmount(); });
+});
+
+
+test("mobil haelt der Leerzustand den Composer unten, Desktop zentriert ihn", { timeout: 30_000 }, async () => {
+  mobileViewport = true;
+  try {
+    const mobile = await mountEmptyWindow();
+    const box = emptyStateBox(mobile.container);
+    assert.equal(box.style.justifyContent, "flex-end", "das Feld sitzt an der Unterkante");
+    assert.equal(box.style.paddingBottom, "0", "kein Polster unter dem Feld");
+    assert.doesNotMatch(String(box.className), /justify-center/, "keine Zentrierung mehr im Klassen-Attribut");
+    await act(async () => { mobile.root.unmount(); });
+  } finally {
+    mobileViewport = false;
+  }
+
+  const desktop = await mountEmptyWindow();
+  const box = emptyStateBox(desktop.container);
+  assert.equal(box.style.justifyContent, "center", "Desktop bleibt zentriert");
+  await act(async () => { desktop.root.unmount(); });
 });

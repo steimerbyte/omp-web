@@ -36,6 +36,7 @@ import { useShowHiddenMessages } from "@/hooks/useShowHiddenMessages";
 import { getDraft } from "@/lib/draft-store";
 import { formatTokenCount } from "@/lib/format-tokens";
 import { useDragDrop } from "@/hooks/useDragDrop";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import type { GoalStatusInfo, SessionStatsInfo, VibeStatusInfo } from "@/lib/omp-types";
 import {
   captureScrollDistance,
@@ -419,6 +420,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     return history.reverse();
   }, [messages]);
 
+  const isMobile = useIsMobile();
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
 
@@ -572,7 +574,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
       )}
 
       {isEmptyNew ? (
-        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+        /* Mobil haelt der Leerzustand den Composer unten: zentriert sitzt das
+           Feld bei offener Tastatur mittig im sichtbaren Bereich und springt
+           beim Fokus um die halbe Hoehe. Desktop bleibt zentriert. */
+        <div
+          className="flex flex-1 flex-col items-center overflow-y-auto px-4 py-8"
+          style={isMobile ? { justifyContent: "flex-end", paddingBottom: 0 } : { justifyContent: "center" }}
+        >
           <div className="w-full max-w-[820px]">
             <div
               className="mb-3"
