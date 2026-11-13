@@ -441,6 +441,25 @@ test("the navigation hides accounts from non-admins and locks project areas with
   await admin.unmount();
 });
 
+test("the Chat section toggles hidden messages without a settings request", async () => {
+  storage.clear();
+  const view = await mount({ initialSection: "chat" });
+  try {
+    const toggle = view.container.querySelector('button[aria-label="Show hidden messages"]');
+    assert.ok(toggle, "Schalter fehlt");
+    assert.equal(toggle.getAttribute("aria-pressed"), "false");
+    await act(async () => { toggle.click(); });
+    assert.equal(toggle.getAttribute("aria-pressed"), "true");
+    assert.equal(storage.get("omp-show-hidden-messages"), "true");
+    // Surface preference only: nothing goes through /api/settings.
+    assert.equal(view.calls.some((call) => call.url.startsWith("/api/settings") && call.method === "PATCH"), false);
+    await act(async () => { toggle.click(); });
+    assert.equal(storage.get("omp-show-hidden-messages"), "false");
+  } finally {
+    await view.unmount();
+  }
+});
+
 test("closing calls both callbacks, and the backdrop only closes on itself", async () => {
   const { container, calls, unmount } = await mount();
   const backdrop = container.querySelector('[role="dialog"]').parentElement;

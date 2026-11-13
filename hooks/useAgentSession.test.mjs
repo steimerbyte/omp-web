@@ -296,7 +296,10 @@ test("renders the transcript with omp's hideThinkingBlock setting", () => {
   assert.match(messageViewSource, /isHiddenAssistantBlock\(block, \{ isStreaming, hideThinking: hideThinkingBlock \}\)/);
 
   assert.match(chatWindowSource, /useSyncedDisplaySettings\(/);
-  assert.match(chatWindowSource, /displayOptions = useMemo<DisplayOptions>\(\(\) => \(\{ hideThinking: hideThinkingBlock \}\)/);
+  assert.match(chatWindowSource, /displayOptions = useMemo<DisplayOptions>\(\s*\(\) => \(\{ hideThinking: hideThinkingBlock, showHiddenMessages \}\),/);
+  // The hidden-message switch has to reach the same options the grouping reads.
+  assert.match(chatWindowSource, /const showHiddenMessages = useShowHiddenMessages\(\);/);
+  assert.match(chatWindowSource, /\(message as CustomMessage\)\.display !== false \|\| options\.showHiddenMessages === true/);
   // Turn grouping has to agree with what MessageView renders, or a message
   // made only of thinking blocks leaves an empty row behind.
   assert.match(chatWindowSource, /hasDisplayableProcessMessage\(messages\[processIdx\], displayOptions\)/);

@@ -77,6 +77,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const { MessageView } = await jiti.import("./MessageView.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+const { setShowHiddenMessages, SHOW_HIDDEN_MESSAGES_STORAGE_KEY } = await jiti.import("../hooks/useShowHiddenMessages.ts");
 
 const TWO_FILE_PATCH = `--- a/alpha.ts
 +++ b/alpha.ts
@@ -286,6 +287,9 @@ test("a compaction summary renders its body and file metadata lists", () => {
 
 test("an unknown custom message shows its type, body, details and copy control", () => {
   const longText = `${"word ".repeat(40)}end`;
+  // display:false is the harness's "not displayable" marker: by default the
+  // message does not reach the transcript at all. The switch in Settings turns
+  // it back on (covered by the mounted test below).
   const hidden = render({
     role: "custom",
     customType: "note",
@@ -294,15 +298,7 @@ test("an unknown custom message shows its type, body, details and copy control",
     content: longText,
     details: { why: "because" },
   });
-
-  assert.match(hidden, /note/);
-  assert.match(hidden, /Hidden|hidden/);
-  // display:false starts collapsed; the preview is whitespace-normalized and
-  // truncated to 140 characters plus an ellipsis.
-  assert.match(hidden, /word word word/);
-  assert.match(hidden, /\.\.\./);
-  assert.match(hidden, /Expand|Show details|Details/);
-  assert.match(hidden, /Copy/);
+  assert.equal(hidden, "");
 
   const visible = render({
     role: "custom",
@@ -586,29 +582,67 @@ test("the custom-message copy and detail toggles work", { timeout: 30_000 }, asy
   await act(async () => { root.unmount(); });
 });
 
-test("a hidden custom message expands and collapses its details", { timeout: 30_000 }, async () => {
+test("a hidden custom message expands and collapses its details once the switch is on", { timeout: 30_000 }, async () => {
   // Der eingeklappte Vorschau-Knopf zeigt die ersten 140 Zeichen; der Marker
   // am Ende beweist, ob der Volltext wirklich wieder eingeklappt ist.
   const body = `HIDDENSTART ${"q ".repeat(100)} HIDDENEND`;
-  const { container, root } = await mount(React.createElement(MessageView, {
-    message: {
-      role: "custom",
-      customType: "note",
-      display: false,
-      content: body,
-      details: { reason: "compact" },
-    },
-  }));
+  setShowHiddenMessages(true);
+  try {
+    const { container, root } = await mount(React.createElement(MessageView, {
+      message: {
+        role: "custom",
+        customType: "note",
+        display: false,
+        content: body,
+        details: { reason: "compact" },
+      },
+    }));
 
+    assert.match(container.textContent, /hidden extension message/);
+    assert.doesNotMatch(container.textContent, /HIDDENEND/);
+    await click(buttonByText(container, "Expand"));
+    assert.match(container.textContent, /HIDDENEND/);
+    assert.match(container.textContent, /"reason": "compact"/);
+    await click(buttonByText(container, "Collapse"));
+    assert.doesNotMatch(container.textContent, /HIDDENEND/);
+    assert.doesNotMatch(container.textContent, /"reason": "compact"/);
+    await act(async () => { root.unmount(); });
+  } finally {
+    setShowHiddenMessages(false);
+  }
+});
+
+test("a hidden custom message stays out of the transcript until the switch is on", { timeout: 30_000 }, async () => {
+  const { container, root } = await mount(React.createElement(MessageView, {
+    message: { role: "custom", customType: "note", display: false, content: "hidden body" },
+  }));
+  assert.doesNotMatch(container.textContent, /hidden extension message|hidden body/);
+
+  await act(async () => { setShowHiddenMessages(true); });
   assert.match(container.textContent, /hidden extension message/);
-  assert.doesNotMatch(container.textContent, /HIDDENEND/);
-  await click(buttonByText(container, "Expand"));
-  assert.match(container.textContent, /HIDDENEND/);
-  assert.match(container.textContent, /"reason": "compact"/);
-  await click(buttonByText(container, "Collapse"));
-  assert.doesNotMatch(container.textContent, /HIDDENEND/);
-  assert.doesNotMatch(container.textContent, /"reason": "compact"/);
+  assert.match(container.textContent, /hidden body/);
+
+  await act(async () => { setShowHiddenMessages(false); });
+  assert.doesNotMatch(container.textContent, /hidden extension message/);
   await act(async () => { root.unmount(); });
+});
+
+test("the switch persists under the key the next page load reads", () => {
+  setShowHiddenMessages(true);
+  assert.equal(globalThis.localStorage.getItem(SHOW_HIDDEN_MESSAGES_STORAGE_KEY), "true");
+  setShowHiddenMessages(false);
+  assert.equal(globalThis.localStorage.getItem(SHOW_HIDDEN_MESSAGES_STORAGE_KEY), "false");
+});
+
+test("an async-result stays visible although it carries display:false", () => {
+  const html = render({
+    role: "custom",
+    customType: "async-result",
+    display: false,
+    content: "Agent Scout finished: found 3 call sites.",
+  });
+  assert.match(html, /Background result/);
+  assert.match(html, /Agent Scout finished: found 3 call sites\./);
 });
 
 test("a vibe tool renders its screen wall, spawn line and output", () => {

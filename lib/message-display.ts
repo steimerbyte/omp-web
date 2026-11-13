@@ -4,6 +4,8 @@ export interface DisplayOptions {
   isStreaming?: boolean;
   /** omp's `hideThinkingBlock` setting: drop thinking blocks entirely. */
   hideThinking?: boolean;
+  /** Surface switch for custom messages the harness marked `display: false`. */
+  showHiddenMessages?: boolean;
 }
 
 export function isEmptyThinkingBlock(block: AssistantContentBlock, options: DisplayOptions = {}): block is ThinkingContent {

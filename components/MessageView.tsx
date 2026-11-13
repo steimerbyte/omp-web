@@ -10,6 +10,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isHiddenAssistantBlock } from "@/lib/message-display";
 import { useDisplaySettings } from "@/hooks/useDisplaySettings";
+import { useShowHiddenMessages } from "@/hooks/useShowHiddenMessages";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { normalizeCustomPanelLines, parseAnsiLine, stripAnsi } from "@/lib/ansi";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
@@ -235,6 +236,7 @@ function haveSameRelevantToolResults(
 }
 
 export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
+  const showHiddenMessages = useShowHiddenMessages();
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
@@ -254,6 +256,10 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     if ((message as CustomMessage).customType === "async-result") {
       return <BackgroundResultView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
     }
+    // The harness marks context-only notices with `display: false`. An absent
+    // field (sessions written before the flag existed) stays visible: only an
+    // explicit false hides it.
+    if ((message as CustomMessage).display === false && !showHiddenMessages) return null;
     return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (message.role === "bashExecution") {

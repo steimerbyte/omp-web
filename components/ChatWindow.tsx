@@ -32,6 +32,7 @@ import { OmpWordmark } from "./OmpWordmark";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useSyncedDisplaySettings } from "@/hooks/useDisplaySettings";
+import { useShowHiddenMessages } from "@/hooks/useShowHiddenMessages";
 import { getDraft } from "@/lib/draft-store";
 import { formatTokenCount } from "@/lib/format-tokens";
 import { useDragDrop } from "@/hooks/useDragDrop";
@@ -128,7 +129,9 @@ function hasDisplayableProcessMessage(message: AgentMessage, options: DisplayOpt
   if (message.role === "assistant") {
     return getDisplayableAssistantBlocks(message as AssistantMessage, options).length > 0;
   }
-  return message.role === "custom";
+  if (message.role !== "custom") return false;
+  // A hidden notice must not leave an empty "Process (1 message)" row behind.
+  return (message as CustomMessage).display !== false || options.showHiddenMessages === true;
 }
 
 // A user message normally anchors a turn (user prompt → process → final
@@ -255,7 +258,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
   // omp's render-affecting settings (hideThinkingBlock). Synced here once for
   // the whole transcript; MessageView reads the shared store directly.
   const { hideThinkingBlock } = useSyncedDisplaySettings(newSessionCwd ?? session?.cwd ?? null);
-  const displayOptions = useMemo<DisplayOptions>(() => ({ hideThinking: hideThinkingBlock }), [hideThinkingBlock]);
+  const showHiddenMessages = useShowHiddenMessages();
+  const displayOptions = useMemo<DisplayOptions>(
+    () => ({ hideThinking: hideThinkingBlock, showHiddenMessages }),
+    [hideThinkingBlock, showHiddenMessages],
+  );
 
   // A prefilled draft is written by a panel before this component mounts (New
   // skill / Edit with AI in `SkillsManagerView`). `ChatInput` has no mount

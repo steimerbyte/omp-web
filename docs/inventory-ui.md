@@ -269,9 +269,15 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
   Thinking-Block, Diff-Header, Todo-Checkliste, Fehlerbanner.
 - **Tastatur**: **Keine eigenen Tastenkürzel.** Copy, Fork und Todo sind `<button>` ohne
   `onKeyDown` — sie reagieren nur auf `Enter`/`Leertaste` über den nativen Klick.
-- **Darf nicht**: Der Thinking-Block trägt `aria-label` (`MessageView.tsx:828`) und ist als
+- **Darf nicht**: Der Thinking-Block trägt `aria-label` (`MessageView.tsx:841`) und ist als
   aufklappbar beschriftet — kein Fehler, aber beim Umbau auf `<details>` wäre die Beschriftung weg.
-- **Ort**: `components/MessageView.tsx:380-450`, `:655`, `:828`, `:940-941`, `:1210-1255`, `:1431`
+  Eine Custom-Nachricht mit `display: false` **wird standardmäßig nicht gerendert** (`:262`); nur
+  `compaction` und `async-result` laufen vorher in eigene Ansichten. Fehlt das Feld (alte Session),
+  bleibt die Nachricht sichtbar — nur ein explizites `false` versteckt sie. Der Schalter
+  „Versteckte Meldungen anzeigen" (Abschnitt Chat) holt die zugeklappte Box zurück; der Hook
+  `hooks/useShowHiddenMessages.ts` liegt im `localStorage`, nicht in `/api/settings`.
+- **Ort**: `components/MessageView.tsx:238`, `:258-262`, `:287`, `:490`, `:841`, `:1890`, `:2010`,
+  `:2059-2200`
 
 ### BranchNavigator — Worktree-/Branch-Umschalter
 - **Kann**: Liste der Branches/Worktrees eines Projekts, Auswahl erzeugt bzw. wechselt den Worktree.
@@ -399,16 +405,16 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
 ## 4. Einstellungen (`SettingsConfig` und die Abschnitte)
 
 ### SettingsConfig — Fenster „Settings"
-- **Kann**: Modal mit Seitenleiste und neun Abschnitten: Models, Themes, Skills, Plugins, MCP,
-  Access, Accounts, Quick phrases, Animations (`SettingsConfig.tsx:41-49`). Die Beschriftungen
+- **Kann**: Modal mit Seitenleiste und zehn Abschnitten: Models, Themes, Skills, Plugins, MCP,
+  Access, Accounts, Quick phrases, Scheduled tasks, Chat, Animations (`SettingsConfig.tsx:43-55`). Die Beschriftungen
   sind hartkodiert englisch. Skills/Plugins/Accounts tragen `requiresCwd` bzw. `requiresAdmin`
-  und werden ohne Projekt bzw. ohne Adminrolle deaktiviert (`:383`).
-- **Tastatur**: In den Auswahlknöpfen löst `Enter` `blur()` aus (`:123`), damit der Wert greift.
+  und werden ohne Projekt bzw. ohne Adminrolle deaktiviert (`:390`).
+- **Tastatur**: In den Auswahlknöpfen löst `Enter` `blur()` aus (`:129`), damit der Wert greift.
   Das Fenster selbst: **kein Escape-Handler** (grep: null Treffer für `"Escape"` in der Datei).
-  Es ist ein eigenes `role="dialog" aria-modal="true"` (`:377`), kein radix-Dialog.
+  Es ist ein eigenes `role="dialog" aria-modal="true"` (`:383`), kein radix-Dialog.
 - **Darf nicht**: Kein weiterer belegter Punkt. Dass das Fenster keinen Escape-Handler hat, ist
   der Zustand — nicht die Absicht, und nicht als Fehler dokumentiert.
-- **Ort**: `components/SettingsConfig.tsx:41-49`, `:123`, `:377-383`
+- **Ort**: `components/SettingsConfig.tsx:43-55`, `:129`, `:383`, `:395`
 
 ### UsersConfig — Abschnitt „Accounts"
 - **Kann**: Konten anlegen, deaktivieren, aktivieren, Passwort setzen. Ladezustand
@@ -436,6 +442,20 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
   Enter. Ein pauschales `preventDefault()` ohne `canSave*` würde ein unvollständiges Formular
   "speichern".
 - **Ort**: `components/AccessConfig.tsx:144`, `:199`, `:228`, `:284`
+
+### ChatDisplayConfig — Abschnitt „Chat"
+- **Kann**: Ein Schalter „Show hidden messages" / „Versteckte Meldungen anzeigen" — rendert die
+  Custom-Nachrichten, die der Harness mit `display: false` markiert hat (MCP-Mount-Hinweise,
+  Tool-Roster-, Session-Agent-Notices), wieder als zugeklappte Box im Transkript. Standard ist
+  **aus**: solche Meldungen sind Kontext, keine Unterhaltung.
+- **Tastatur**: Ein nativer `<button className={styles.switch}>` mit `aria-pressed` und
+  `aria-label` (Muster `GradientBorderConfig.tsx:58-60`), keine eigene Tastenbindung.
+- **Darf nicht**: Der Wert geht **nicht** über `/api/settings` — dort projiziert der Server ein
+  fremdes Schema aus dem gepinnten SDK. Er liegt als Oberflächen-Präferenz im `localStorage`
+  (`omp-show-hidden-messages`, `hooks/useShowHiddenMessages.ts`) wie `omp-animations` und
+  `omp-sound-enabled`; `getServerSnapshot` liefert `false`, der Server rendert also nie eine
+  versteckte Meldung.
+- **Ort**: `components/SettingsConfig.tsx:403-441`, `:395`, `hooks/useShowHiddenMessages.ts`
 
 ### AnimationsConfig — Abschnitt „Animations"
 - **Kann**: Wählt den Animationsmodus (`off` / reduziert / voll). Die Auswahl steuert

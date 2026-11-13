@@ -13,7 +13,9 @@ import { Skeleton } from "./motion/Skeleton";
 import { SearchableSelect } from "./SearchableSelect";
 import { Badge } from "@/components/ui/badge";
 import { refreshOmpTheme, useTheme } from "@/hooks/useTheme";
+import { useI18n } from "@/hooks/useI18n";
 import { refreshDisplaySettings } from "@/hooks/useDisplaySettings";
+import { setShowHiddenMessages, useShowHiddenMessages } from "@/hooks/useShowHiddenMessages";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type {
   McpConfigResponse,
@@ -27,7 +29,7 @@ import type {
 } from "@/lib/settings-api";
 import styles from "./SettingsConfig.module.css";
 
-type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "access" | "users" | "quickPhrases" | "scheduled" | "animations" | `settings:${string}`;
+type SettingsSection = "models" | "themes" | "skills" | "plugins" | "mcp" | "access" | "users" | "quickPhrases" | "scheduled" | "chat" | "animations" | `settings:${string}`;
 
 interface SettingsConfigProps {
   cwd?: string | null;
@@ -48,6 +50,7 @@ const CORE_SECTIONS: Array<{ id: SettingsSection; label: string; icon: string; r
   { id: "users", label: "Accounts", icon: "users", requiresAdmin: true },
   { id: "quickPhrases", label: "Quick phrases", icon: "quickPhrases" },
   { id: "scheduled", label: "Scheduled tasks", icon: "tasks" },
+  { id: "chat", label: "Chat", icon: "chat" },
   { id: "animations", label: "Animations", icon: "animations" },
 ];
 
@@ -61,6 +64,7 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   users: <><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 6.5a3 3 0 0 1 0 5.8M17 20a5 5 0 0 0-2-4"/></>,
   quickPhrases: <><rect x="3" y="9" width="18" height="6" rx="3"/><path d="M7 12h.01M12 12h.01M17 12h.01"/></>,
   animations: <><path d="M3 12h4l3-7 4 14 3-7h4"/></>,
+  chat: <><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M8 9h8m-8 3h5"/></>,
   appearance: <><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18"/></>,
   interaction: <><path d="M4 5h16v11H9l-5 4V5Z"/><path d="M8 9h8m-8 3h5"/></>,
   context: <><path d="M5 3h11l3 3v15H5z"/><path d="M15 3v4h4M8 11h8m-8 4h8"/></>,
@@ -389,8 +393,48 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
           <div className={styles.closeRail}><button type="button" className={styles.closeButton} onClick={close}><span>Close settings</span><span aria-hidden="true">×</span></button></div>
         </aside>
         <main className={styles.content}>
-          {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : section === "scheduled" ? <ScheduledTasksSettings /> : section === "animations" ? <AnimationsConfig /> : renderGenericSettings()}
+          {query.trim() ? renderGenericSettings() : section === "models" ? <ModelsConfig cwd={cwd} embedded onClose={close} onModelsChanged={onModelsChanged} /> : section === "themes" ? renderThemeSection() : section === "skills" && cwd ? <SkillsConfig cwd={cwd} embedded onClose={close} /> : section === "plugins" && cwd ? <PluginsConfig cwd={cwd} sessionId={sessionId} embedded onClose={close} onReloaded={onReloaded} /> : section === "mcp" ? <McpSettings cwd={cwd} sessionId={sessionId} onReloaded={onReloaded} /> : section === "access" ? <AccessConfig /> : section === "users" ? <UsersConfig /> : section === "quickPhrases" ? <QuickPhrasesConfig /> : section === "scheduled" ? <ScheduledTasksSettings /> : section === "chat" ? <ChatDisplayConfig /> : section === "animations" ? <AnimationsConfig /> : renderGenericSettings()}
         </main>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The "Chat" section: surface preferences of the transcript.
+ *
+ * A pure browser preference (see `hooks/useShowHiddenMessages.ts`), so the
+ * switch writes `localStorage` and nothing else — the same line as the
+ * gradient border, and deliberately not a `/api/settings` key.
+ */
+function ChatDisplayConfig() {
+  const { t } = useI18n();
+  const showHiddenMessages = useShowHiddenMessages();
+  return (
+    <div className={styles.scrollContent}>
+      <header className={styles.contentHeader}>
+        <h2 className={styles.contentTitle}>{t("settings.chatTitle")}</h2>
+        <p className={styles.contentDescription}>{t("settings.chatDescription")}</p>
+      </header>
+      <div className={styles.settingsBody}>
+        <div className={styles.group}>
+          <div className={styles.settingRow}>
+            <div>
+              <div className={styles.settingLabel}>{t("settings.showHiddenMessages")}</div>
+              <div className={styles.settingDescription}>{t("settings.showHiddenMessagesDescription")}</div>
+            </div>
+            <div className={styles.settingControl}>
+              <button
+                type="button"
+                className={styles.switch}
+                data-on={showHiddenMessages}
+                aria-pressed={showHiddenMessages}
+                aria-label={t("settings.showHiddenMessages")}
+                onClick={() => setShowHiddenMessages(!showHiddenMessages)}
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
