@@ -1297,6 +1297,34 @@ TypeScript half type-checks against — keep the two in sync.
   (`gradientBorderGlowSpread()`); a halo inside the ring is not a halo but a
   smear.
 
+### Dialogs and row menus
+- **One dialog size, one layer, one row menu.** `.window` in
+  `components/SettingsConfig.module.css` is the single full-screen size: 95 %
+  of each axis, so 2.5 % margin per side — a window at 100 % puts its controls
+  on the edge, where on a phone the status bar, the gesture area and the thumb
+  are. `width: min(1180px, 95%)` keeps the desktop cap in the same line as the
+  phone branch; `%` not `vw` (a scrollbar counts into `vw`), `dvh` not `vh`
+  (the address bar shrinks the visible height). The class has exactly two
+  users and both want that size, so there is no helper class on top;
+  `viewportInset` is gone and a test fails if it comes back. Only the settings
+  window carries `.withRail` for the 238 px / 82 px navigation columns — the
+  accounts confirmation inherited them and wrapped its text to one word per
+  line.
+- **`DialogContent` owns the layer of the pair.** `components/ui/dialog.tsx`
+  writes the same `z-index` (`layer`, default 50) onto the overlay *and* the
+  window; the window follows in the DOM and wins the tie. Callers pass numbers
+  only: confirm/new-project 200, settings and users 1000, skills delete 1200,
+  explorer window 1300, image preview 1302, properties 1400. A `bare` panel
+  centres itself and there is no `page` context — a `z-index` on the overlay
+  alone also stacks the window underneath it, and under `backdrop-filter`,
+  which is how v0.29.0 shipped dialogs that were a full-screen blur.
+- **`components/ui/dropdown-menu.tsx` is the row-menu primitive.** Its trigger
+  is always visible — hover-only buttons were the mobile defect, a touch device
+  never hovers — and its portalled content stops propagation: React portals
+  bubble through the *React* tree, so without the stop a click on a menu item
+  also fires the row handler whose button opened the menu. Hit targets are
+  26 px (session row) and 24 px (tree row) on desktop, 44 px on touch.
+
 ### Comments that state a number need a test that checks that number
 - **A comment naming a figure, a duration or a measurement requires a test that
   asserts the same figure.** Otherwise the next reader is worse off than the
