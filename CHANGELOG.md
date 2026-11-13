@@ -154,6 +154,38 @@ Released 2026-11-13.
 - Gate: **3116 pass, 3 skip, 0 fail** (3119 Tests in 395 Dateien), Coverage
   4340/5054 Funktionen = 85,9 %, 18 Debt. `bun run typecheck` grün.
 
+### Was im Einzelnen
+
+- **Seitenleiste**: Session-Zeilen als Knopf im Fokusfluss (`role`, `tabIndex`,
+  `aria-current`, Enter/Space); Fokusring am Suchfeld;
+  Umbenennen/Archivieren/Löschen auf Touch dauerhaft sichtbar; sechs Skeletons
+  statt Textzeile beim Laden und „Erneut laden" bei Fehler; Indikatoren halten
+  sich an „Animationen aus" (`Spin` statt SMIL); Session-Zeile mobil 44 px
+  (Höhe aus einer abgeleiteten Quelle für Zeile, Virtuoso-Schätzung, Skeletons);
+  Tab-Leiste mobil 44 px inklusive Schließen-Knopf.
+- **Explorer**: Trefferflächen 14/18/20 → 24 px (Chevron visuell 14); Baumzeilen
+  mobil 36 px, Desktop 24; falsche `role="listbox"` mit Knopf-Kindern entfernt;
+  Eigenschaften-Dialog, großes Explorer-Fenster und Bildvorschau auf das
+  Radix-Dialog-Primitiv (Escape, Fokusfalle, Fokus-Rückgabe); dabei ein echter
+  Fehler behoben — das Portal hängt den Inhalt erst im zweiten Render ein,
+  Bühnenmessung und Rad-Zoom liefen ins Leere.
+- **Composer**: Fokusfarbe am Feld und `aria-label`; ARIA für History-, Slash-
+  und `@`-Popup (`listbox`/`option`, `aria-selected`, `aria-activedescendant`,
+  `aria-controls`, `aria-haspopup`); acht neue i18n-Schlüssel in en/de/zh;
+  Modellname im Tooltip und Skeleton für den 32-px-Slot während des Ladens;
+  Spinner aus `components/motion` statt `animation:`-String.
+- **Farben und Kontraste**: 59 Literale durch Theme-Tokens ersetzt, vier neue
+  `--git-*`-Variablen; `--text-dim` 2,83 → 4,83 (hell) und 3,67 → 5,38
+  (dunkel), `#4ade80` 1,74 → 4,75; Auswahl überall `--bg-selected` plus
+  2-px-Akzentkante, Tab-Leiste nicht mehr invertiert; Geometrie-Tokens
+  `--radius-control` 6 px, `--radius-panel` 10 px, `--duration-hover` 120 ms
+  für 54 Radien und 57 Hover-Dauern, mit benannten Ausnahmen (14/999,
+  4-px-Zeilen, Composer-Radius 8).
+- **Sicherungen**: `lib/theme-contrast.test.mjs` (12 Paare × 2 Themes),
+  `lib/theme-tokens.test.mjs` (Tokens in beiden Blöcken),
+  `components/FileExplorer.dialogs.test.mjs` (Escape, Fokus, Verschachtelung
+  zweier Dialoge).
+
 ## v0.28.0
 Released 2026-11-13.
 
