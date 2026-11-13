@@ -300,6 +300,30 @@ test("the composer bar shows its focus in the border colour", { timeout: 30_000 
   await act(async () => { root.unmount(); });
 });
 
+test("the composer's visible labels follow the chosen language", { timeout: 30_000 }, async () => {
+  localStorage.setItem("pi-locale", "de");
+  try {
+    const ref = React.createRef();
+    const { container, root } = await mount(ref, { isStreaming: true, onSteer: () => {}, onFollowUp: () => {} });
+    assert.equal(
+      container.querySelector("textarea").getAttribute("aria-label"),
+      "Nachricht … Mit / für Befehle, mit @ für Dateien",
+      "das Textfeld traegt seinen Namen aus dem Katalog",
+    );
+    assert.ok(
+      container.querySelector('button[title="Modell wechseln"]'),
+      "der Modell-Knopf ist uebersetzt",
+    );
+    assert.ok(
+      container.querySelector('button[title="Den aktuellen Lauf unterbrechen und diese Nachricht sofort einspeisen"]'),
+      "der Steer-Hinweis ist uebersetzt",
+    );
+    await act(async () => { root.unmount(); });
+  } finally {
+    localStorage.removeItem("pi-locale");
+  }
+});
+
 test("replaceMessage only fills an empty composer", { timeout: 30_000 }, async () => {
   const ref = React.createRef();
   const { container, root } = await mount(ref);
