@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { WebAccount } from "@/bin/web-auth-store.js";
 import type { WhoAmIResponse } from "@/app/api/whoami/route";
+import { Dialog, DialogContent } from "./ui/dialog";
 import styles from "./SettingsConfig.module.css";
 import { Skeleton } from "./motion/Skeleton";
 
@@ -348,8 +349,15 @@ export function UsersConfig() {
         mehr, als es Aerger macht.
       */}
       {pending && (
-        <div className={styles.backdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) setPending(null); }}>
-          <div className={styles.window} role="dialog" aria-modal="true" aria-label="Confirm">
+        <Dialog open onOpenChange={(next) => { if (!next) setPending(null); }}>
+          <DialogContent
+            bare
+            showCloseButton={false}
+            aria-modal="true"
+            aria-label="Confirm"
+            overlayClassName={styles.backdrop}
+            className={styles.window}
+          >
             <div className={styles.mcpEditor}>
               <header className={styles.contentHeader}>
                 <h2 className={styles.contentTitle}>
@@ -402,8 +410,8 @@ export function UsersConfig() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

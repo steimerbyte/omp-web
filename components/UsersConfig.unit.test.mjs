@@ -20,6 +20,22 @@ const win = dom.window;
 restoreLinkedomPrototypesOnExit(win);
 const nav = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };
 win.getComputedStyle = () => new Proxy({}, { get: (_t, p) => (typeof p === "string" && p.startsWith("get") ? () => "" : "0px") });
+// linkedom hat keinen Fokus; ohne Ersatz ist weder "Fokus liegt im Dialog"
+// noch der Rueckweg zum Ausloeser messbar.
+let activeElement = win.document.body;
+Object.defineProperty(win.document, "activeElement", {
+  get: () => (activeElement?.isConnected === false ? win.document.body : activeElement),
+  configurable: true,
+});
+/** Eigener Setter statt `activeElement = this`: `no-this-alias` verbietet das. */
+function setActive(element) {
+  activeElement = element;
+}
+win.HTMLElement.prototype.focus = function focus() {
+  const tag = this.tagName;
+  if (!(tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || tag === "A" || tag === "SELECT") && !this.hasAttribute("tabindex")) return;
+  setActive(this);
+};
 win.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false });
 globalThis.window = new Proxy(win, {
   get(target, prop) {
@@ -135,8 +151,18 @@ function button(container, text) {
   return [...container.querySelectorAll("button")].find((node) => (node.textContent ?? "").trim() === text);
 }
 
-function dialogButton(container, text) {
-  return [...container.querySelector('[role="dialog"]').querySelectorAll("button")]
+// Radix haengt den Dialog als Portal an `document.body`; der Komponenten-
+// Container enthaelt ihn nicht mehr.
+const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); }); };
+const dialog = () => win.document.querySelector('[role="dialog"]');
+const escape = () => Object.assign(new win.Event("keydown", { bubbles: true, cancelable: true }), { key: "Escape", code: "Escape" });
+// `button: 1`: bei der linken Taste liest Radix das `target` des `pointerdown`
+// erst beim folgenden `click` — linkedom hat es dann schon verworfen. Die
+// mittlere Taste nimmt den direkten Weg und prueft dieselbe Absicht.
+const pointerDownOutside = () => Object.assign(new win.Event("pointerdown", { bubbles: true, cancelable: true }), { button: 1, pointerType: "mouse" });
+
+function dialogButton(_container, text) {
+  return [...dialog().querySelectorAll("button")]
     .find((node) => (node.textContent ?? "").trim() === text);
 }
 
@@ -202,8 +228,8 @@ test("a refused list is its own state, not an empty account list", async () => {
 test("removing your own admin role explains the following 403", async () => {
   const { container, calls, unmount } = await mount({ denyAfterWrite: true });
   await act(async () => { button(container, "Remove admin").click(); });
-  const dialog = container.querySelector('[role="dialog"]');
-  assert.match(dialog.textContent, /You are removing your own role/);
+  const panel = dialog();
+  assert.match(panel.textContent, /You are removing your own role/);
   await act(async () => { dialogButton(container, "Remove admin").click(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
   assert.deepEqual(calls.find((call) => call.method === "PATCH").body, {
@@ -219,14 +245,14 @@ test("removing your own admin role explains the following 403", async () => {
 test("disabling an account goes through the inline confirmation", async () => {
   const { container, calls, unmount } = await mount();
   await act(async () => { rowButton(container, "tenant · disabled", "Enable").click(); });
-  const dialog = container.querySelector('[role="dialog"]');
-  assert.match(dialog.textContent, /Enable tenant\?/);
+  const panel = dialog();
+  assert.match(panel.textContent, /Enable tenant\?/);
   // Cancel leaves the store untouched.
   await act(async () => { dialogButton(container, "Cancel").click(); });
   assert.equal(calls.filter((call) => call.method === "PATCH").length, 0);
 
   await act(async () => { rowButton(container, "admin · admin", "Disable").click(); });
-  assert.match(container.querySelector('[role="dialog"]').textContent, /Disable admin\?/);
+  assert.match(dialog().textContent, /Disable admin\?/);
   await act(async () => { dialogButton(container, "Disable account").click(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
   assert.deepEqual(calls.find((call) => call.method === "PATCH").body, {
@@ -238,10 +264,38 @@ test("disabling an account goes through the inline confirmation", async () => {
   await unmount();
 });
 
+test("Escape und der Klick daneben schliessen die Rueckfrage", async () => {
+  const { container, unmount } = await mount();
+  await act(async () => { button(container, "Make admin").click(); });
+  assert.ok(dialog(), "die Rueckfrage wurde nicht geoeffnet");
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  assert.equal(dialog(), null, "Escape hat die Rueckfrage nicht geschlossen");
+
+  await act(async () => { button(container, "Make admin").click(); });
+  await act(async () => { dialog().dispatchEvent(pointerDownOutside()); });
+  assert.ok(dialog(), "ein Klick im Panel hat geschlossen");
+  await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });
+  assert.equal(dialog(), null, "der Klick daneben hat nicht geschlossen");
+  await unmount();
+});
+
+test("der Fokus steht in der Rueckfrage und danach wieder auf dem ausloesenden Knopf", async () => {
+  const { container, unmount } = await mount();
+  const ask = rowButton(container, "tenant · disabled", "Enable");
+  await act(async () => { ask.focus(); ask.click(); });
+  assert.ok(dialog().contains(win.document.activeElement), `Fokus liegt ausserhalb: ${win.document.activeElement?.tagName}`);
+
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  await flush();
+  assert.equal(dialog(), null);
+  assert.equal(win.document.activeElement, ask, "der Fokus ist nicht zum Ausloeser zurueckgekehrt");
+  await unmount();
+});
+
 test("granting admin asks first and names the reach", async () => {
   const { container, calls, unmount } = await mount();
   await act(async () => { button(container, "Make admin").click(); });
-  assert.match(container.querySelector('[role="dialog"]').textContent, /every directory on this host/);
+  assert.match(dialog().textContent, /every directory on this host/);
   await act(async () => { dialogButton(container, "Make administrator").click(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
   assert.deepEqual(calls.find((call) => call.method === "PATCH").body, {
@@ -374,7 +428,7 @@ test("revoking another admin explains what they keep", async () => {
     ],
   });
   await act(async () => { rowButton(container, "second-admin · admin", "Remove admin").click(); });
-  assert.match(container.querySelector('[role="dialog"]').textContent, /They keep their directory and everything in it/);
+  assert.match(dialog().textContent, /They keep their directory and everything in it/);
   await unmount();
 });
 
