@@ -1577,6 +1577,13 @@ html.dark .chat-session-column::before {
   white-space: nowrap;
 }
 
+/* Das Suchfeld der Leiste war das einzige Eingabefeld ohne Fokusring
+ * (`outline: none` inline). Dieselbe Signatur wie `.sidebar-nav-button`. */
+.sidebar-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* Auf dem Telefon und auf Geraeten ohne Zeiger gibt es kein Hover. Die
  * Reihenknoepfe ("neue Sitzung", Projektmenue) waren dort unsichtbar und
  * unerreichbar; hier sind sie sichtbar und 44px gross. `!important`, weil die

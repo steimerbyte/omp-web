@@ -1364,6 +1364,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           </svg>
           <input
             type="search"
+            className="sidebar-search"
             value={projectFilter}
             onChange={(event) => setProjectFilter(event.target.value)}
             onKeyDown={(event) => {
@@ -1381,7 +1382,6 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
               padding: "0 10px 0 32px",
               border: "1px solid var(--border)",
               borderRadius: 7,
-              outline: "none",
               background: "var(--bg-hover)",
               color: "var(--text)",
               fontFamily: "var(--font-mono)",
