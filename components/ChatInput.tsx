@@ -1624,6 +1624,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     : null;
   const currentName = displayModelName;
 
+  // Die drei Popups am Textfeld (Verlauf, Slash, @) sind Listen, die der
+  // Editor per Pfeiltasten fuehrt. Dieselbe Reihenfolge wie in
+  // `handleKeyDown`: Verlauf vor Slash vor @.
+  const activeOptionId = historyMenuOpen && inputHistory.length > 0
+    ? `chatinput-history-option-${historyActiveIndex}`
+    : slashMenuOpen && slashQuery !== null && displayedSlashCommands[slashActiveIndex]
+      ? `chatinput-slash-option-${slashActiveIndex}`
+      : atMenuOpen && atQuery !== null && atMatches[atActiveIndex]
+        ? `chatinput-at-option-${atActiveIndex}`
+        : undefined;
+  const openPopupIds = [
+    historyMenuOpen && inputHistory.length > 0 ? "chatinput-history-list" : null,
+    slashMenuOpen && slashQuery !== null ? "chatinput-slash-list" : null,
+    atMenuOpen && atQuery !== null ? "chatinput-at-list" : null,
+  ].filter((id): id is string => id !== null).join(" ");
+
   const compactSavedTokens = compactResult
     ? Math.max(0, compactResult.tokensBefore - compactResult.estimatedTokensAfter)
     : 0;
@@ -2044,12 +2060,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <path d="M12 7v5l3 2" />
                 </svg>
               </div>
-              <div style={{ maxHeight: Math.max(0, historyPlacement.maxHeight - 31), overflowY: "auto", padding: 4 }}>
+              <div
+                id="chatinput-history-list"
+                role="listbox"
+                aria-label={t("chat.inputHistory")}
+                style={{ maxHeight: Math.max(0, historyPlacement.maxHeight - 31), overflowY: "auto", padding: 4 }}
+              >
                 {inputHistory.map((item, index) => {
                   const active = index === historyActiveIndex;
                   return (
                     <button
                       key={`${index}:${item}`}
+                      id={`chatinput-history-option-${index}`}
+                      role="option"
+                      aria-selected={active}
                       ref={(node) => {
                         historyItemRefs.current[index] = node;
                       }}
@@ -2118,15 +2142,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                  <span>{slashCommandsLoading ? t("chat.loadingCommands") : t("chat.slashCommands", { label: slashCommandCountLabel })}</span>
                  <Kbd className="h-4 px-1 text-[10px]">{t("chat.tabEnter")}</Kbd>
               </div>
-              <div style={{ maxHeight: Math.max(0, slashPlacement.maxHeight - 34), overflowY: "auto", padding: 10 }}>
+              <div
+                id="chatinput-slash-list"
+                role="listbox"
+                aria-label={t("chat.slashCommands", { label: slashCommandCountLabel })}
+                style={{ maxHeight: Math.max(0, slashPlacement.maxHeight - 34), overflowY: "auto", padding: 10 }}
+              >
                 {!slashCommandsLoading && filteredSlashCommands.length === 0 ? (
-                  <div style={{ padding: "2px 2px 4px", fontSize: 12, color: "var(--text-dim)" }}>
+                  <div role="presentation" style={{ padding: "2px 2px 4px", fontSize: 12, color: "var(--text-dim)" }}>
                      {t("chat.noCommands")}
                   </div>
                 ) : (
                   groupedSlashCommands.map((group) => (
-                    <section key={group.source} style={{ marginBottom: 12 }}>
+                    <section
+                      key={group.source}
+                      role="group"
+                      aria-label={t(SLASH_SOURCE_GROUP_LABEL_KEYS[group.source])}
+                      style={{ marginBottom: 12 }}
+                    >
                       <div
+                        role="presentation"
                         style={{
                           position: "sticky",
                           top: -10,
@@ -2147,6 +2182,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>{group.items.length}</span>
                       </div>
                       <div
+                        role="presentation"
                         style={{
                           display: "grid",
                           gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
@@ -2159,6 +2195,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           return (
                             <button
                               key={`${command.source}:${command.name}`}
+                              id={`chatinput-slash-option-${index}`}
+                              role="option"
+                              aria-selected={active}
                               ref={(node) => {
                                 slashItemRefs.current[index] = node;
                               }}
@@ -2274,9 +2313,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </span>
                    <Kbd className="h-4 px-1 text-[10px]">{t("chat.tabEnter")}</Kbd>
                 </div>
-                <div style={{ maxHeight: Math.max(atPlacement.maxHeight - 34, 0), overflowY: "auto", padding: 4 }}>
+                <div
+                  id="chatinput-at-list"
+                  role="listbox"
+                  aria-label={t("chat.files", { label: matchCountLabel, hint: "" })}
+                  style={{ maxHeight: Math.max(atPlacement.maxHeight - 34, 0), overflowY: "auto", padding: 4 }}
+                >
                   {!indexLoading && atMatches.length === 0 ? (
-                    <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--text-dim)" }}>
+                    <div role="presentation" style={{ padding: "6px 8px", fontSize: 12, color: "var(--text-dim)" }}>
                        {needsServerSearch && !serverResultInUse ? t("chat.searching") : t("chat.noMatchingFiles")}
                     </div>
                   ) : (
@@ -2287,6 +2331,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       return (
                         <button
                           key={`${entry.isDir ? "d" : "f"}:${entry.path}`}
+                          id={`chatinput-at-option-${index}`}
+                          role="option"
+                          aria-selected={active}
                           ref={(node) => {
                             atItemRefs.current[index] = node;
                           }}
@@ -2365,6 +2412,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <textarea
             ref={textareaRef}
             aria-label={t("chat.messagePlaceholder")}
+            aria-expanded={slashMenuOpen || atMenuOpen || historyMenuOpen}
+            aria-controls={openPopupIds || undefined}
+            aria-activedescendant={activeOptionId}
             value={value}
             onChange={(e) => {
               valueRef.current = e.target.value;
@@ -2611,6 +2661,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       });
                     }}
                     aria-busy={modelSwitching || undefined}
+                    aria-haspopup="listbox"
+                    aria-expanded={modelDropdownOpen}
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
                       justifyContent: isMobile ? "flex-start" : undefined,
@@ -2716,13 +2768,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           />
                         </div>
                       )}
-                      <div style={{ minHeight: 0, overflowY: "auto" }}>
+                      <div
+                        role="listbox"
+                        aria-label={t("chat.changeModel")}
+                        style={{ minHeight: 0, overflowY: "auto" }}
+                      >
                         {/* omp assigns a model per scope of work; offer those first
                             so picking "Fast" or "Architect" stays one click, and
                             record the role so the transcript matches `/model`. */}
                         {roleRows.length > 0 && !modelFilter.trim() && onRoleModelChange && (
-                          <div>
-                            <div style={{
+                          <div role="group" aria-label={t("chat.modelRoles")}>
+                            <div role="presentation" style={{
                               padding: "6px 12px 4px",
                               fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
                               textTransform: "uppercase", letterSpacing: "0.07em",
@@ -2735,6 +2791,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                               return (
                                 <button
                                   key={role.role}
+                                  role="option"
+                                  aria-selected={isActive}
                                   onClick={() => {
                                     setModelDropdownOpen(false);
                                     setModelFilter("");
@@ -2787,7 +2845,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                 </button>
                               );
                             })}
-                            <div style={{
+                            <div role="presentation" style={{
                               padding: "6px 12px 4px",
                               fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
                               textTransform: "uppercase", letterSpacing: "0.07em",
@@ -2798,13 +2856,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           </div>
                         )}
                         {modelsByProvider.length === 0 ? (
-                          <div style={{ padding: "8px 12px", color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap" }}>
+                          <div role="presentation" style={{ padding: "8px 12px", color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap" }}>
                             {modelFilter.trim() ? t("chat.noMatchingModels") : t("chat.noModels")}
                           </div>
                         ) : modelsByProvider.map((group, gi) => (
-                          <div key={group.provider}>
+                          <div key={group.provider} role="group" aria-label={group.provider}>
                             {(modelsByProvider.length > 1) && (
-                              <div style={{
+                              <div role="presentation" style={{
                                 padding: "6px 12px 4px",
                                 fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
                                 textTransform: "uppercase", letterSpacing: "0.07em",
@@ -2818,6 +2876,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                               return (
                                 <button
                                   key={`${opt.provider}:${opt.modelId}`}
+                                  role="option"
+                                  aria-selected={isActive}
                                   onClick={() => {
                                     setModelDropdownOpen(false);
                                     setModelFilter("");

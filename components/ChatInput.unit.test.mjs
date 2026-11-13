@@ -324,6 +324,33 @@ test("the composer's visible labels follow the chosen language", { timeout: 30_0
   }
 });
 
+test("the slash palette is tied to the text field for screen readers", { timeout: 30_000 }, async () => {
+  const ref = React.createRef();
+  const { container, root } = await mount(ref, { slashCommands: SLASH_COMMANDS });
+  const textarea = container.querySelector("textarea");
+  assert.equal(textarea.getAttribute("aria-expanded"), "false", "geschlossen meldet das Feld nichts");
+
+  await typeInto(textarea, "/co");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+
+  assert.equal(textarea.getAttribute("aria-expanded"), "true", "die offene Palette steht am Feld");
+  assert.equal(textarea.getAttribute("aria-controls"), "chatinput-slash-list");
+  const list = container.querySelector("#chatinput-slash-list");
+  assert.equal(list.getAttribute("role"), "listbox");
+  const activeId = textarea.getAttribute("aria-activedescendant");
+  const active = container.querySelector(`#${activeId}`);
+  assert.ok(active, "der aktive Eintrag ist adressiert");
+  assert.equal(active.getAttribute("role"), "option");
+  assert.equal(active.getAttribute("aria-selected"), "true");
+
+  await act(async () => {
+    reactProps(textarea).onKeyDown({ key: "Escape", nativeEvent: {}, preventDefault() {} });
+  });
+  assert.equal(textarea.getAttribute("aria-expanded"), "false", "Escape schliesst die Liste auch fuer den Screenreader");
+  assert.equal(container.querySelector("#chatinput-slash-list"), null);
+  await act(async () => { root.unmount(); });
+});
+
 test("replaceMessage only fills an empty composer", { timeout: 30_000 }, async () => {
   const ref = React.createRef();
   const { container, root } = await mount(ref);
