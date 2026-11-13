@@ -1358,23 +1358,6 @@ html.dark .chat-session-column::before {
     color: var(--text);
     overflow: hidden;
   }
-
-  /* The calendar's day overview: the same bottom-sheet anchoring as the
-   * subagent panel, but its height follows the content up to the cap — a day
-   * with two events is a small sheet, not a 72dvh empty one. Same trap: the
-   * dialog primitive centres with `-translate-*`, so both `translate` and
-   * `transform` are cleared and the anchoring moves to the bottom edge. */
-  .calendar-day-sheet {
-    inset: auto 0 0 0;
-    width: 100%;
-    max-width: none;
-    max-height: min(78dvh, 640px);
-    translate: none;
-    transform: none;
-    border-radius: 14px 14px 0 0;
-    border-bottom: none;
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
-  }
 }
 
 /* Keep the panel border as the idle separator; this element only expands the hit target. */

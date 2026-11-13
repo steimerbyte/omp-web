@@ -40,8 +40,8 @@ import { useCalendarText } from "./useCalendarText";
  * Arbeit, die ein Popup sonst selbst machen muesste. `components/ui/dialog`
  * bringt genau das mit und wird vom Termin-Dialog ohnehin benutzt — ein
  * zweites Popup-Primitiv waere eine zweite Sorte Verhalten im selben
- * Bildschirm. Unter 640 Pixeln ist dasselbe Popup ein Bottom-Sheet
- * (`.calendar-day-sheet` in `app/globals.css`).
+ * Bildschirm. Auf jeder Breite ist es derselbe zentrierte Dialog; nur der
+ * Fuss stapelt unter 640 Pixeln.
  *
  * ### Warum der Fokus zurueck zur Tageszelle geht
  *
@@ -82,19 +82,17 @@ export function DayEventsSheet({
       <DialogContent
         showCloseButton={false}
         data-cal-day-sheet="true"
-        // Die Basisklassen zentrieren mit `-translate-x-1/2 -translate-y-1/2`;
-        // unter 640 Pixeln setzt `.calendar-day-sheet` sie zurueck und
-        // verankert unten. Die beiden Utility-Klassen sind derselbe Reset in
-        // Tailwind-Sprache — ohne sie landet das Sheet halb ausserhalb des
-        // Bildschirms (AGENTS.md, „Subagent state belongs to one session").
-        className={compact ? "calendar-day-sheet translate-x-0 translate-y-0" : undefined}
-        // Inline gewinnt gegen jede Klasse: die Breite des Sheets kommt
-        // deshalb nur im Nicht-compact-Fall von hier.
+        // Die Zentrierung des Primaerformulars (`top-1/2 left-1/2`
+        // `-translate-*`) bleibt stehen: die Uebersicht ist auf jeder Breite
+        // derselbe zentrierte Dialog, nur mit eigener Breite und Kappung.
+        // Inline gewinnt gegen jede Klasse, deshalb kommen beide von hier.
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",
           color: "var(--text)",
-          ...(compact ? {} : { maxWidth: 420, width: "calc(100% - 32px)", maxHeight: "calc(100dvh - 32px)" }),
+          maxWidth: 420,
+          width: "calc(100% - 32px)",
+          maxHeight: "calc(100dvh - 32px)",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",

@@ -461,14 +461,14 @@ geöffnet hat (`onCloseAutoFocus`); wechselt sie in den Termin-Dialog, wird
 dieses Ziel vorher geleert, damit das schließende Sheet dem Dialog den Fokus
 nicht entzieht.
 
-Unter 640 Pixeln (dieselbe Schwelle wie `useIsMobile`) ist dasselbe Popup ein
-Bottom-Sheet: `.calendar-day-sheet` in `app/globals.css` setzt `inset: auto 0 0 0`
-und `translate: none`, weil die Basisklassen von `DialogContent` das Popup sonst
-mit `-translate-x-1/2 -translate-y-1/2` zentrieren und ein Sheet, das nur den
-Anker überschreibt, zur Hälfte außerhalb des Bildschirms landet. Darüber ist es
-der zentrierte Dialog mit 420 Pixeln Breite; die Höhe folgt dem Inhalt bis zur
-Kappungsgrenze des Popups, nicht einer festen Zahl — ein Tag mit zwei Terminen
-ist ein kleines Sheet, ein Tag mit dreißig scrollt.
+Auf jeder Breite ist die Übersicht derselbe zentrierte Dialog des
+Dialog-Primitivs (`top-1/2 left-1/2` mit `-translate-*`): 420 Pixel breit,
+auf schmalen Schirmen `calc(100% - 32px)`, also 16 Pixel Rand je Seite. Die
+Geometrie steht als Inline-Style in `DayEventsSheet.tsx`, nicht als
+Breitenregel in `app/globals.css`. Die Höhe folgt dem Inhalt bis
+`calc(100dvh - 32px)`, nicht einer festen Zahl — ein Tag mit zwei Terminen ist
+ein kleines Fenster, ein Tag mit dreißig scrollt innen, der Fuß bleibt stehen.
+Unter 640 Pixeln (`useIsMobile`) stapelt nur der Fuß.
 
 ### Der Bildschirm entscheidet über die Spaltenbreite
 
@@ -1128,7 +1128,7 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 | `components/CalendarView.tsx` | Die Oberfläche. |
 | `components/calendar/calendar-model.ts` | Die Rechenlogik der Anzeige: wo ein Termin sitzt, wie lang er ist, wie er verschoben wird — und welche Termine zu einem Tag gehören (`eventsForDay`). |
 | `components/calendar/CalendarEventDialog.tsx` | Der Dialog zum Anlegen und Bearbeiten eines Termins. |
-| `components/calendar/DayEventsSheet.tsx` | Die Tagesübersicht: Datum, Zahl der Termine, jeder Termin des Tages, der Knopf „Termin hinzufügen" und der Fokus-Rückweg zur Tageszelle. Unter 640 Pixeln ein Bottom-Sheet. |
+| `components/calendar/DayEventsSheet.tsx` | Die Tagesübersicht: Datum, Zahl der Termine, jeder Termin des Tages, der Knopf „Termin hinzufügen" und der Fokus-Rückweg zur Tageszelle. Auf jeder Breite der zentrierte Dialog. |
 | `components/calendar/CalendarImport.tsx` | Die Oberfläche des Imports: Dateiauswahl, Größenprüfung vor dem Request, die Vorschau, der Import-Knopf und der Fehler im Dialog. |
 | `components/calendar/useCalendarText.ts` | Die Texte des Kalenders — immer aus dem deutschen Sprachpaket. |
 | `lib/i18n/messages/de.ts` | Das deutsche Sprachpaket, vollständig — und als einziges Paket mit den `calendar.*`-Schlüsseln. |

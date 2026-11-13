@@ -472,6 +472,14 @@ test("schmal: ein Klick auf einen Tag oeffnet die Tagesuebersicht", async () => 
     // Der Termin-Dialog ist **nicht** aufgegangen: erst kommt die Uebersicht.
     assert.equal(byId("calendar-title"), null, "der Termin-Dialog ging ohne Zwischenschritt auf");
     assert.ok(sheet(), "die Tagesuebersicht wurde nicht geoeffnet");
+    // Dieselbe Geometrie wie breit: kein Bottom-Sheet, sondern der zentrierte
+    // Dialog des Primaerformulars, 420 px breit mit Rand ringsum.
+    assert.equal(
+      sheet().className.includes("calendar-day-sheet"),
+      false,
+      "die Uebersicht haengt auf schmalem Schirm wieder unten",
+    );
+    assert.equal(sheet().style.maxWidth, "420px", "die Uebersicht hat nicht die Breite des Dialogs");
     assert.ok(
       sheet().textContent.includes(deMessages["calendar.eventCountMany"].replace("{count}", "2")),
       "die Tagesuebersicht nennt nicht beide Termine",
