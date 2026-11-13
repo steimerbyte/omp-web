@@ -3,6 +3,95 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.28.0
+Released 2026-11-13.
+
+### Mobile / Composer
+
+- **Das Textfeld ist auf dem Handy das unterste Element des Composers, die
+  Leisten stehen darüber.** Der Composer-Wrapper stapelt mobil um
+  (`display: flex; flex-direction: column`), der Container des Textfelds bekommt
+  `order: 2`, Bash-Label, Kontext-Anzeige und die Leiste mit Anhänger/Modell
+  `order: 1` plus `margin-bottom` statt `margin-top`; auf dem Desktop bleibt die
+  Reihenfolge, weil der Wrapper dort kein Flex ist. Die `order` hängt am
+  Container des Textfelds und nicht an der Leiste darunter — die ist dessen
+  einziges Kind und hätte keine Geschwister zum Sortieren. Alle neun
+  `focus()`-Aufrufe im Composer übergeben `preventScroll: true`, damit der
+  Fokus das Feld nicht selbst in den Blick scrollt. Gemessen auf einem Nothing
+  A059P (Android): die Lücke zwischen Feld und Tastatur fiel von **220 px auf
+  52 px**.
+
+- **Ein leerer Chat hält den Composer mobil unten, statt ihn zu zentrieren.**
+  Der Leerzustand richtet seinen Inhalt mobil nach unten (`justify-content:
+  flex-end`), auf dem Desktop bleibt er zentriert. Vorher saß das Feld mittig
+  im sichtbaren Bereich und sprang beim Fokus um die halbe Höhe — gemessen
+  **485 px → 52 px** auf demselben Gerät.
+
+- Die restlichen 52 px sind gemessene 22,95 CSS-Pixel Innenabstand des
+  Composers und kein Tastatur-Artefakt: `innerHeight` und `clientHeight`
+  bleiben bei offener Tastatur gleich, nur `visualViewport.height` fällt — die
+  Seite folgt dem Viewport, die App muss nichts kompensieren.
+
+### Dialoge & Tastatur
+
+- **Fünf handgebaute Modals laufen über das Dialog-Primitiv und haben damit
+  Escape, Fokusfalle und Fokus-Rückgabe.** Betroffen sind der Bestätigungsdialog
+  im Projekt-Dashboard (`projects/ConfirmDialog`), `NewProjectDialog`, die
+  Rückfrage in `UsersConfig`, das Einstellungen-Fenster und der Löschdialog der
+  Skills. Den Escape-Handler, die Fokusfalle, das Portal und den Rückweg des
+  Fokus zum auslösenden Element liefert `components/ui/dialog`; beim Schließen
+  landet der Fokus wieder auf dem Knopf, der den Dialog geöffnet hat. Vorher
+  trugen alle fünf `aria-modal`, aber keiner kannte Escape oder eine Fokusfalle.
+  Während einer laufenden Anfrage (`NewProjectDialog`) und während des Löschens
+  (Skills) schließt weder Escape noch der Klick daneben. Boxen und Hintergründe
+  bleiben unverändert: die Modul-Klassen liegen weiter auf dem Overlay, die
+  Inline-Werte am Panel.
+
+- **Das Primitiv `components/ui/dialog` kann jetzt ohne eigene Panel-Klassen
+  und mit eigenem Overlay.** Drei Props — `bare`, `overlayClassName`,
+  `overlayStyle` — erlauben den Umbau ohne Optik-Änderung. Es merkt sich den
+  Auslöser beim Mounten, weil diese Dialoge von außen gesteuert werden und
+  keinen `DialogTrigger` haben.
+
+### Chat-Ansicht
+
+- **Meldungen, die der Harness als `display: false` markiert, erscheinen nicht
+  mehr im Transkript.** Das sind Kontext-Meldungen — MCP-Mount-Hinweise,
+  Tool-Roster-Hinweise —, die bisher als eingeklappte Box in jeder Sitzung
+  standen, lang waren und sich wiederholten. Ein Schalter unter Einstellungen →
+  „Chat-Transkript" („Versteckte Meldungen anzeigen") holt sie zurück. Die
+  Vorliebe hat keinen Serveranteil und liegt deshalb in `localStorage`
+  (`omp-show-hidden-messages`) wie `omp-animations`; `/api/settings`
+  projiziert sein Schema aus dem gepinnten SDK, ein neuer Pfad dort hätte eine
+  fremde Abhängigkeit gepatcht für einen Wert, den der Server nie liest.
+
+### Kalender
+
+- **Die Tagesübersicht ist auf jeder Breite derselbe zentrierte Dialog.** Das
+  Bottom-Sheet, das nur unter 640 px griff, ist weg: die Regel
+  `.calendar-day-sheet` in `app/globals.css` ist gelöscht, Breite und Kappung
+  (`max-width: 420`, `max-height: calc(100dvh - 32px)`) kommen inline. Unter
+  640 px stapelt nur noch der Fuß.
+
+### Aufräumarbeiten
+
+- **Fünf Modals, ein Toggle, ein Icon-Satz weniger.** Der gemeinsame Toggle
+  `components/ui/toggle.tsx` ersetzt die zwei Kopien in `PluginsConfig` und
+  `SkillsConfig` (je 58 Zeilen auf vier Aufrufe zurückgeschnitten). Elf
+  handgeschriebene `<svg>`-Blöcke in zehn Komponenten (Branchen-Symbol, Plus,
+  Papierkorb, Menü) sind durch die entsprechenden `lucide-react`-Icons ersetzt,
+  inklusive der Stelle, die das Icon als `icon:`-Feld durch den Datei-Baum
+  reichte. `react-dnd` und `react-dnd-html5-backend` sind raus — beide hatten
+  null Importe —, `shadcn` ist von `dependencies` nach `devDependencies`
+  gewandert (es ist ein CLI, keine Laufzeit), `bun.lock` entsprechend neu. Die
+  letzten zwei ESLint-Fehler (`no-this-alias` in zwei Testdateien, beide durch
+  ein `activeElement = this` im DOM-Stub) sind behoben: `bunx eslint
+  components/ app/ lib/` meldet **0 Fehler**.
+- Gate: **3093 pass, 3 skip, 0 fail** (3096 Tests in 392 Dateien), Coverage
+  4336/5054 Funktionen = 85,8 %, 18 Debt. Ein Lauf parallel zu einem Typecheck
+  (167 s statt 90 s) zeigte einen Fehlschlag, der sich im nächsten Lauf nicht
+  wiederholte.
+
 ## v0.27.0
 Released 2026-11-13.
 
