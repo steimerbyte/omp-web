@@ -104,6 +104,13 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
   chinesischen Eingabe die halbe Komposition. (b) Die Reihenfolge der Menü-Zweige ist Absicht:
   Verlauf vor Slash vor `@`. (c) `Escape` bricht **nur** ab, wenn `isStreaming && onAbort` — während
   eines offenen Menüs schließt `Escape` das Menü und bricht nicht den Lauf ab.
+- **Mobil**: Das Textfeld ist das **unterste** Element des Composers. Der Wrapper
+  (`ChatInput.tsx`, `maxWidth: 820`) wird dort zur Flex-Spalte, die Leisten-Zeile (Kontext-Anzeige,
+  Anhänger/Modell/„Weitere Steuerung") bekommt `order: 1`, die Eingabe-Bar `order: 2`; die
+  `marginTop`-Werte der Leisten werden zu `marginBottom`. Damit ist der Abstand Feld → Tastatur
+  konstant 0 und unabhängig davon, wie hoch die Leisten gerade sind. Alle `focus()`-Aufrufe im
+  Composer laufen mit `{ preventScroll: true }`: der WebView scrollt das Feld sonst selbst in die
+  Sicht und verschiebt es zusätzlich zur Seite.
 - **Ort**: `components/ChatInput.tsx:1095-1217` (`handleKeyDown`), `:1963` (Textfeld),
   `:2006` (Steer), `:2029` (Follow-up), `:2111` (Bild anhängen), `:2177` (Modell), `:2417`
   (mehr Steuerung), `:2677` (Komprimieren), `:2695` (Stopp), `:2766` (Steuerleiste einklappen)

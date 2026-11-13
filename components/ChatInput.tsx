@@ -652,7 +652,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (!ta) return;
       const pos = start + sep.length + text.length;
       ta.setSelectionRange(pos, pos);
-      ta.focus();
+      ta.focus({ preventScroll: true });
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
@@ -662,7 +662,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     focus() {
       const ta = textareaRef.current;
       if (!ta) return;
-      ta.focus();
+      ta.focus({ preventScroll: true });
       const end = ta.value.length;
       ta.setSelectionRange(end, end);
       ta.style.height = "auto";
@@ -677,7 +677,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setAtQuery(null);
       requestAnimationFrame(() => {
         if (!ta) return;
-        ta.focus();
+        ta.focus({ preventScroll: true });
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
@@ -700,7 +700,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
       requestAnimationFrame(() => {
         if (!ta) return;
-        ta.focus();
+        ta.focus({ preventScroll: true });
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
@@ -717,7 +717,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setAtQuery(null);
       requestAnimationFrame(() => {
         if (!ta) return;
-        ta.focus();
+        ta.focus({ preventScroll: true });
         ta.setSelectionRange(combined.length, combined.length);
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
@@ -813,7 +813,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       requestAnimationFrame(() => {
         const ta = textareaRef.current;
         if (!ta) return;
-        ta.focus();
+        ta.focus({ preventScroll: true });
         ta.setSelectionRange(ta.value.length, ta.value.length);
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
@@ -1215,7 +1215,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     requestAnimationFrame(() => {
       const el = textareaRef.current;
       if (!el) return;
-      el.focus();
+      el.focus({ preventScroll: true });
       el.setSelectionRange(newPos, newPos);
       el.style.height = "auto";
       el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
@@ -1260,7 +1260,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (!ta) return;
-      ta.focus();
+      ta.focus({ preventScroll: true });
       ta.setSelectionRange(text.length, text.length);
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
@@ -1275,7 +1275,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     requestAnimationFrame(() => {
       const ta = textareaRef.current;
       if (!ta) return;
-      ta.focus();
+      ta.focus({ preventScroll: true });
       ta.setSelectionRange(nextValue.length, nextValue.length);
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
@@ -1714,7 +1714,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      {/* Mobil stapelt dieser Wrapper um: Textfeld als letztes Element, die
+          Leisten darueber (`order`). Die Desktop-Reihenfolge bleibt, weil er
+          dort kein Flex ist. */}
+      <div style={{ maxWidth: 820, margin: "0 auto", ...(isMobile ? { display: "flex" as const, flexDirection: "column" as const } : {}) }}>
         <ModelErrorBanner error={modelError} />
         <ModelSwitchErrorBanner failure={modelSwitchError} onDismiss={() => onDismissModelSwitchError?.()} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
@@ -1985,8 +1988,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         )}
 
-        {/* Main input */}
-        <div ref={composerAnchorRef} style={{ position: "relative", minWidth: 0 }}>
+        {/* Main input. Mobil ist dieser Container die letzte Zeile: die Leisten
+            darunter (Kontext-Anzeige, Anhaenger/Modell) tragen `order: 1`, er
+            selbst `order: 2`. Die `order` gehoert hierher, nicht an die Bar —
+            die ist das einzige Kind und hat keine Geschwister im Wrapper. */}
+        <div
+          ref={composerAnchorRef}
+          style={{ position: "relative", minWidth: 0, ...(isMobile ? { order: 2 } : {}) }}
+        >
           {historyMenuOpen && inputHistory.length > 0 && (
             <div
               ref={historyMenuRef}
@@ -2476,7 +2485,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         {/* Bash mode status label */}
         {bashMode && (
-          <div className="text-xs px-2 py-1" style={{ color: bashExcluded ? "var(--text-muted)" : "var(--accent)", marginTop: 4 }}>
+          <div className="text-xs px-2 py-1" style={{ color: bashExcluded ? "var(--text-muted)" : "var(--accent)", ...(isMobile ? { order: 1, marginBottom: 4 } : { marginTop: 4 }) }}>
              {t("chat.shell")} · {bashExcluded ? t("chat.outputLocal") : t("chat.outputModel")}
           </div>
         )}
@@ -2485,7 +2494,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             display: "flex",
             justifyContent: "flex-end",
             minWidth: 0,
-            marginTop: 6,
+            order: 1,
+            marginBottom: 6,
           }}>
             <ContextUsageMeter usage={contextUsage} t={t} />
           </div>
@@ -2493,7 +2503,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         {/* Bottom bar: left | center (context) | right */}
         <div style={{
-          marginTop: 8,
+          ...(isMobile ? { order: 1, marginBottom: 8 } : { marginTop: 8 }),
           display: isMobile ? "grid" : "flex",
           gridTemplateColumns: isMobile ? "minmax(0, 1fr) auto" : undefined,
           alignItems: "center",
