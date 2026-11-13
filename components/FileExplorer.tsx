@@ -346,12 +346,12 @@ const GIT_STATUS_KEYS: Record<GitFileStatusKind, string> = {
 };
 
 const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
-  modified: "#d6a84b",
-  added: "#4ade80",
-  deleted: "#f87171",
-  renamed: "#60a5fa",
-  untracked: "#4ade80",
-  conflict: "#f87171",
+  modified: "var(--git-modified)",
+  added: "var(--git-added)",
+  deleted: "var(--git-deleted)",
+  renamed: "var(--git-renamed)",
+  untracked: "var(--git-added)",
+  conflict: "var(--git-deleted)",
 };
 
 function GitStatusBadge({ status, t }: { status: GitFileStatus; t: Translate }) {
@@ -1284,20 +1284,20 @@ function ExplorerToolbar({
         aria-label={t("files.toolbarRefresh")}
         style={{
           ...TOOLBAR_BUTTON_STYLE,
-          color: refreshDone ? "#4ade80" : "var(--text-muted)",
-          background: refreshDone ? "rgba(74,222,128,0.18)" : "transparent",
+          color: refreshDone ? "var(--success)" : "var(--text-muted)",
+          background: refreshDone ? "color-mix(in srgb, var(--success) 18%, transparent)" : "transparent",
         }}
         onClick={onRefresh}
         onMouseEnter={(event) => { if (!refreshDone) event.currentTarget.style.background = "var(--bg-hover)"; }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.background = refreshDone ? "rgba(74,222,128,0.18)" : "transparent";
+          event.currentTarget.style.background = refreshDone ? "color-mix(in srgb, var(--success) 18%, transparent)" : "transparent";
         }}
       >
         {/* Der Haken ist die Bestaetigung fuer den Refresh. Ohne ihn sieht der
             Nutzer nicht, ob der Klick durch ist — der Baum tauscht sich im
             Bestandsfall inhaltlich nicht. */}
         {refreshDone ? (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points="20 6 9 17 4 12" />
           </svg>
         ) : (
@@ -1623,7 +1623,7 @@ function FileTreeLabel({
           aria-label={ctx.t("files.newlyUploaded")}
           style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6" }} />
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" }} />
         </span>
       )}
       {!hovered && node.isLeaf && gitStatus && <GitStatusBadge status={gitStatus} t={ctx.t} />}
@@ -1633,7 +1633,7 @@ function FileTreeLabel({
           aria-label={ctx.t("files.containsChangedFiles")}
           style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
         >
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#d6a84b" }} />
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--git-modified)" }} />
         </span>
       )}
       {ctx.loadingPaths.has(data.fullPath) && (
@@ -3345,17 +3345,17 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         )}
 
         {pendingConflict && (
-          <div role="alert" style={{ padding: 7, border: "1px solid color-mix(in srgb, #f59e0b 55%, var(--border))", borderRadius: 4, background: "color-mix(in srgb, #f59e0b 9%, var(--bg-panel))" }}>
+          <div role="alert" style={{ padding: 7, border: "1px solid color-mix(in srgb, var(--warning) 55%, var(--border))", borderRadius: 4, background: "color-mix(in srgb, var(--warning) 9%, var(--bg-panel))" }}>
             <div style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.35, overflowWrap: "anywhere" }}>
               {t("files.conflictSummary", { count: pendingConflict.conflicts.length, countSuffix: pendingConflict.conflicts.length === 1 ? "" : "s", files: pendingConflict.conflicts.join(", ") })}
             </div>
             {pendingConflict.nonReplaceable.length > 0 && (
-              <div style={{ marginTop: 3, fontSize: 10, color: "#f59e0b", lineHeight: 1.35, overflowWrap: "anywhere" }}>
+              <div style={{ marginTop: 3, fontSize: 10, color: "var(--warning)", lineHeight: 1.35, overflowWrap: "anywhere" }}>
                 {t("files.cannotReplace", { files: pendingConflict.nonReplaceable.join(", ") })}
               </div>
             )}
             <div style={{ display: "flex", gap: 5, marginTop: 7 }}>
-              <button type="button" onClick={() => void performUpload(pendingConflict.directory, pendingConflict.files, "overwrite")} style={{ height: 22, padding: "0 7px", border: "1px solid #ef4444", borderRadius: 4, background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 10 }}>
+              <button type="button" onClick={() => void performUpload(pendingConflict.directory, pendingConflict.files, "overwrite")} style={{ height: 22, padding: "0 7px", border: "1px solid var(--danger)", borderRadius: 4, background: "transparent", color: "var(--danger)", cursor: "pointer", fontSize: 10 }}>
                 {t("files.replace")}
               </button>
               <button type="button" onClick={() => void performUpload(pendingConflict.directory, pendingConflict.files, "skip")} style={{ height: 22, padding: "0 7px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 10 }}>
@@ -3369,7 +3369,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         )}
 
         {uploadError && (
-          <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, lineHeight: 1.35, color: "#f87171" }}>
+          <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, lineHeight: 1.35, color: "var(--danger)" }}>
             <span style={{ minWidth: 0, flex: 1, overflowWrap: "anywhere" }}>{uploadError}</span>
             <DismissButton onClick={() => setUploadError(null)} title={t("files.dismissError")} />
           </div>
@@ -3380,7 +3380,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
             <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 22, fontSize: 11 }}>
               <div style={{ minWidth: 0, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
                 {uploadSummary.uploaded.length > 0 && (
-                  <span title={`${uploadSummary.uploaded.length} uploaded`} aria-label={`${uploadSummary.uploaded.length} uploaded`} style={{ display: "flex", alignItems: "center", gap: 3, color: "#22c55e" }}>
+                  <span title={`${uploadSummary.uploaded.length} uploaded`} aria-label={`${uploadSummary.uploaded.length} uploaded`} style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--success)" }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="m5 12 4 4L19 6" />
                     </svg>
@@ -3397,7 +3397,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                   </span>
                 )}
                 {uploadSummary.errors.length > 0 && (
-                  <span title={`${uploadSummary.errors.length} failed`} aria-label={`${uploadSummary.errors.length} failed`} style={{ display: "flex", alignItems: "center", gap: 3, color: "#f87171" }}>
+                  <span title={`${uploadSummary.errors.length} failed`} aria-label={`${uploadSummary.errors.length} failed`} style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--danger)" }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M12 3 2.5 20h19L12 3Z" />
                       <path d="M12 9v4" />
@@ -3422,7 +3422,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
               <DismissButton onClick={() => setUploadSummary(null)} title={t("files.dismissUploadResults")} />
             </div>
             {uploadSummary.errors.map((item) => (
-              <div key={item.name} title={item.error} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, minWidth: 0, fontSize: 10, color: "#f87171" }}>
+              <div key={item.name} title={item.error} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, minWidth: 0, fontSize: 10, color: "var(--danger)" }}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
                   <circle cx="12" cy="12" r="9" />
                   <path d="M12 8v5" />
@@ -3495,7 +3495,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
               ))}
             </div>
           ) : error ? (
-            <div style={{ padding: "8px 12px", fontSize: 11, color: "#f87171" }}>{error}</div>
+            <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--danger)" }}>{error}</div>
           ) : (
             <>
               <Breadcrumb

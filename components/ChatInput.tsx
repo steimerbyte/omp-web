@@ -1823,10 +1823,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             style={{
               marginBottom: 8,
               padding: "7px 10px",
-              background: "rgba(239,68,68,0.07)",
-              border: "1px solid rgba(239,68,68,0.3)",
+              background: "color-mix(in srgb, var(--danger) 7%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--danger) 30%, transparent)",
               borderRadius: 6,
-              color: "#ef4444",
+              color: "var(--danger)",
               fontFamily: "var(--font-mono)",
               fontSize: 12,
               lineHeight: 1.5,
@@ -1844,10 +1844,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             style={{
               marginBottom: 8,
               padding: "7px 10px",
-              background: "rgba(239,68,68,0.07)",
-              border: "1px solid rgba(239,68,68,0.3)",
+              background: "color-mix(in srgb, var(--danger) 7%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--danger) 30%, transparent)",
               borderRadius: 6,
-              color: "#ef4444",
+              color: "var(--danger)",
               fontFamily: "var(--font-mono)",
               fontSize: 12,
               lineHeight: 1.5,
@@ -2464,7 +2464,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 background: (value.trim() || attachedImages.length || uploadedFiles.length) ? "var(--accent)" : "var(--bg-panel)",
                 border: "none",
                 borderRadius: 8,
-                color: (value.trim() || attachedImages.length || uploadedFiles.length) ? "#fff" : "var(--text-dim)",
+                color: (value.trim() || attachedImages.length || uploadedFiles.length) ? "var(--bg)" : "var(--text-dim)",
                 cursor: (value.trim() || attachedImages.length || uploadedFiles.length) ? "pointer" : "not-allowed",
                 fontSize: 13,
                 fontWeight: 600,
@@ -3107,22 +3107,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     padding: isMobile ? "0 6px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
                     height: 32,
-                    background: isCompacting ? "rgba(239,68,68,0.08)" : "none",
+                    background: isCompacting ? "color-mix(in srgb, var(--danger) 8%, transparent)" : "none",
                     border: "none",
                     borderRadius: 9,
-                    color: isCompacting ? "#ef4444" : "var(--text-muted)",
+                    color: isCompacting ? "var(--danger)" : "var(--text-muted)",
                     cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
                     fontSize: 12, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
                   onMouseEnter={(e) => {
                     if (isStreaming && !isCompacting) return;
-                    e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.16)" : "var(--bg-hover)";
-                    e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text)";
+                    e.currentTarget.style.background = isCompacting ? "color-mix(in srgb, var(--danger) 16%, transparent)" : "var(--bg-hover)";
+                    e.currentTarget.style.color = isCompacting ? "var(--danger)" : "var(--text)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : "none";
-                    e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text-muted)";
+                    e.currentTarget.style.background = isCompacting ? "color-mix(in srgb, var(--danger) 8%, transparent)" : "none";
+                    e.currentTarget.style.color = isCompacting ? "var(--danger)" : "var(--text-muted)";
                   }}
                    title={isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
                    aria-label={isCompacting ? t("chat.stopCompaction") : t("chat.compactContext")}
@@ -3147,17 +3147,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "8px 14px",
                   height: 32,
-                  background: "rgba(239,68,68,0.08)",
-                  border: "1px solid rgba(239,68,68,0.3)",
+                  background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--danger) 30%, transparent)",
                   borderRadius: 9,
-                  color: "#ef4444",
+                  color: "var(--danger)",
                   cursor: "pointer",
                   fontSize: 12, fontWeight: 600,
                   whiteSpace: "nowrap", letterSpacing: "-0.01em",
                   transition: "background 0.12s",
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.16)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--danger) 16%, transparent)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--danger) 8%, transparent)"; }}
               >
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                   <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
@@ -3295,9 +3295,9 @@ function ContextUsageMeter({
       ? "warning"
       : "normal";
   const color = level === "critical"
-    ? "#ef4444"
+    ? "var(--danger)"
     : level === "warning"
-      ? "#eab308"
+      ? "var(--warning)"
       : "var(--text-muted)";
   const usedLabel = tokens === null ? "?" : formatTokenCount(tokens);
   const limitLabel = contextWindow === null ? "?" : formatTokenCount(contextWindow);

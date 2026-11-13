@@ -67,6 +67,13 @@
   --success: #1f8b4c;
   --danger: #aa5555;
   --warning: #9a7326;
+  /* Git status in the explorer tree. The letters are 11 px, so every value has
+     to clear 4.5:1 on --bg-panel (lib/theme-contrast.test.mjs); the amber and
+     green of the dark theme are too light for that on a light surface. */
+  --git-modified: #8c6720;
+  --git-added: #1a7f45;
+  --git-deleted: #aa5555;
+  --git-renamed: #2563eb;
   /* The calendar's fifth preset colour. The titanium palette has no violet,
      so the value comes from omp's amethyst theme — its `deepPurple`, which
      keeps its contrast on the light surfaces. `applyOmpPalette` does not map
@@ -94,6 +101,12 @@ html.dark {
   --success: #00ff88;     /* readoutGreen */
   --danger: #ff4757;      /* alertRed */
   --warning: #ffb347;     /* warningAmber */
+  /* The status hues the literals already had: on the dark surfaces they clear
+     4.5:1 without change, so only the light block needed darker values. */
+  --git-modified: #d6a84b;
+  --git-added: #4ade80;
+  --git-deleted: #f87171;
+  --git-renamed: #60a5fa;
   /* The same fifth preset colour as in the light theme, in its bright
      variant — omp's amethyst `violet`. Both blocks define it, because the
      calendar's colour swatches read the variable, and a variable that exists
