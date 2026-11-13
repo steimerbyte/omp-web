@@ -45,6 +45,12 @@
  * Gestenrand und Daumen sitzen; 2,5 % je Seite sind der Rand, den der Operator
  * als kleinster noch treffbarer Abstand vorgibt.
  *
+ * Der 1180-px-Deckel bleibt: ein Fenster, das auf einem 1440er Schirm ueber
+ * 1368 px laeuft, wird nicht besser lesbar, sondern nur breiter — die
+ * Beschwerde galt der Kante auf dem Telefon, nicht dem Desktop. `min()` laesst
+ * beide Zweige in einer Zeile stehen: 390px → 370,5px (95 %), 1440px → 1180px
+ * (Deckel).
+ *
  * `dvh` und nicht `vh`: die Adressleiste des mobilen Browsers verkleinert die
  * sichtbare Hoehe, und das Fenster soll mit der sichtbaren rechnen. Die Breite
  * ist `%` und nicht `vw`, weil `vw` die Bildlaufleiste mitzaehlt (derselbe
@@ -55,7 +61,7 @@
  * unveraendert bleibt. `.window.viewportInset` gewinnt gegen die Basisregel
  * und gegen den 760px-Block unabhaengig von der Reihenfolge im Stylesheet. */
 .window.viewportInset {
-  width: 95%;
+  width: min(1180px, 95%);
   height: 95dvh;
 }
 

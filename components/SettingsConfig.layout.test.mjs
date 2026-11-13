@@ -267,7 +267,8 @@ test("the narrow-viewport override cannot widen the row again", () => {
   assertBoundedRow(row, ".window @media (max-width: 760px)");
 });
 /**
- * The panel must leave 2.5 % per side, not touch the screen.
+ * The panel must leave 2.5 % per side, not touch the screen — and must keep
+ * its 1180 px cap on a wide screen.
  *
  * A window on 100 % of an axis puts its controls against the edge of the
  * display. On the phone that edge belongs to the status bar, to the gesture
@@ -275,30 +276,53 @@ test("the narrow-viewport override cannot widen the row again", () => {
  * operator asked for a 5 % reduction per axis, i.e. what is left over on both
  * sides together — 2.5 % each.
  *
+ * The cap is the other half of the requirement: the desktop window was
+ * 1180 px and is not supposed to grow into 95 % of a 1440 px screen (that is
+ * 1368 px — wider, not smaller). A street release of this rule as plain
+ * `width: 95%` is the defect the second branch catches.
+ *
  * `dvh` and not `vh`: the address bar of a mobile browser reduces the visible
  * height, and the panel has to be sized against what is actually visible.
  * Width stays in `%` and not `vw`, because `vw` counts the scrollbar.
  *
- * jsdom computes no geometry, so the rule is pinned where it lives. A revert
- * to 100 % (or to the old `min(1180px, calc(100vw - 36px))` on `.window` while
- * dropping the class) fails here: the sizing declaration would be gone.
+ * jsdom computes no geometry, so the rule is pinned where it lives and the
+ * two widths are evaluated against the declaration itself. Both a revert to
+ * 100 % and a lost cap fail here.
  */
-test("the settings panel covers 95 % of each axis, never the whole viewport", () => {
+test("the settings panel leaves 2.5 % per side and keeps its 1180 px cap", () => {
   const body = ruleBody(css, ".window.viewportInset");
-
-  const width = declaration(body, "width");
-  assert.equal(width, "95%",
-    `.window.viewportInset: width muss 95% sein — 100 % legt die Bedienelemente ` +
-    `an die Kante; gefunden: ${width}`);
 
   const height = declaration(body, "height");
   assert.equal(height, "95dvh",
     `.window.viewportInset: height muss 95dvh sein — dvh rechnet mit der ` +
     `sichtbaren Hoehe (Adressleiste), nicht mit der statischen; gefunden: ${height}`);
 
+  const width = declaration(body, "width");
+  const capped = width?.match(/^min\(\s*(\d+(?:\.\d+)?)px\s*,\s*(\d+(?:\.\d+)?)%\s*\)$/);
+  assert.ok(capped,
+    `.window.viewportInset: width muss die Form min(<px>, <%)> haben — nur sie ` +
+    `haelt den Desktop-Deckel und die 95 % mobil in einer Zeile; gefunden: ${width}`);
+  const cap = Number(capped[1]);
+  const fraction = Number(capped[2]) / 100;
+
+  assert.equal(cap, 1180,
+    `der Desktop-Deckel muss 1180 px bleiben; gefunden: ${cap}px`);
+  assert.equal(fraction, 0.95,
+    `mobil sind es 2,5 % Rand je Seite (95 %); gefunden: ${capped[2]}%`);
+
+  // The two branches, evaluated against the declaration.
+  const phone = Math.min(cap, 390 * fraction);
+  assert.ok(Math.abs(phone - 390 * 0.95) < 0.01,
+    `bei 390 px muss der Deckel wirkungslos sein (95 % = 370,5 px); ` +
+    `die Regel liefert ${phone.toFixed(2)}px`);
+  const desktop = Math.min(cap, 1440 * fraction);
+  assert.equal(desktop, 1180,
+    `bei 1440 px muss der Deckel greifen (1180 px); die Regel liefert ${desktop}px — ` +
+    `95 % waeren 1368 px, also breiter als das Fenster vorher`);
+
   // The rule is only worth something when the settings panel wears it.
   const source = readFileSync(new URL("./SettingsConfig.tsx", import.meta.url), "utf8");
   assert.match(source, /styles\.window\}\s*\$\{styles\.viewportInset\}/,
     "SettingsConfig muss dem Fenster beide Klassen geben (`styles.window` und " +
-    "`styles.viewportInset`), sonst bleibt die 95-%-Regel unbenutzt.");
+    "`styles.viewportInset`), sonst bleibt die Regel unbenutzt.");
 });
