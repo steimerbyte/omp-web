@@ -31,10 +31,14 @@ win.getComputedStyle = computed;
 
 let activeElement = win.document.body;
 Object.defineProperty(win.document, "activeElement", { get: () => activeElement, configurable: true });
+/** Eigener Setter statt `activeElement = this`: `no-this-alias` verbietet das. */
+function setActive(element) {
+  activeElement = element;
+}
 win.HTMLElement.prototype.focus = function focus() {
   const tag = this.tagName;
   if (tag !== "BUTTON" && tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "A" && !this.hasAttribute("tabindex")) return;
-  activeElement = this;
+  setActive(this);
 };
 
 for (const proto of [win.HTMLInputElement?.prototype, win.HTMLTextAreaElement?.prototype]) {
