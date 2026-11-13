@@ -263,6 +263,7 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.create": "创建",
     "sidebar.changedFiles": "{count} 个变更文件",
     "sidebar.loading": "加载中...",
+    "sidebar.retry": "重试",
     "sidebar.noSessions": "未找到会话",
     "sidebar.agentRunning": "Agent 运行中…",
     "sidebar.newActivity": "有新活动",

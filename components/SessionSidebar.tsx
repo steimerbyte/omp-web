@@ -12,6 +12,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
 import { Spin } from "./motion/Enter";
+import { Skeleton } from "./motion/Skeleton";
 import { useAnimationPreference } from "./motion/AnimationProvider";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -1404,13 +1405,25 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
         {loading || error || projectGroups.length === 0 ? (
           <div style={{ padding: "0 6px 10px" }}>
             {loading && (
-              <div style={{ padding: "12px 8px", color: "var(--text-muted)", fontSize: 12 }}>
-                {t("sidebar.loading")}
+              // Six rows at the real row height: the list keeps its height
+              // instead of jumping from nothing to N rows.
+              <div style={{ padding: "4px 8px", display: "flex", flexDirection: "column", gap: 2 }} aria-hidden>
+                {Array.from({ length: 6 }, (_, index) => (
+                  <Skeleton key={index} height={SESSION_ROW_HEIGHT} />
+                ))}
               </div>
             )}
             {error && (
-              <div style={{ padding: "10px 8px", color: "var(--danger)", fontSize: 12 }}>
-                {error}
+              <div style={{ padding: "10px 8px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ color: "var(--danger)", fontSize: 12 }}>{error}</div>
+                <button
+                  type="button"
+                  onClick={() => loadSessions(true)}
+                  className="sidebar-nav-button"
+                  style={{ justifyContent: "center" }}
+                >
+                  {t("sidebar.retry")}
+                </button>
               </div>
             )}
             {!loading && !error && projectGroups.length === 0 && (

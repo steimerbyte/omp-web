@@ -263,6 +263,7 @@ export const enLocale: LocalePlugin = {
     "sidebar.create": "Create",
     "sidebar.changedFiles": "{count} changed files",
     "sidebar.loading": "Loading...",
+    "sidebar.retry": "Retry",
     "sidebar.noSessions": "No sessions found",
     "sidebar.agentRunning": "Agent running…",
     "sidebar.newActivity": "New activity",

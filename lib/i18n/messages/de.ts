@@ -263,6 +263,7 @@ export const deLocale: LocalePlugin = {
     "sidebar.create": "Erstellen",
     "sidebar.changedFiles": "{count} geänderte Dateien",
     "sidebar.loading": "Wird geladen …",
+    "sidebar.retry": "Erneut laden",
     "sidebar.noSessions": "Keine Sessions gefunden",
     "sidebar.agentRunning": "Agent läuft …",
     "sidebar.newActivity": "Neue Aktivität",
