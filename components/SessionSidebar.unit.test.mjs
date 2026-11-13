@@ -73,6 +73,16 @@ Object.defineProperty(window.document, "visibilityState", {
   get: () => visibility,
 });
 window.Element.prototype.scrollIntoView = function scrollIntoView() {};
+// Radix misst Trigger und Panel; ohne Rechtecke steht das Menue auf NaN.
+window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+  return { top: 0, left: 0, right: 120, bottom: 20, width: 120, height: 20, x: 0, y: 0 };
+};
+// Der Fokus: Escape muss ihn an den Menueknopf zurueckgeben (Radix' Zusage,
+// hier gemessen statt angenommen). linkedom setzt `activeElement` nicht.
+let activeElement = window.document.body;
+function rememberFocus(element) { activeElement = element; }
+Object.defineProperty(window.document, "activeElement", { configurable: true, get: () => activeElement });
+window.HTMLElement.prototype.focus = function focus() { rememberFocus(this); };
 // linkedom liefert die DOM-Klassen; FileExplorer (Arborist) braucht sie als
 // Globals. Jede Zuweisung wird fuer den Restore gemerkt.
 const installed = new Map();
@@ -238,6 +248,30 @@ function buttonByTitle(scope, title) {
   return [...scope.querySelectorAll("button")].find((node) => (node.getAttribute("title") ?? "").startsWith(title));
 }
 
+/** Radix oeffnet auf `pointerdown`, nicht auf `click`. */
+function pointerDown(node) {
+  const event = new window.Event("pointerdown", { bubbles: true, cancelable: true });
+  for (const [key, value] of Object.entries({ button: 0, ctrlKey: false, pointerType: "mouse" })) {
+    Object.defineProperty(event, key, { value, configurable: true });
+  }
+  node.dispatchEvent(event);
+}
+
+function keydown(target, key) {
+  const event = new window.Event("keydown", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "key", { value: key, configurable: true });
+  target.dispatchEvent(event);
+}
+
+/** Oeffnet das Zeilenmenue einer Sitzung und liefert seine Eintraege (Portal am body). */
+async function openRowMenu(scope) {
+  const trigger = scope.querySelector('[title="Session actions"]');
+  assert.ok(trigger, "der Menueknopf der Sessionzeile fehlt");
+  await act(async () => { pointerDown(trigger); });
+  await settle(30);
+  return [...window.document.querySelectorAll('[role="menu"] [role="menuitem"]')];
+}
+
 test("Projekt- und Sessionzeilen kommen aus /api/sessions, Kollaps und Entfernen wirken", async () => {
   storage.clear();
   const { container } = await mount();
@@ -332,24 +366,34 @@ test("Sessionzeile ist per Enter bedienbar und meldet die Auswahl", async () => 
   assert.deepEqual(selected, ["s1"]);
 });
 
-test("mobil sind die drei Aktionen ohne Hover im DOM", async () => {
+test("mobil steht ein Menueknopf ohne Hover in der Zeile, nicht drei Einzelknoepfe", async () => {
   storage.clear();
   runningIds = [];
   mobileViewport = true;
   try {
     const { container } = await mount();
-    // Kein mouseover: die Aktionen muessen allein aus `isMobile` entstehen.
-    const actions = [
-      container.querySelector('[title="Rename"]'),
-      container.querySelector('[title="Archive (hide from list, restorable)"]'),
-      container.querySelector('[title="Delete (Shift+click to delete without confirmation)"]'),
-    ];
-    assert.ok(actions.every(Boolean), "die drei Aktionen fehlen mobil");
+    // Kein mouseover: der Knopf entsteht allein aus dem Markup.
+    const menu = container.querySelector('[title="Session actions"]');
+    assert.ok(menu, "der Menueknopf fehlt mobil");
     // Die Klasse traegt die 44-px-Regel aus globals.css.
-    assert.ok(actions.every((node) => node.classList.contains("sidebar-row-action")));
+    assert.ok(menu.classList.contains("sidebar-row-action"), "die 44-px-Regel haengt an der Klasse");
+    for (const gone of ["Rename", "Archive", "Delete"]) {
+      assert.equal(
+        container.querySelector(`[title^="${gone}"]`),
+        null,
+        `der Einzelknopf ${gone} ist noch da`,
+      );
+    }
   } finally {
     mobileViewport = false;
   }
+});
+
+test("der Menueknopf ist auch auf dem Desktop ohne Hover da", async () => {
+  storage.clear();
+  runningIds = [];
+  const { container } = await mount();
+  assert.ok(container.querySelector('[title="Session actions"]'), "der Menueknopf fehlt ohne Hover");
 });
 
 test("Sessionzeile ist mobil 44px hoch und auf dem Desktop 40", async () => {
@@ -373,36 +417,82 @@ test("Sessionzeile ist mobil 44px hoch und auf dem Desktop 40", async () => {
   }
 });
 
-test("Hover zeigt Aktionen; Umbenennen, Archivieren und Shift-Loeschen laufen ueber die API", async () => {
+test("das Zeilenmenue bietet genau Rename, Archive und Delete; die Aktionen laufen ueber die API", async () => {
   storage.clear();
   runningIds = [];
   const { container } = await mount();
-  const row = [...container.querySelectorAll("div")].find((node) => node.getAttribute("title") === "hello there");
-  assert.ok(row, "die Sessionzeile fehlt");
-  const pressableRow = row.parentElement;
-  await act(async () => {
-    pressableRow.dispatchEvent(new window.Event("mouseover", { bubbles: true, relatedTarget: window.document.body }));
-  });
-  await settle();
 
-  // Hover blendet die Aktionsknoepfe ein; ein Klick auf Umbenennen mountet
-  // das Eingabefeld. Der Blur-Pfad laesst sich in linkedom nicht ausloesen,
-  // deshalb bleibt es beim Nachweis der Aktionen (Archiv/Loeschen).
-  assert.ok(container.querySelector('[title="Rename"]'), "der Umbenennen-Knopf erscheint beim Hover nicht");
+  const items = await openRowMenu(container);
+  assert.deepEqual(
+    items.map((item) => item.textContent),
+    ["Rename", "Archive (hide from list, restorable)", "Delete"],
+    "die Zeile hat genau diese drei Aktionen",
+  );
 
-  const archive = container.querySelector('[title="Archive (hide from list, restorable)"]');
-  await act(async () => { archive.click(); });
+  await act(async () => { items[1].click(); });
   await settle();
   const archiveCall = requests.find((entry) => entry.url === "/api/sessions/s1" && entry.method === "PATCH");
   assert.ok(archiveCall, "der Archiv-Aufruf fehlt");
   assert.match(archiveCall.body, /"archived":true/);
 
-  const remove = container.querySelector('[title="Delete (Shift+click to delete without confirmation)"]');
-  await act(async () => {
-    remove.dispatchEvent(Object.assign(new window.Event("click", { bubbles: true }), { shiftKey: true }));
-  });
+  // Delete oeffnet dieselbe Rueckfrage in der Zeile.
+  const second = await openRowMenu(container);
+  await act(async () => { second[2].click(); });
   await settle();
-  assert.ok(requests.some((entry) => entry.url === "/api/sessions/s1" && entry.method === "DELETE"), "der Shift-Klick hat nicht geloescht");
+  assert.match(container.textContent, /Delete hello there\?/, "die Rueckfrage fehlt");
+  const confirm = [...container.querySelectorAll("button")].find((node) => node.textContent === "Delete");
+  assert.ok(confirm, "der Bestaetigungsknopf fehlt");
+  await act(async () => { confirm.click(); });
+  await settle();
+  assert.ok(
+    requests.some((entry) => entry.url === "/api/sessions/s1" && entry.method === "DELETE"),
+    "die Bestaetigung hat nicht geloescht",
+  );
+});
+
+test("Enter oeffnet das Menue, Pfeiltasten navigieren, Escape gibt den Fokus zurueck", async () => {
+  storage.clear();
+  runningIds = [];
+  const { container } = await mount();
+  const trigger = container.querySelector('[title="Session actions"]');
+  assert.ok(trigger, "der Menueknopf fehlt");
+
+  await act(async () => { keydown(trigger, "Enter"); });
+  await settle(20);
+  assert.ok(window.document.querySelector('[role="menu"]'), "Enter hat das Menue nicht geoeffnet");
+
+  await act(async () => { keydown(window.document.activeElement, "ArrowDown"); });
+  await settle(10);
+  assert.equal(
+    window.document.activeElement?.getAttribute("role"),
+    "menuitem",
+    "die Pfeiltaste hat den Fokus nicht in die Eintraege bewegt",
+  );
+
+  await act(async () => { keydown(window.document, "Escape"); });
+  await settle(20);
+  assert.equal(window.document.querySelector('[role="menu"]'), null, "Escape schliesst das Menue nicht");
+  assert.equal(window.document.activeElement, trigger, "der Fokus kehrt nicht zum Menueknopf zurueck");
+});
+
+test("Klick auf den Menueknopf und auf einen Eintrag waehlt die Sitzung nicht aus", async () => {
+  storage.clear();
+  runningIds = [];
+  const selected = [];
+  const { container } = await mount({ onSelectSession: (session) => selected.push(session.id) });
+  const trigger = container.querySelector('[title="Session actions"]');
+  assert.ok(trigger, "der Menueknopf fehlt");
+
+  await act(async () => { trigger.click(); });
+  await act(async () => { pointerDown(trigger); });
+  await settle(20);
+  assert.deepEqual(selected, [], "der Klick auf den Menueknopf hat die Sitzung ausgewaehlt");
+
+  const items = [...window.document.querySelectorAll('[role="menu"] [role="menuitem"]')];
+  await act(async () => { items[0].click(); });
+  await settle();
+  assert.deepEqual(selected, [], "der Menueeintrag hat die Sitzung mit ausgewaehlt");
+  assert.ok(container.querySelector("input"), "der Eintrag Rename hat das Eingabefeld nicht geoeffnet");
 });
 
 test("Kontextmenue-Ereignis ruft refresh und der Explorer meldet Aenderungen", async () => {

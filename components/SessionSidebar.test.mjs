@@ -5,10 +5,15 @@ import test from "node:test";
 const source = await readFile(new URL("./SessionSidebar.tsx", import.meta.url), "utf8");
 const sessionItemSource = source.slice(source.indexOf("function SessionItem("));
 
-test("only Shift+click bypasses session deletion confirmation", () => {
+test("the Delete entry always asks for confirmation", () => {
+  // Seit Delete im Zeilenmenue steht, gibt es keinen Shift-Klick mehr, der die
+  // Rueckfrage ueberspringt: der Eintrag setzt nur den Bestaetigungszustand,
+  // und `performDelete` haengt allein am Bestaetigungsknopf.
+  assert.match(sessionItemSource, /onSelect=\{\(\) => setConfirmDelete\(true\)\}/);
+  assert.doesNotMatch(sessionItemSource, /shiftKey/);
   assert.match(
     sessionItemSource,
-    /const handleDeleteClick[\s\S]*?if \(e\.shiftKey\) \{\s*void performDelete\(\);\s*\} else \{\s*setConfirmDelete\(true\);/,
+    /const handleDeleteConfirm = useCallback\(\(e: React\.MouseEvent\) => \{\s*e\.stopPropagation\(\);\s*void performDelete\(\);/,
   );
 });
 
@@ -68,5 +73,8 @@ test("manual and lifecycle refreshes bypass the server session-list cache", () =
 
 test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
-  assert.match(sessionItemSource, /\{\(hovered \|\| isMobile\) && !session\.transient && \(/);
+  // Das Menue traegt die drei Aktionen und steht nur an nicht-transienten
+  // Zeilen; ohne Hover-Bedingung, damit es auf dem Telefon erreichbar ist.
+  assert.match(sessionItemSource, /\{!session\.transient && \(\s*<DropdownMenu>/);
+  assert.doesNotMatch(sessionItemSource, /hovered \|\| isMobile/);
 });

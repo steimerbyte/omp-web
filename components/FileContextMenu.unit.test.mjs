@@ -377,6 +377,47 @@ test("Delete eines Ordners nennt die rekursive Warnung; JSON-Fehler faellt auf H
   win.document.body.innerHTML = "";
 });
 
+test("initialPhase oeffnet direkt die Loesch-Rueckfrage, ohne Listenmenue dahinter", async () => {
+  // So oeffnet das Zeilenmenue des Explorers den Schritt: es gibt kein
+  // Rechtsklick-Menue, das davor oder dahinter stehen koennte.
+  const { root, events } = await mount({
+    target: { ...DIR_TARGET, initialPhase: "confirm-delete" },
+    fetchImpl: async () => jsonResponse(200, { ok: true }),
+  });
+
+  assert.equal(win.document.querySelectorAll('[role="menuitem"]').length, 0, "die Liste wurde mitgeoeffnet");
+  const dialog = win.document.querySelector('[role="dialog"]');
+  assert.ok(dialog, "die Rueckfrage fehlt");
+  assert.match(dialog.textContent, /Delete folder\?/);
+  assert.match(dialog.textContent, /deletes everything inside/i);
+  // Der Fokus startet auf "Abbrechen", nicht auf dem roten Knopf und nicht
+  // auf dem Zeilenknopf dahinter.
+  assert.equal(win.document.activeElement?.textContent, "Cancel", "der Fokus steht nicht auf Abbrechen");
+
+  // Escape schliesst das Menue, statt zur Liste zurueckzuspringen.
+  await act(async () => {
+    fire(dialog, "keydown", { key: "Escape" });
+  });
+  // Das Schliessen ist Sache des Aufrufers (er haelt den Zustand); hier zaehlt,
+  // dass kein Listenmenue erschienen ist und `onClose` kam.
+  assert.equal(win.document.querySelectorAll('[role="menuitem"]').length, 0, "Escape hat die Liste geoeffnet");
+  assert.equal(events.closed, 1, "Escape hat nicht geschlossen");
+
+  // Dasselbe fuer Abbrechen.
+  const cancel = [...win.document.querySelectorAll('[role="dialog"] button')]
+    .find((node) => node.textContent.trim() === "Cancel");
+  assert.ok(cancel, "der Abbrechen-Knopf fehlt");
+  await act(async () => {
+    cancel.click();
+  });
+  assert.equal(win.document.querySelectorAll('[role="menuitem"]').length, 0, "Abbrechen hat die Liste geoeffnet");
+  assert.equal(events.closed, 2, "Abbrechen hat nicht geschlossen");
+
+  await act(async () => root.unmount());
+  mounted.splice(0, mounted.length);
+  win.document.body.innerHTML = "";
+});
+
 test("Copy path schreibt in die Clipboard-API, Vorschau oeffnet das Bild ohne Schliessen", async () => {
   const written = [];
   const opened = [];

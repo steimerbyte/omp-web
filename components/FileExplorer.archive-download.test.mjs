@@ -14,9 +14,11 @@ import { createJiti } from "jiti";
  * den ein Klick auf die Zeile laufen koennte: `handleRowClick` ruft
  * `onOpenFile`, und fuer ein Archiv hat `FileViewer` nichts.
  *
- * Gemessen wird nicht der Zustand einer Hover-Variable, sondern was im DOM
- * steht, ohne dass ein Zeiger die Zeile je beruehrt: genau der Zustand, in
- * dem der Nutzer auf dem Telefon arbeitet.
+ * Seit die Werkzeuge in einem Drei-Punkte-Menue stehen, gilt derselbe Satz
+ * fuer das Menue: der Knopf ist ohne Hover da (er traegt die 44-px-Regel aus
+ * globals.css), und der Download-Eintrag darin ist derselbe Anker mit
+ * derselben Route. Gemessen wird wieder nur, was im DOM steht, ohne dass ein
+ * Zeiger die Zeile je beruehrt.
  */
 
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
@@ -159,101 +161,114 @@ test.after(async () => {
   }
 });
 
-test("a zip row carries a download link before any pointer touches it", async () => {
-  const container = await mountExplorer();
-  const text = container.textContent ?? "";
+/** Ein Druck auf den Menueknopf: Radix oeffnet auf `pointerdown`, nicht auf `click`. */
+async function openRowMenu(row, { keyboard = false } = {}) {
+  const trigger = row.querySelector('[title="File actions"]');
+  assert.ok(trigger, `the row has no menu button; rendered: ${JSON.stringify((row.textContent ?? "").slice(0, 200))}`);
+  if (keyboard) {
+    // Im grossen Fenster liegt ein DismissableLayer der Dialogebene ueber der
+    // Seite; der Tastenweg oeffnet dasselbe Menue ohne einen zweiten
+    // pointerdown-Zweig im Test.
+    await act(async () => {
+      trigger.dispatchEvent(Object.assign(new win.Event("keydown", { bubbles: true, cancelable: true }), { key: "Enter" }));
+    });
+  } else {
+    const down = new win.Event("pointerdown", { bubbles: true, cancelable: true });
+    for (const [key, value] of Object.entries({ button: 0, ctrlKey: false, pointerType: "mouse" })) {
+      Object.defineProperty(down, key, { value, configurable: true });
+    }
+    await act(async () => { trigger.dispatchEvent(down); });
+  }
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+  // Das Menue haengt als Portal am `body`, nicht im Container.
+  const items = [...win.document.querySelectorAll('[role="menu"] [role="menuitem"]')];
+  return { trigger, items };
+}
 
-  assert.ok(
-    text.includes("bitkom-itk-beschaffung-leitfaeden.zip"),
-    `the zip row was never rendered.\nrendered: ${JSON.stringify(text.slice(0, 300))}`,
-  );
+const rowByName = (name) => [...win.document.querySelectorAll('[role="treeitem"]')]
+  .find((node) => (node.textContent ?? "").includes(name));
 
-  const links = [...container.querySelectorAll("a[download]")];
-  const zipLink = links.find((a) => a.getAttribute("href")?.includes(".zip"));
+async function closeMenu() {
+  await act(async () => {
+    win.document.dispatchEvent(Object.assign(new win.Event("keydown", { bubbles: true }), { key: "Escape" }));
+  });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+}
+
+test("a zip row carries its download entry before any pointer touches it", async () => {
+  await mountExplorer();
+  const row = rowByName("bitkom-itk-beschaffung-leitfaeden.zip");
+  assert.ok(row, "the zip row was never rendered");
+
+  const { items } = await openRowMenu(row);
+  // `DropdownMenuItem asChild` macht den Anker selbst zum Eintrag, nicht zu
+  // seinem Kind.
+  const zipLink = items.find((item) => item.getAttribute("href")?.includes(".zip"));
 
   assert.ok(
     zipLink,
-    `no download link in the zip row without hover; links found: ` +
-    `${JSON.stringify(links.map((a) => a.getAttribute("href")))}\n` +
-    `rendered: ${JSON.stringify(text.slice(0, 300))}`,
+    `no download entry in the zip row's menu; entries found: ` +
+    `${JSON.stringify(items.map((item) => item.textContent))}`,
   );
-
-  const href = zipLink.getAttribute("href");
   assert.equal(
-    href,
+    zipLink.getAttribute("href"),
     `/api/files/home/steimerbyte/workspace/bitkom-itk-beschaffung-leitfaeden.zip?type=download`,
-    "the download link must address the file route with type=download",
+    "the download entry must address the file route with type=download",
   );
+  await closeMenu();
 });
 
-test("a viewable text row carries its download link without hover too", async () => {
-  const container = await mountExplorer();
-  const links = [...container.querySelectorAll("a[download]")];
+test("a viewable text row carries its download entry without hover too", async () => {
+  await mountExplorer();
+  const row = rowByName("notes.md");
+  assert.ok(row, "the text row was never rendered");
 
-  const textLink = links.find((a) => a.getAttribute("href")?.includes("notes.md"));
+  const { items } = await openRowMenu(row);
+  const textLink = items.find((item) => item.getAttribute("href")?.includes("notes.md"));
 
   assert.ok(
     textLink,
-    `the text row has no download link without hover; links found: ` +
-    `${JSON.stringify(links.map((a) => a.getAttribute("href")))}\n` +
-    `rendered: ${JSON.stringify((container.textContent ?? "").slice(0, 300))}`,
+    `the text row has no download entry without hover; entries: ` +
+    `${JSON.stringify(items.map((item) => item.textContent))}`,
   );
-
-  assert.equal(
-    textLink.getAttribute("data-download-always-visible"),
-    "true",
-    "the download anchor must be marked as permanently visible",
-  );
+  await closeMenu();
 });
 
-test("the download anchor sits in the row flow and is never hidden", async () => {
-  const container = await mountExplorer();
-  const anchors = [...container.querySelectorAll("a[download]")];
+test("every row carries a menu button without hover, and the download lives inside", async () => {
+  await mountExplorer();
+  const rows = [...win.document.querySelectorAll('[role="treeitem"]')];
+  assert.ok(rows.length > 0, "no rows rendered at all");
 
-  assert.ok(anchors.length > 0, "no download anchors rendered at all");
-
-  for (const anchor of anchors) {
-    const style = anchor.getAttribute("style") ?? "";
+  for (const row of rows) {
+    const trigger = row.querySelector('[title="File actions"]');
+    assert.ok(trigger, `a row has no menu button; rendered: ${JSON.stringify((row.textContent ?? "").slice(0, 120))}`);
+    // Der Knopf ist ohne Hover im DOM und wird nicht per Opazitaet versteckt.
+    const style = trigger.getAttribute("style") ?? "";
+    assert.equal(/opacity:\s*0/.test(style), false, `the menu button is invisible without hover: ${style}`);
+    assert.equal(/display:\s*none/.test(style), false, `the menu button is hidden: ${style}`);
     assert.equal(
-      /position:\s*absolute/.test(style),
-      false,
-      `an absolutely positioned download anchor only appears on hover: ${style}`,
-    );
-    assert.equal(
-      /opacity:\s*0/.test(style),
-      false,
-      `a transparent download anchor is invisible without hover: ${style}`,
-    );
-    assert.equal(
-      /visibility:\s*hidden/.test(style),
-      false,
-      `a hidden download anchor cannot be clicked: ${style}`,
-    );
-    assert.equal(
-      anchor.getAttribute("aria-hidden"),
-      null,
-      "the download anchor must not be hidden from assistive tech either",
-    );
-    assert.equal(
-      anchor.hasAttribute("disabled"),
-      false,
-      "the download anchor must not be disabled",
+      row.querySelectorAll("a[download]").length,
+      0,
+      "a download anchor outside the menu is unreachable on a phone again",
     );
   }
 });
 
-test("a folder row has no download anchor", async () => {
-  const container = await mountExplorer();
-  const anchors = [...container.querySelectorAll("a[download]")];
+test("a folder row's menu has no download entry", async () => {
+  await mountExplorer();
+  const row = rowByName("pages");
+  assert.ok(row, "the folder row was never rendered");
 
+  const { items } = await openRowMenu(row);
   assert.equal(
-    anchors.some((a) => a.getAttribute("href")?.includes("/pages")),
+    items.some((item) => item.hasAttribute("download")),
     false,
-    "a directory is not downloadable",
+    `a directory is not downloadable; entries: ${JSON.stringify(items.map((item) => item.textContent))}`,
   );
+  await closeMenu();
 });
 
-test("the popup explorer window shows the same always-visible download anchors", async () => {
+test("the popup explorer window offers the same menu, above its own panel", async () => {
   const container = await mountExplorer();
 
   const openButton = [...container.querySelectorAll("button")]
@@ -268,34 +283,21 @@ test("the popup explorer window shows the same always-visible download anchors",
   await act(async () => { openButton.dispatchEvent(new win.Event("click", { bubbles: true })); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
 
-  // Das Fenster haengt ueber ein Portal an `document.body`, nicht im Container.
   const dialog = win.document.querySelector('[role="dialog"]');
   assert.ok(dialog, "the explorer window did not open");
 
-  const popupAnchors = [...dialog.querySelectorAll("a[download]")];
-  assert.ok(
-    popupAnchors.length > 0,
-    `the explorer window has no download anchors without hover; rendered: ` +
-    `${JSON.stringify((dialog.textContent ?? "").slice(0, 300))}`,
-  );
+  const row = [...dialog.querySelectorAll('[role="treeitem"]')]
+    .find((node) => (node.textContent ?? "").includes("notes.md"));
+  assert.ok(row, "the popup window has no text row");
 
-  for (const anchor of popupAnchors) {
-    assert.equal(
-      anchor.getAttribute("data-download-always-visible"),
-      "true",
-      "the popup window must mark its download anchors as permanently visible",
-    );
-    assert.equal(
-      /position:\s*absolute/.test(anchor.getAttribute("style") ?? ""),
-      false,
-      "the popup download anchor must not be absolutely positioned",
-    );
-  }
+  const { items } = await openRowMenu(row, { keyboard: true });
+  const link = items.find((item) => item.hasAttribute("download"));
+  assert.ok(link, `the popup window's menu has no download entry: ${JSON.stringify(items.map((item) => item.textContent))}`);
 
-  assert.ok(
-    popupAnchors.some((a) => a.getAttribute("href")?.includes("notes.md")),
-    "the text row is missing its download link in the popup window too",
-  );
+  // Das Fenster liegt auf Ebene 1300; ein Menue auf Ebene 50 waere unsichtbar.
+  const menu = win.document.querySelector('[role="menu"]');
+  assert.equal(menu?.style.zIndex, "1310", "the row menu must sit above the explorer window panel");
+  await closeMenu();
 
   await act(async () => {
     const close = [...dialog.querySelectorAll("button")]
@@ -303,3 +305,4 @@ test("the popup explorer window shows the same always-visible download anchors",
     if (close) close.dispatchEvent(new win.Event("click", { bubbles: true }));
   });
 });
+

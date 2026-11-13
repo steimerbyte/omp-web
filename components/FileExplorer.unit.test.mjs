@@ -157,6 +157,22 @@ class FakeXHR {
 }
 globalThis.XMLHttpRequest = FakeXHR;
 
+// linkedom kennt kein MouseEvent; `FileContextMenu` legt das Ankereignis des
+// Rechtsklick-Menues damit auf seinen Trigger.
+class SimpleMouseEvent extends win.Event {
+  constructor(type, init = {}) {
+    super(type, init);
+    this.clientX = init.clientX ?? 0;
+    this.clientY = init.clientY ?? 0;
+    this.button = init.button ?? 0;
+    this.ctrlKey = init.ctrlKey ?? false;
+    this.shiftKey = init.shiftKey ?? false;
+    this.relatedTarget = init.relatedTarget ?? null;
+  }
+}
+globalThis.MouseEvent = SimpleMouseEvent;
+win.MouseEvent = SimpleMouseEvent;
+
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 const { FileExplorer } = await jiti.import("./FileExplorer.tsx");
@@ -235,16 +251,6 @@ function fire(target, type, props = {}) {
   return event;
 }
 
-async function hover(node) {
-  // Der Hover-Zustand der Zeilenbeschriftung haengt am inneren
-  // dragHandle-Element; ein Enter auf dem aeusseren Row-Element erreicht ihn
-  // nicht.
-  const target = node.querySelector('div[draggable="true"]') ?? node;
-  await act(async () => {
-    fire(target, "mouseover", { relatedTarget: win.document.body });
-  });
-}
-
 // Arborists selectMulti() ruft scrollTo() und haengt in linkedom. Der
 // onSelect-Callback des Trees ist aber oeffentlich als Prop vorhanden; der
 // Test reicht ihm dieselben Knoten, die ein Ctrl-Klick liefern wuerde.
@@ -289,9 +295,36 @@ test("Baum zeigt Ordner und Dateien, Git-Badge im Baum, Change-Liste separat", a
   assert.equal(rows(changes).length, 0, "die Aenderungsliste zeigt keinen Dateibaum");
 });
 
-test("Ordner laedt beim Aufklappen nach; Hover zeigt Mention und Bildvorschau", async () => {
+/** Ein Druck auf den Menueknopf: Radix oeffnet auf `pointerdown`, nicht auf `click`. */
+async function openRowMenu(row, { keyboard = false } = {}) {
+  const trigger = row.querySelector('[title="File actions"]');
+  assert.ok(trigger, `die Zeile hat keinen Menueknopf: ${JSON.stringify((row.textContent ?? "").slice(0, 160))}`);
+  await act(async () => {
+    if (keyboard) {
+      fire(trigger, "keydown", { key: "Enter" });
+      return;
+    }
+    const down = new win.Event("pointerdown", { bubbles: true, cancelable: true });
+    for (const [key, value] of Object.entries({ button: 0, ctrlKey: false, pointerType: "mouse" })) {
+      Object.defineProperty(down, key, { value, configurable: true });
+    }
+    trigger.dispatchEvent(down);
+  });
+  await settle(20);
+  // Das Menue haengt als Portal am `body`, nicht im Container.
+  return [...win.document.querySelectorAll('[role="menu"] [role="menuitem"]')];
+}
+
+async function closeRowMenu() {
+  await act(async () => {
+    fire(win.document, "keydown", { key: "Escape" });
+  });
+  await settle(20);
+}
+
+test("Zeilenmenue: Mention fuer den Ordner, Bildvorschau fuer das Bild, ohne Hover", async () => {
   const mentions = [];
-  const container = await mount({
+  await mount({
     props: {
       onAtMention: (path, isDir) => mentions.push([path, isDir]),
       initialViewState: { currentPath: "/work", expandedPaths: new Set(["/work/src"]), history: { paths: ["/work"], index: 0 } },
@@ -299,39 +332,42 @@ test("Ordner laedt beim Aufklappen nach; Hover zeigt Mention und Bildvorschau", 
   });
   assert.ok(rowByName("inner.txt"), "der Unterordner wurde nicht geladen");
 
-  const src = rowByName("src");
-  await hover(src);
-  const mentionDir = src.querySelector('[title="Insert path into chat"]');
-  assert.ok(mentionDir, "der Mention-Knopf fehlt am Ordner");
-  await act(async () => {
-    mentionDir.click();
-  });
+  // Kein Hover: der Menueknopf ist trotzdem da und bietet den Mention an.
+  const srcItems = await openRowMenu(rowByName("src"));
+  assert.deepEqual(
+    srcItems.map((item) => item.textContent),
+    ["Insert path into chat", "Copy path", "Delete"],
+    "ein Ordner hat Mention, Copy path und Delete - und keinen Download",
+  );
+  await act(async () => { srcItems[0].click(); });
+  await settle();
   assert.deepEqual(mentions, [["src", true]]);
 
-  const photo = rowByName("photo.png");
-  await hover(photo);
-  const imageButton = photo.querySelector('[title="Open image in large view"]');
-  assert.ok(imageButton, "der Bild-Knopf fehlt an der Bilddatei");
-  await act(async () => {
-    imageButton.click();
-  });
-  const preview = win.document.querySelector('[role="dialog"] img');
-  assert.ok(preview, "die grosse Bildvorschau wurde nicht geoeffnet");
-  assert.equal(preview.getAttribute("src"), "/api/files/work/photo.png?type=read");
+  const photoItems = await openRowMenu(rowByName("photo.png"));
+  assert.deepEqual(
+    photoItems.map((item) => item.textContent),
+    ["Insert path into chat", "Open image in large view", "Download file", "Copy path", "Delete"],
+    "eine Bilddatei bietet Vorschau und Download im selben Menue",
+  );
+  const preview = photoItems.find((item) => item.textContent === "Open image in large view");
+  await act(async () => { preview.click(); });
+  await settle(20);
+  const image = win.document.querySelector('[role="dialog"] img');
+  assert.ok(image, "die grosse Bildvorschau wurde nicht geoeffnet");
+  assert.equal(image.getAttribute("src"), "/api/files/work/photo.png?type=read");
   await act(async () => {
     fire(win.document, "keydown", { key: "Escape" });
   });
 });
 
-test("Trefferflaechen der Zeilenwerkzeuge: Chevron, Mention, Vorschau und Download sind 24 px", async () => {
-  const container = await mount({
+test("Trefferflaechen der Zeilenwerkzeuge: Chevron und Menueknopf sind 24 px", async () => {
+  await mount({
     props: {
       onAtMention: () => {},
       initialViewState: { currentPath: "/work", expandedPaths: new Set(["/work/src"]), history: { paths: ["/work"], index: 0 } },
     },
   });
   const src = rowByName("src");
-  await hover(src);
   const chevron = src.querySelector('[role="button"][aria-label]');
   assert.ok(chevron, "der Chevron fehlt");
   // border-box: 24 px Aussenmass, die 14-px-Optik steckt in den Polstern.
@@ -340,23 +376,56 @@ test("Trefferflaechen der Zeilenwerkzeuge: Chevron, Mention, Vorschau und Downlo
   assert.equal(chevron.style.padding, "5px");
   assert.equal(chevron.style.margin, "-5px", "negative Raender halten den Fluss bei 14 px");
 
-  const mention = src.querySelector('[title="Insert path into chat"]');
-  assert.ok(mention, "der Mention-Knopf fehlt");
-  assert.equal(mention.style.height, "24px");
-  assert.equal(mention.style.minWidth, "24px");
+  const menu = src.querySelector('[title="File actions"]');
+  assert.ok(menu, "der Menueknopf fehlt");
+  assert.equal(menu.style.width, "24px");
+  assert.equal(menu.style.height, "24px");
+  // Die 44-px-Trefferflaeche auf Touch haengt an dieser Klasse (globals.css).
+  assert.ok(menu.classList.contains("tree-row-action"), "der Menueknopf traegt nicht die Touch-Regel");
+});
 
-  const photo = rowByName("photo.png");
-  await hover(photo);
-  const image = photo.querySelector('[title="Open image in large view"]');
-  assert.ok(image, "der Bild-Knopf fehlt");
-  assert.equal(image.style.width, "24px");
-  assert.equal(image.style.height, "24px");
+test("Menueklick waehlt die Zeile nicht; Copy path und Delete laufen ueber ihre Wege", async () => {
+  const opened = [];
+  const copied = [];
+  globalThis.navigator.clipboard = { writeText: async (value) => { copied.push(value); } };
+  const container = await mount({ props: { onOpenFile: (path) => opened.push(path), onAtMention: () => {} } });
+  try {
+    const notes = rowByName("notes.txt");
+    const trigger = notes.querySelector('[title="File actions"]');
+    assert.ok(trigger, "der Menueknopf fehlt");
+    // Ein echter Klick auf den Knopf darf die Datei nicht oeffnen.
+    await act(async () => { trigger.click(); });
+    await settle();
+    assert.deepEqual(opened, [], "der Klick auf den Menueknopf hat die Datei geoeffnet");
 
-  const notes = rowByName("notes.txt");
-  const download = notes.querySelector("a[download]");
-  assert.ok(download, "der Download-Anker fehlt");
-  assert.equal(download.style.height, "24px");
-  assert.equal(download.style.minWidth, "24px");
+    const items = await openRowMenu(notes);
+    assert.deepEqual(
+      items.map((item) => item.textContent),
+      ["Insert path into chat", "Download file", "Copy path", "Delete"],
+      "die Dateizeile bietet genau diese vier Eintraege",
+    );
+
+    await act(async () => { items[2].click(); });
+    await settle();
+    assert.deepEqual(copied, ["/work/notes.txt"], "Copy path kopiert den vollen Pfad");
+    assert.match(container.textContent, /Path copied to the clipboard/, "der Toast fehlt");
+
+    // Delete springt in die Rueckfrage des Rechtsklick-Menues.
+    const deleteItems = await openRowMenu(notes);
+    await act(async () => { deleteItems.at(-1).click(); });
+    await settle(20);
+    const panel = win.document.querySelector('[aria-label="Delete"]');
+    assert.ok(panel, "die Loesch-Rueckfrage fehlt");
+    assert.match(panel.textContent, /Delete notes\.txt\?/);
+    const confirm = [...panel.querySelectorAll("button")].find((node) => node.textContent === "Delete");
+    assert.ok(confirm, "der Bestaetigungsknopf fehlt");
+    await act(async () => { confirm.click(); });
+    await settle(30);
+    assert.match(container.textContent, /notes\.txt deleted/, "der Toast der Loeschung fehlt");
+  } finally {
+    await closeRowMenu();
+    delete globalThis.navigator.clipboard;
+  }
 });
 
 test("Mobil ist die Baumzeile 36 px hoch und der Baum remountet dabei nicht in Schleife", async () => {
