@@ -93,10 +93,16 @@ interface DragVisual {
 /* Die Kachel traegt Rahmen, Hintergrund und Schrift; radix' eigene Optik
  * (Pille, `bg-muted`, Hover-Wechsel, `dark:`-Zweifarben) wird zurueckgedreht.
  * `min-w-0` auf dem Trigger ist Pflicht, sonst waehlt der Trigger seine
- * Mindestbreite aus dem Text und `truncate` greift nie. */
+ * Mindestbreite aus dem Text und `truncate` greift nie.
+ *
+ * Die Auswahl ist ueberall dieselbe Flaeche (`--bg-selected`) plus eine
+ * Akzentkante — hier unten statt links, weil die Tabs nebeneinander stehen.
+ * Die 2 px liegen in der Kachel (der Trigger hat `border-0`), und die
+ * transparente Kante steht auch am inaktiven Tab, damit die Hoehe `h-9`
+ * bleibt und beim Wechsel nichts huepft. */
 const TAB_CLASS =
-  "flex shrink-0 items-stretch border-r border-border bg-card text-xs font-normal text-muted-foreground " +
-  "data-active:bg-background data-active:text-foreground data-active:font-medium " +
+  "flex shrink-0 items-stretch border-r border-border border-b-2 border-b-transparent bg-card text-xs font-normal text-muted-foreground " +
+  "data-active:border-b-brand data-active:bg-bg-selected data-active:text-foreground data-active:font-medium " +
   "max-w-45 min-w-20 cursor-pointer scroll-m-1";
 
 /* `text-current` und `bg-transparent` machen den Trigger farbneutral: Farbe und

@@ -351,6 +351,7 @@
   gap: 7px;
   padding: 4px 8px;
   border: none;
+  border-left: 2px solid transparent;
   border-radius: 5px;
   background: transparent;
   color: var(--text);
@@ -380,9 +381,11 @@
 }
 
 /* Mit `allowFiles` sind Dateien echte Ziele; die Auswahl des Aufrufers bleibt
- * deshalb auch dann sichtbar, wenn der Zeiger den Eintrag gerade verlassen hat. */
+ * deshalb auch dann sichtbar, wenn der Zeiger den Eintrag gerade verlassen hat.
+ * Gleiche Signatur wie die Sidebar-Zeile und der Baum: Flaeche plus Kante. */
 .entrySelected {
   background: var(--bg-selected);
+  border-left-color: var(--accent);
   color: var(--text);
 }
 

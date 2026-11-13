@@ -1800,6 +1800,10 @@ function ExplorerRow({
         cursor: "pointer",
         // Auswahl schlaegt Hover: eine markierte Zeile soll auch dann
         // markiert bleiben, wenn der Zeiger sie gerade nicht beruehrt.
+        // Eine Definition von "ausgewaehlt" in der ganzen App: die Flaeche
+        // plus eine 2-px-Akzentkante links. Auch die nicht gewaehlte Zeile
+        // traegt die Kante (transparent), damit beim Auswaehlen nichts springt.
+        borderLeft: node.isSelected ? "2px solid var(--accent)" : "2px solid transparent",
         background: node.isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
         borderRadius: 4,
         userSelect: "none",
