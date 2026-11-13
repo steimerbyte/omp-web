@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
-import { GitBranch } from "lucide-react";
+import { GitBranch, MoreVertical } from "lucide-react";
 import { Virtuoso, type ListProps, type ListRange, type VirtuosoHandle } from "react-virtuoso";
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
@@ -11,6 +11,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Spin } from "./motion/Enter";
 import { Skeleton } from "./motion/Skeleton";
 import { useAnimationPreference } from "./motion/AnimationProvider";
@@ -2302,7 +2303,6 @@ function SessionItem({
   onToggleCollapse?: () => void;
 }) {
   const { t } = useI18n();
-  const isMobile = useIsMobile();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -2325,8 +2325,7 @@ function SessionItem({
   const displayFirstMessage = skillExpansionToCommand(session.firstMessage) ?? session.firstMessage;
   const title = session.name || displayFirstMessage.slice(0, 50) || session.id.slice(0, 12);
 
-  const startRename = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const startRename = useCallback(() => {
     // Transient sessions have no file yet, so renaming would fail.
     if (session.transient) return;
     setRenameValue(session.name || displayFirstMessage.slice(0, 50) || session.id.slice(0, 12));
@@ -2365,8 +2364,7 @@ function SessionItem({
     }
   }, [session.id, session.transient, onDeleted]);
 
-  const performArchive = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const performArchive = useCallback(async () => {
     if (session.transient) return;
     try {
       await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
@@ -2379,15 +2377,6 @@ function SessionItem({
       // ignore
     }
   }, [session.id, session.transient, onArchived]);
-
-  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (e.shiftKey) {
-      void performDelete();
-    } else {
-      setConfirmDelete(true);
-    }
-  }, [performDelete]);
 
   const handleDeleteConfirm = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -2573,94 +2562,48 @@ function SessionItem({
             </Pressable>
           )}
 
-          {/* Action buttons — on hover, and permanently on touch devices */}
-          {(hovered || isMobile) && !session.transient && (
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <Pressable
-                onClick={startRename}
-                title={t("sidebar.rename")}
-                className="sidebar-row-action"
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 26, height: 26, padding: 0,
-                  background: "transparent", border: "none",
-                  borderRadius: "var(--radius-control)", color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background var(--duration-hover), color var(--duration-hover), border-color var(--duration-hover)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                  e.currentTarget.style.color = "var(--accent)";
-                  e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "transparent";
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                </svg>
-              </Pressable>
-              <Pressable
-                onClick={performArchive}
-                title={t("sidebar.archive")}
-                className="sidebar-row-action"
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 26, height: 26, padding: 0,
-                  background: "transparent", border: "none",
-                  borderRadius: "var(--radius-control)", color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background var(--duration-hover), color var(--duration-hover), border-color var(--duration-hover)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                  e.currentTarget.style.color = "var(--accent)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="4" width="18" height="4" rx="1" />
-                  <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
-                  <path d="M10 12h4" />
-                </svg>
-              </Pressable>
-              <button
-                onClick={handleDeleteClick}
-                title={t("sidebar.deleteWithShiftClick")}
-                className="sidebar-row-action"
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 26, height: 26, padding: 0,
-                  background: "transparent", border: "none",
-                  borderRadius: "var(--radius-control)", color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background var(--duration-hover), color var(--duration-hover), border-color var(--duration-hover)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--danger) 8%, transparent)";
-                  e.currentTarget.style.color = "var(--danger)";
-                  e.currentTarget.style.borderColor = "color-mix(in srgb, var(--danger) 35%, transparent)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "transparent";
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
-            </div>
+          {/* Ein Menue statt dreier Knoepfe: immer sichtbar (der Hover-Halt
+              war auf dem Telefon der Fehler), 26 px auf dem Desktop und
+              44 px auf Touch ueber `.sidebar-row-action`. */}
+          {!session.transient && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="sidebar-row-action"
+                  title={t("sidebar.sessionActions")}
+                  aria-label={t("sidebar.sessionActions")}
+                  // Die Zeile ist selbst ein Knopf: ohne den Halt waehlt der
+                  // Klick auf den Ausloeser die Sitzung mit aus.
+                  onClick={(event) => event.stopPropagation()}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 26, height: 26, padding: 0, flexShrink: 0,
+                    background: "transparent", border: "none",
+                    borderRadius: "var(--radius-control)", color: "var(--text-muted)",
+                    cursor: "pointer",
+                    transition: "background var(--duration-hover), color var(--duration-hover)",
+                  }}
+                  onMouseEnter={(event) => {
+                    event.currentTarget.style.background = "var(--bg-selected)";
+                    event.currentTarget.style.color = "var(--accent)";
+                  }}
+                  onMouseLeave={(event) => {
+                    event.currentTarget.style.background = "transparent";
+                    event.currentTarget.style.color = "var(--text-muted)";
+                  }}
+                >
+                  <MoreVertical size={14} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuItem onSelect={startRename}>{t("sidebar.rename")}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={performArchive}>{t("sidebar.archive")}</DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
+                  {t("sidebar.delete")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </>
       )}
