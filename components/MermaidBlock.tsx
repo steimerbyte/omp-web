@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Plus } from "lucide-react";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { CodeHighlighter } from "./CodeHighlighterLazy";
@@ -174,9 +175,7 @@ function MermaidZoomDialog({ svg, onClose }: { svg: string; onClose: () => void 
                 title={t("i18n.zoomIn")}
                 aria-label={t("i18n.zoomIn")}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+                <Plus size={13} strokeWidth={2} />
               </button>
             </div>
             <button

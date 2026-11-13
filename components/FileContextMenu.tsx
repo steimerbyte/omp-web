@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Trash2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { Pressable } from "./motion/Pressable";
 import { encodeFilePathForApi, getFileDirectory } from "@/lib/file-paths";
@@ -432,7 +433,7 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
     list.push({
       action: "delete",
       label: t("files.contextDelete"),
-      icon: <MenuIcon><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></MenuIcon>,
+      icon: <Trash2 size={13} strokeWidth={1.9} />,
       danger: true,
     });
     return list;

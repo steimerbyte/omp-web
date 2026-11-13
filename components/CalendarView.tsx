@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Plus } from "lucide-react";
 import {
   GERMAN_WEEKDAYS_MIN,
   addDays,
@@ -522,9 +523,7 @@ export function CalendarView() {
               flexShrink: 0,
             }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Plus size={13} strokeWidth={2.5} />
             {t("calendar.newEvent")}
           </button>
         </div>

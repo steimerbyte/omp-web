@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Plus } from "lucide-react";
 import styles from "./FileImagePreview.module.css";
 import { motion } from "motion/react";
 import { EASE_POP } from "./motion/animations";
@@ -526,7 +527,7 @@ export function FileImagePreview({
             title={t("fileImagePreview.zoomIn")}
             aria-label={t("fileImagePreview.zoomIn")}
           >
-            <svg className={styles.glyph} viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            <Plus className={styles.glyph} />
           </Pressable>
           <Pressable
             type="button"

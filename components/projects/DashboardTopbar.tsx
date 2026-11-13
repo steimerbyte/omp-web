@@ -1,6 +1,7 @@
 "use client";
 
 import { Pressable } from "@/components/motion/Pressable";
+import { Plus } from "lucide-react";
 import { Skeleton } from "@/components/motion/Skeleton";
 import { useI18n } from "@/hooks/useI18n";
 
@@ -93,9 +94,7 @@ export function DashboardTopbar({
             fontFamily: "inherit",
           }}
         >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+          <Plus size={13} strokeWidth={2.5} />
           {t("projects.new")}
         </Pressable>
       ) : null}

@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useState, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
+import { Plus } from "lucide-react";
 import {
   Tree,
   type CursorProps,
@@ -1040,9 +1041,7 @@ function FileExplorerWindow({
             title={t("files.explorerWindowNewTab")}
             aria-label={t("files.explorerWindowNewTab")}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Plus size={13} strokeWidth={2.2} />
           </button>
           {/* Ein Weg zum Baum, der nicht ueber den Tabstrom laeuft. Der
               Explorer-Tab waere zwar da, aber er ist der linke Rand einer

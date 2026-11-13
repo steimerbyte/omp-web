@@ -1,6 +1,7 @@
 "use client";
 
 import { Enter } from "@/components/motion/Enter";
+import { Trash } from "lucide-react";
 import { Pressable } from "@/components/motion/Pressable";
 import { useI18n } from "@/hooks/useI18n";
 import type { TranslationParams } from "@/lib/i18n/types";
@@ -463,9 +464,5 @@ function OpenIcon() {
 }
 
 function TrashIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
-      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
-    </svg>
-  );
+  return <Trash size={13} strokeWidth={2} style={{ flexShrink: 0 }} />;
 }

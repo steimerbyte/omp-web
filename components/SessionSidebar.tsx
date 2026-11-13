@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { GitBranch } from "lucide-react";
 import { Virtuoso, type ListProps, type ListRange, type VirtuosoHandle } from "react-virtuoso";
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
@@ -1630,12 +1631,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                               fontSize: 11,
                             }}
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <line x1="6" y1="3" x2="6" y2="15" />
-                              <circle cx="18" cy="6" r="3" />
-                              <circle cx="6" cy="18" r="3" />
-                              <path d="M18 9a9 9 0 0 1-9 9" />
-                            </svg>
+                            <GitBranch size={14} strokeWidth={2} />
                             <span style={{ flex: 1 }}>{t("sidebar.worktrees")}</span>
                             <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                               <polyline points="4 2.5 8 6 4 9.5" />
@@ -2492,12 +2488,7 @@ function SessionItem({
         <>
           {/* Fork indicator for child sessions */}
           {depth > 0 && (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
-            </svg>
+            <GitBranch size={10} strokeWidth={2} color="var(--text-dim)" style={{ flexShrink: 0 }} />
           )}
           <div
             title={title}
@@ -2520,12 +2511,7 @@ function SessionItem({
             {!isRunning && isUnread && <UnreadSessionIndicator />}
             {session.worktreeBranch && (
               <span title={t("sidebar.worktreePath", { path: session.cwd })} style={{ display: "flex", color: "var(--accent)", flexShrink: 0 }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="6" y1="3" x2="6" y2="15" />
-                  <circle cx="18" cy="6" r="3" />
-                  <circle cx="6" cy="18" r="3" />
-                  <path d="M18 9a9 9 0 0 1-9 9" />
-                </svg>
+                <GitBranch size={10} strokeWidth={2.4} />
               </span>
             )}
           </div>
