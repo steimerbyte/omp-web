@@ -3,6 +3,32 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.29.1
+Released 2026-11-13.
+
+### Behoben
+
+- **Seit 0.29.0 standen alle Dialoge hinter ihrem eigenen geblurrten
+  Hintergrund — man sah nur die Unschärfe, das Fenster nicht.** Ursache:
+  `bare` in `components/ui/dialog.tsx` strich Position **und** `z-index`;
+  Overlay und Fenster sind Geschwister im Portal, das Overlay behielt seinen
+  `z-index`, das Fenster fiel auf `static`/`auto` und verschwand unter
+  `backdrop-filter: blur(8px)`. Gemessen bei 390×844 und 1440×900:
+  `elementFromPoint` in der Bildmitte war das Overlay. Jetzt besitzt das
+  Primitiv die Ebene — neues `layer`-Prop (Default 50), gleicher `z-index` auf
+  Overlay **und** Fenster, das Fenster folgt im DOM und gewinnt; `bare`
+  zentriert selbst. Aufrufer mit eigenen `layer`-Werten (Settings/UsersConfig
+  1000, Skills-Delete 1200, Explorer-Fenster 1300, Bildvorschau 1302,
+  Eigenschaften 1400, Confirm/NewProject 200) haben ihre Eigenpositionierung
+  abgegeben. Dazu ein Test in `components/DialogFocus.test.mjs`, der Position,
+  gleiche Ebene und DOM-Reihenfolge prüft (auf dem alten Stand rot).
+- Ein CSS-Test, der den Mobile-Block von `SettingsConfig.module.css` scannte,
+  verlangte vor `.window` eine vorangehende Regel — die `.backdrop`-Regel, die
+  dieser Fix entfernt hat, war sein Anker. `{` ist jetzt ebenfalls eine Grenze;
+  die geprüften Deklarationen sind unverändert.
+- Gate: **3117 pass, 3 skip, 0 fail** (3120 Tests in 395 Dateien), Coverage
+  4340/5054 Funktionen = 85,9 %. `bun run typecheck` grün.
+
 ## v0.29.0
 Released 2026-11-13.
 
