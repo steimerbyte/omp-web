@@ -520,8 +520,10 @@
   font-weight: 600;
 }
 
+/* Der Hover verschiebt nur die Kante: --accent-hover als Flaeche traegt den
+ * hellen Text im hellen Modus nicht, deshalb bleibt die Flaeche --accent. */
 .primary:hover:not(:disabled) {
   border-color: var(--accent-hover);
-  background: var(--accent-hover);
+  background: var(--accent);
   color: var(--bg);
 }

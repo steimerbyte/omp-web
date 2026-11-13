@@ -57,7 +57,10 @@
   --border: #d8dbe0;
   --text: #1a1d23;
   --text-muted: #6c6c6c;  /* light mediumGray */
-  --text-dim: #949aa4;
+  /* Dim is still text (11-px labels) and doubles as the file-icon colour, so it
+     has to clear 4.5:1 on --bg — the audit measured 2.83:1 for the old
+     #949aa4. Held by lib/theme-contrast.test.mjs. */
+  --text-dim: #6b7280;
   --accent: #0082b3;      /* titanium deepBlue */
   --accent-hover: #00b4ff;
   --user-bg: #eef2f6;
@@ -91,7 +94,7 @@ html.dark {
   --border: #2a3038;      /* subtleGray */
   --text: #e8ecf4;        /* brightAluminum */
   --text-muted: #9ca3b0;  /* dimAluminum */
-  --text-dim: #6b7280;
+  --text-dim: #868e9c;    /* must clear 4.5:1 on --bg like the light one */
   --accent: #00b4ff;      /* electricBlue */
   --accent-hover: #4fcdff;
   --user-bg: #0f1216;     /* darkTitanium */
