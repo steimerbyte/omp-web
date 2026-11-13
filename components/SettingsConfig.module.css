@@ -37,6 +37,28 @@
   box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
 }
 
+/* Das Einstellungs-Fenster selbst — nicht die Fenster, die nur seine Optik
+ * borgen (das Bestaetigungs-Fenster der Kontenverwaltung, siehe unten).
+ *
+ * 95 % je Achse heisst 2,5 % Abstand auf jeder Seite. Ein Fenster auf 100 %
+ * legt seine Bedienelemente an die Kante, wo auf dem Telefon Statusleiste,
+ * Gestenrand und Daumen sitzen; 2,5 % je Seite sind der Rand, den der Operator
+ * als kleinster noch treffbarer Abstand vorgibt.
+ *
+ * `dvh` und nicht `vh`: die Adressleiste des mobilen Browsers verkleinert die
+ * sichtbare Hoehe, und das Fenster soll mit der sichtbaren rechnen. Die Breite
+ * ist `%` und nicht `vw`, weil `vw` die Bildlaufleiste mitzaehlt (derselbe
+ * Grund wie in `CalendarEventDialog`).
+ *
+ * Zwei Klassen, damit die Regel nur dieses Fenster trifft: `.window` traegt
+ * auch das Bestaetigungs-Fenster der Kontenverwaltung, dessen Groesse
+ * unveraendert bleibt. `.window.viewportInset` gewinnt gegen die Basisregel
+ * und gegen den 760px-Block unabhaengig von der Reihenfolge im Stylesheet. */
+.window.viewportInset {
+  width: 95%;
+  height: 95dvh;
+}
+
 .sidebar {
   min-width: 0;
   display: flex;

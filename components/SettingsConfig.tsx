@@ -388,7 +388,7 @@ export function SettingsConfig({ cwd, sessionId, initialSection = "models", onCl
         aria-modal="true"
         aria-label="Settings"
         overlayClassName={styles.backdrop}
-        className={styles.window}
+        className={`${styles.window} ${styles.viewportInset}`}
       >
         <aside className={styles.sidebar}>
           <div className={styles.brand}><div className={styles.eyebrow}>omp /settings</div><h1 className={styles.title}>Settings</h1><code className={styles.context} title={cwd ?? "Global configuration"}>{cwd ?? "Global configuration"}</code></div>

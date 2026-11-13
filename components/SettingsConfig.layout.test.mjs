@@ -266,3 +266,39 @@ test("the narrow-viewport override cannot widen the row again", () => {
   }
   assertBoundedRow(row, ".window @media (max-width: 760px)");
 });
+/**
+ * The panel must leave 2.5 % per side, not touch the screen.
+ *
+ * A window on 100 % of an axis puts its controls against the edge of the
+ * display. On the phone that edge belongs to the status bar, to the gesture
+ * area and to the thumb; a button flush with it is not reliably hit. The
+ * operator asked for a 5 % reduction per axis, i.e. what is left over on both
+ * sides together — 2.5 % each.
+ *
+ * `dvh` and not `vh`: the address bar of a mobile browser reduces the visible
+ * height, and the panel has to be sized against what is actually visible.
+ * Width stays in `%` and not `vw`, because `vw` counts the scrollbar.
+ *
+ * jsdom computes no geometry, so the rule is pinned where it lives. A revert
+ * to 100 % (or to the old `min(1180px, calc(100vw - 36px))` on `.window` while
+ * dropping the class) fails here: the sizing declaration would be gone.
+ */
+test("the settings panel covers 95 % of each axis, never the whole viewport", () => {
+  const body = ruleBody(css, ".window.viewportInset");
+
+  const width = declaration(body, "width");
+  assert.equal(width, "95%",
+    `.window.viewportInset: width muss 95% sein — 100 % legt die Bedienelemente ` +
+    `an die Kante; gefunden: ${width}`);
+
+  const height = declaration(body, "height");
+  assert.equal(height, "95dvh",
+    `.window.viewportInset: height muss 95dvh sein — dvh rechnet mit der ` +
+    `sichtbaren Hoehe (Adressleiste), nicht mit der statischen; gefunden: ${height}`);
+
+  // The rule is only worth something when the settings panel wears it.
+  const source = readFileSync(new URL("./SettingsConfig.tsx", import.meta.url), "utf8");
+  assert.match(source, /styles\.window\}\s*\$\{styles\.viewportInset\}/,
+    "SettingsConfig muss dem Fenster beide Klassen geben (`styles.window` und " +
+    "`styles.viewportInset`), sonst bleibt die 95-%-Regel unbenutzt.");
+});
