@@ -27,6 +27,12 @@ export interface FileMenuTarget {
   path: string;
   name: string;
   isDir: boolean;
+  /**
+   * Startet direkt in der Loesch-Rueckfrage. Das Zeilenmenue des Explorers
+   * bietet nur vier Aktionen an; ein Eintrag soll nicht erst das ganze
+   * Rechtsklick-Menue zeigen, sondern genau dessen Bestaetigungsschritt.
+   */
+  initialPhase?: "confirm-delete";
 }
 
 /** Kurzhinweis zu einer Dateiaktion, unten rechts eingeblendet. */
@@ -163,7 +169,7 @@ interface MenuItem {
  */
 export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenImage }: FileContextMenuProps) {
   const { t } = useI18n();
-  const [phase, setPhase] = useState<MenuPhase>("root");
+  const [phase, setPhase] = useState<MenuPhase>(target.initialPhase ?? "root");
   const [draft, setDraft] = useState("");
   // Zielauswahl fuer Copy/Move. Sie lebt im Menue und nicht im aufrufenden
   // Explorer: das Menue ist der einzige Ort, der Quelle (`target.path`) und
@@ -203,6 +209,12 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
   // umgeht die statische Pruefung, ohne den Wert zu veralten.
   const phaseRef = useRef<MenuPhase>(phase);
   phaseRef.current = phase;
+  /**
+   * Kommt die Rueckfrage aus dem Zeilenmenue, gibt es kein Listenmenue
+   * dahinter. "Abbrechen" und Escape schliessen dann das Menue, statt einen
+   * Menuepfad zu zeigen, den der Aufrufer nie geoeffnet hat.
+   */
+  const startedInConfirm = target.initialPhase === "confirm-delete";
 
   // Radix erbt die Position des Panels aus dem `contextmenu`-Event auf seinem
   // Trigger und macht daraus einen virtuellen Anker am Klickpunkt. Der Explorer
@@ -311,8 +323,18 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
     // Dokument-Listener aus dem Effekt oberhalb das ganze Menue schliesst.
     event.preventDefault();
     event.stopPropagation();
+    if (startedInConfirm) { onClose(); return; }
     setPhase("root");
-  }, []);
+  }, [onClose, startedInConfirm]);
+
+  // Startet das Menue in der Rueckfrage, gibt es kein `ContextMenuContent`,
+  // dessen `onCloseAutoFocus` den Fokus auf "Abbrechen" setzen koennte — der
+  // Fokus bliebe auf dem Zeilenknopf hinter dem Panel. Dieselbe Startposition
+  // wie im Rechtsklick-Menue, hier von Hand.
+  useEffect(() => {
+    if (!startedInConfirm || phase !== "confirm-delete") return;
+    cancelRef.current?.focus();
+  }, [phase, startedInConfirm]);
 
   const run = useCallback((work: () => Promise<ActionResult>, notice: string) => {
     onClose();
@@ -609,7 +631,13 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
                 </span>
               )}
               <div className="flex justify-end gap-1.5">
-                <Button ref={cancelRef} type="button" variant="outline" size="xs" onClick={() => setPhase("root")}>
+                <Button
+                  ref={cancelRef}
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() => { if (startedInConfirm) { onClose(); return; } setPhase("root"); }}
+                >
                   {t("files.cancel")}
                 </Button>
                 <Button type="button" variant="destructive" size="xs" onClick={handleDelete}>

@@ -1621,6 +1621,22 @@ html.dark .chat-session-column::before {
   }
 }
 
+/* Der Drei-Punkte-Knopf einer Baumzeile. 24 px sind auf dem Desktop richtig
+ * (so hoch ist die Zeile), mit dem Finger nicht. Die Zeile selbst ist auf
+ * Touch nur 36 hoch, ein 44er-Knopf wuerde aus ihr herausragen; deshalb waechst
+ * nur die Trefferflaeche ueber ein Pseudo-Element ausserhalb des Flusses.
+ * 24 + 2x10 = 44. */
+@media (max-width: 640px), (hover: none) {
+  .tree-row-action {
+    position: relative;
+  }
+  .tree-row-action::after {
+    content: "";
+    position: absolute;
+    inset: -10px;
+  }
+}
+
 /* Die beiden Anhang-Knoepfe des Composer. Auf Geraeten ohne Zeiger gibt es
  * kein Hover: 32px waeren dort ein Ziel fuer den Fingernagel. `!important`,
  * weil die Groesse inline gesetzt ist — dieselbe Regel wie bei den

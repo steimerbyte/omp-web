@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useState, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
-import { Plus } from "lucide-react";
+import { MoreVertical, Plus } from "lucide-react";
 import {
   Tree,
   type CursorProps,
@@ -33,6 +33,8 @@ import { TabBar, type FileTab } from "./TabBar";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { copyText } from "@/lib/clipboard";
 import { Spin } from "./motion/Enter";
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -246,35 +248,6 @@ interface PendingConflict {
   conflicts: string[];
   nonReplaceable: string[];
 }
-
-/**
- * Rechte Kanten der absoluten Hover-Knöpfe einer Baumzeile, in Pixeln.
- *
- * Der Download-Anker steht nicht mehr absolut, sondern im Fluss am rechten
- * Zeilenrand (siehe `FileTreeLabel`): er ist immer da, und deshalb belegt er
- * dauerhaft Platz. Die Zeile gibt diesen Platz über `flex: 1` am Dateinamen ab,
- * der Text läuft also nicht unter dem Knopf durch, sondern endet früher mit
- * Auslassungspunkten. Damit die absoluten Hover-Knöpfe nicht auf dem
- * Download-Anker landen, rechnen ihre Kanten von dessen Kante aus.
- *
- * Fussbreite des Ankers: 5 Pixel Polster links und rechts um ein 11-Pixel-
- * Zeichen plus je ein Pixel Rahmen, dazu 4 Pixel Abstand zum Vorgaenger und
- * die 8 Pixel rechter Polster der Zeile — zusammen `ROW_DOWNLOAD_FLOW_WIDTH`.
- * Von rechts nach links stehen damit: Download (im Fluss), grosse Vorschau
- * (`ROW_ACTION_RIGHT_IMAGE`), Mention (`ROW_ACTION_RIGHT_MENTION_FILE` bei
- * Dateien, `ROW_ACTION_RIGHT_MENTION_DIR` bei Ordnern — ein Ordner hat keinen
- * Download-Knopf). Die beiden Bildwerkzeuge sind 24 Pixel breit (die
- * Trefferflaeche, Rahmen und Polster inklusive); zwischen ihnen bleiben 4
- * Pixel Luft.
- *
- * Die Mention-Schaltflaeche traegt Text und ist je nach Sprache unterschiedlich
- * breit; sie steht deshalb ganz links. Ihre Breite kann so wachsen, wie es die
- * Uebersetzung verlangt, ohne einen Nachbarn zu ueberdecken.
- */
-const ROW_DOWNLOAD_FLOW_WIDTH = 35;
-const ROW_ACTION_RIGHT_IMAGE = ROW_DOWNLOAD_FLOW_WIDTH + 4;
-const ROW_ACTION_RIGHT_MENTION_FILE = ROW_ACTION_RIGHT_IMAGE + 24 + 4;
-const ROW_ACTION_RIGHT_MENTION_DIR = 4;
 
 /**
  * Id des festen Explorer-Tabs im grossen Fenster.
@@ -1462,6 +1435,12 @@ interface ExplorerTreeProps {
   onDropMove: (entries: SelectionEntry[], destination: string) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onOpenImage?: (filePath: string, fileName: string) => void;
+  /** Kopiert einen Pfad und meldet das Ergebnis als Toast. */
+  onCopyPath: (fullPath: string) => void;
+  /** Oeffnet den Loesch-Schritt des Rechtsklick-Menues an dieser Stelle. */
+  onRowDelete: (fullPath: string, name: string, isDir: boolean, x: number, y: number) => void;
+  /** Ebene des Zeilenmenues: im grossen Fenster ueber dessen Panel (1300). */
+  menuLayer: number;
   t: Translate;
 }
 
@@ -1483,6 +1462,12 @@ interface TreeRowContext {
   onRowContextMenu: (node: NodeApi<FileNode>, event: React.MouseEvent) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onOpenImage?: (filePath: string, fileName: string) => void;
+  /** Kopiert einen Pfad und meldet das Ergebnis als Toast. */
+  onCopyPath: (fullPath: string) => void;
+  /** Oeffnet den Loesch-Schritt des Rechtsklick-Menues an dieser Stelle. */
+  onRowDelete: (fullPath: string, name: string, isDir: boolean, x: number, y: number) => void;
+  /** Ebene des Zeilenmenues: im grossen Fenster ueber dessen Panel (1300). */
+  menuLayer: number;
   t: Translate;
 }
 
@@ -1500,11 +1485,10 @@ function isEmptyOpenFolder(node: NodeApi<FileNode>): boolean {
  * Der Inhalt einer Zeile ohne den Rahmen, den `react-window` um sie legt.
  *
  * `dragHandle` wird von Arborist fuer den React-DnD-Quellhaken geliefert und
- * sitzt hier auf dem Zeileninhalt. Das ist Absicht: die Zeilenwerkzeuge
- * (Mention, Bild, Download) sind ebenfalls Kinder dieses Elements, und ein
- * Element mit `draggable` koennte sonst beim Ziehen an ihnen haengen bleiben.
- * Sie halten ihren eigenen `mousedown` zurueck und starten damit weder einen
- * Zug noch eine Textauswahl.
+ * sitzt hier auf dem Zeileninhalt. Das ist Absicht: der Menueknopf der Zeile
+ * ist ebenfalls ein Kind dieses Elements, und ein Element mit `draggable`
+ * koennte sonst beim Klicken an ihm haengen bleiben. Er haelt seinen eigenen
+ * `mousedown` zurueck und startet damit weder einen Zug noch eine Textauswahl.
  */
 function FileTreeLabel({
   node,
@@ -1516,7 +1500,7 @@ function FileTreeLabel({
   ctx: TreeRowContext;
 }) {
   const { data } = node;
-  const [hovered, setHovered] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const normalizedPath = normalizeFilePathSlashes(data.fullPath);
   const gitStatus = ctx.gitStatusByPath.get(normalizedPath);
   const containsGitChanges = data.isDir && (
@@ -1536,8 +1520,6 @@ function FileTreeLabel({
   return (
     <div
       ref={dragHandle}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       style={{
         display: "flex",
         alignItems: "center",
@@ -1594,8 +1576,8 @@ function FileTreeLabel({
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" }} />
         </span>
       )}
-      {!hovered && node.isLeaf && gitStatus && <GitStatusBadge status={gitStatus} t={ctx.t} />}
-      {!hovered && containsGitChanges && (
+      {node.isLeaf && gitStatus && <GitStatusBadge status={gitStatus} t={ctx.t} />}
+      {containsGitChanges && (
         <span
           title={ctx.t("files.containsChangedFiles")}
           aria-label={ctx.t("files.containsChangedFiles")}
@@ -1616,116 +1598,79 @@ function FileTreeLabel({
           {ctx.t("files.emptyNode")}
         </div>
       )}
-      {ctx.onAtMention && hovered && (
-        <Pressable
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.onAtMention?.(getRelativeFilePath(data.fullPath, ctx.cwd), data.isDir);
-          }}
-          onMouseDown={(e) => e.preventDefault()}
-          title={ctx.t("files.insertPath")}
-          style={{
-            position: "absolute",
-            right: !data.isDir ? ROW_ACTION_RIGHT_MENTION_FILE : ROW_ACTION_RIGHT_MENTION_DIR,
-            top: "50%",
-            transform: "translateY(-50%)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 4,
-            padding: "0 8px",
-            minWidth: 24,
-            height: 24,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            color: "var(--accent)",
-            cursor: "pointer",
-            fontSize: 11,
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-          }}
-        >
-          <MentionIcon />
-          {ctx.t("files.mention")}
-        </Pressable>
-      )}
-      {canPreviewImage && hovered && (
-        <Pressable
-          onClick={(e) => {
-            // Ohne Halt ruft der Klick auf den Knopf den Zeilen-Klick auf und
-            // oeffnet dieselbe Vorschau ein zweites Mal.
-            e.stopPropagation();
-            ctx.onOpenImage?.(data.fullPath, data.name);
-          }}
-          onMouseDown={(e) => e.preventDefault()}
-          title={ctx.t("files.openImageLarge")}
-          aria-label={ctx.t("files.openImageLarge")}
-          style={{
-            position: "absolute",
-            right: ROW_ACTION_RIGHT_IMAGE,
-            top: "50%",
-            transform: "translateY(-50%)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 0,
-            width: 24,
-            height: 24,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            color: "var(--text-muted)",
-            cursor: "pointer",
-          }}
-        >
-          <ImageOpenIcon />
-        </Pressable>
-      )}
-      {node.isLeaf && (
-        <a
-          href={`/api/files/${encodeFilePathForApi(data.fullPath)}?type=download`}
-          download
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.preventDefault()}
-          title={ctx.t("files.download")}
-          aria-label={ctx.t("files.download")}
-          data-download-always-visible="true"
-          style={{
-            // Immer im Fluss, nie absolut: der Anker belegt dauerhaft seinen
-            // Platz am rechten Zeilenrand und ist ohne Hover sichtbar wie
-            // klickbar. Die Zeile gibt diesen Platz ueber `flex: 1` am
-            // Dateinamen ab, der Text endet also mit Auslassungspunkten vor
-            // dem Knopf und laeuft nicht unter ihm durch. Absolut waere er nur
-            // sichtbar, wenn eine Zeile Hover oder Auswahl traegt — und auf
-            // einem Telefon gibt es kein Darueberfahren, die Datei kaeme nie an.
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 4,
-            padding: "0 5px",
-            minWidth: 24,
-            height: 24,
-            marginLeft: 4,
-            flexShrink: 0,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            color: "var(--text-muted)",
-            cursor: "pointer",
-            fontSize: 11,
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-            textDecoration: "none",
-          }}
-        >
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-        </a>
-      )}
+      {/* Ein Menue statt Werkzeugknöpfen, die erst beim Hover erschienen:
+          auf dem Telefon gab es kein Darueberfahren, und die 44-px-Regel in
+          globals.css macht den Knopf mit dem Finger treffbar. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            ref={menuButtonRef}
+            type="button"
+            className="tree-row-action"
+            title={ctx.t("files.rowActions")}
+            aria-label={ctx.t("files.rowActions")}
+            // Ohne den Halt oeffnet der Klick die Datei bzw. waehlt die Zeile
+            // im Arborist-Baum aus; `mousedown` haelt den DnD-Zug zurueck.
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.preventDefault()}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 24, height: 24, padding: 0, flexShrink: 0,
+              background: "transparent", border: "none",
+              borderRadius: "var(--radius-control)", color: "var(--text-muted)",
+              cursor: "pointer",
+            }}
+          >
+            <MoreVertical size={13} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" layer={ctx.menuLayer} className="min-w-44">
+          {/* Der Mention-Eintrag haengt an derselben Bedingung wie zuvor der
+              Knopf: die Instanz im grossen Fenster kennt keinen Chat. */}
+          {ctx.onAtMention && (
+            <DropdownMenuItem
+              onSelect={() => ctx.onAtMention?.(getRelativeFilePath(data.fullPath, ctx.cwd), data.isDir)}
+            >
+              <MentionIcon size={13} />
+              {ctx.t("files.insertPath")}
+            </DropdownMenuItem>
+          )}
+          {canPreviewImage && (
+            <DropdownMenuItem onSelect={() => ctx.onOpenImage?.(data.fullPath, data.name)}>
+              <ImageOpenIcon size={13} />
+              {ctx.t("files.openImageLarge")}
+            </DropdownMenuItem>
+          )}
+          {node.isLeaf && (
+            // Ein Eintrag, der ein Anker bleibt: der Download braucht weder
+            // Handler noch Fehlerbehandlung, nur Ziel und `download`.
+            <DropdownMenuItem asChild>
+              <a
+                href={`/api/files/${encodeFilePathForApi(data.fullPath)}?type=download`}
+                download
+                title={ctx.t("files.download")}
+              >
+                {ctx.t("files.download")}
+              </a>
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => ctx.onCopyPath(data.fullPath)}>
+            {ctx.t("files.contextCopyPath")}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={() => {
+              // Der Bestaetigungsschritt kommt aus `FileContextMenu` — dieselbe
+              // Rueckfrage, dieselbe Route und derselbe Toast wie im
+              // Rechtsklick-Menue, verankert am Knopf.
+              const rect = menuButtonRef.current?.getBoundingClientRect();
+              ctx.onRowDelete(data.fullPath, data.name, data.isDir, rect?.right ?? 0, rect?.bottom ?? 0);
+            }}
+          >
+            {ctx.t("files.contextDelete")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -1819,6 +1764,9 @@ function ExplorerTree({
   onDropMove,
   onAtMention,
   onOpenImage,
+  onCopyPath,
+  onRowDelete,
+  menuLayer,
   t,
 }: ExplorerTreeProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -2030,10 +1978,14 @@ function ExplorerTree({
     onRowContextMenu: handleRowContextMenu,
     onAtMention,
     onOpenImage,
+    onCopyPath,
+    onRowDelete,
+    menuLayer,
     t,
   }), [
     cwd, rowHeightPx, loadingPaths, highlightedPaths, gitStatusByPath, changedDirectoryPaths,
-    imagePreviewEnabled, handleRowClick, handleRowContextMenu, onAtMention, onOpenImage, t,
+    imagePreviewEnabled, handleRowClick, handleRowContextMenu, onAtMention, onOpenImage,
+    onCopyPath, onRowDelete, menuLayer, t,
   ]);
 
   const renderRow = useCallback((props: RowRendererProps<FileNode>) => (
@@ -2768,6 +2720,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setMenuTarget(null);
   }, []);
 
+
   /**
    * Die Auswahl, wie der Baum sie meldet.
    *
@@ -2869,6 +2822,36 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   }, []);
 
   useEffect(() => () => clearTimeout(noticeTimerRef.current ?? undefined), []);
+
+  /**
+   * Die beiden Aktionen des Zeilenmenues, die das Rechtsklick-Menue schon
+   * kennt. Kopieren ist derselbe Griff auf die Zwischenablage mit demselben
+   * Toast; Loeschen springt direkt in die Rueckfrage des Menues, statt es
+   * erst zu oeffnen — die Route, der Bestaetigungsschritt und der Toast
+   * bleiben damit genau die des Rechtsklicks.
+   */
+  const handleCopyPath = useCallback((fullPath: string) => {
+    void copyText(fullPath).then(
+      () => handleActionNotice({ kind: "success", text: t("files.copyPathDone") }),
+      () => handleActionNotice({ kind: "error", text: t("files.copyPathFailed") }),
+    );
+  }, [handleActionNotice, t]);
+
+  const handleRowDelete = useCallback((
+    fullPath: string,
+    name: string,
+    isDir: boolean,
+    x: number,
+    y: number,
+  ) => {
+    setMenuTarget({ x, y, path: fullPath, name, isDir, initialPhase: "confirm-delete" });
+  }, []);
+
+  /**
+   * Das Zeilenmenue haengt am `body`; im grossen Fenster (Ebene 1300) muss es
+   * ueber dessen Panel liegen, in der Seitenleiste reicht die Dialogebene.
+   */
+  const menuLayer = imageTarget === "openFile" ? 1310 : 50;
 
   /**
    * Neuer Ordner im aktuell angezeigten Verzeichnis. Dieselbe Route wie das
@@ -3515,6 +3498,9 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                   onDropMove={handleDropMove}
                   onAtMention={onAtMention}
                   onOpenImage={openImagePreview}
+                  onCopyPath={handleCopyPath}
+                  onRowDelete={handleRowDelete}
+                  menuLayer={menuLayer}
                   t={t}
                 />
               )}
