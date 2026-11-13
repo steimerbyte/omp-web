@@ -350,8 +350,8 @@
     },
     "app/api/skills/check/route.ts": {
       "functionsFound": 4,
-      "functionsHit": 1,
-      "uncovered": 3
+      "functionsHit": 3,
+      "uncovered": 1
     },
     "app/api/skills/install/route.ts": {
       "functionsFound": 1,
@@ -370,8 +370,8 @@
     },
     "app/api/skills/update/route.ts": {
       "functionsFound": 3,
-      "functionsHit": 1,
-      "uncovered": 2
+      "functionsHit": 2,
+      "uncovered": 1
     },
     "app/api/skills/user/[name]/route.ts": {
       "functionsFound": 5,
@@ -524,8 +524,8 @@
       "uncovered": 8
     },
     "components/calendar/calendar-model.ts": {
-      "functionsFound": 10,
-      "functionsHit": 10,
+      "functionsFound": 13,
+      "functionsHit": 13,
       "uncovered": 0
     },
     "components/calendar/CalendarEventDialog.tsx": {
@@ -539,8 +539,8 @@
       "uncovered": 6
     },
     "components/calendar/DayEventsSheet.tsx": {
-      "functionsFound": 5,
-      "functionsHit": 4,
+      "functionsFound": 6,
+      "functionsHit": 5,
       "uncovered": 1
     },
     "components/calendar/useCalendarText.ts": {
@@ -549,9 +549,9 @@
       "uncovered": 0
     },
     "components/CalendarView.tsx": {
-      "functionsFound": 66,
+      "functionsFound": 61,
       "functionsHit": 51,
-      "uncovered": 15
+      "uncovered": 10
     },
     "components/ChatInput.tsx": {
       "functionsFound": 213,
@@ -559,9 +559,24 @@
       "uncovered": 76
     },
     "components/ChatWindow.tsx": {
-      "functionsFound": 97,
-      "functionsHit": 82,
+      "functionsFound": 103,
+      "functionsHit": 88,
       "uncovered": 15
+    },
+    "components/CodeHighlighter.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
+    "components/CodeHighlighterLazy.tsx": {
+      "functionsFound": 5,
+      "functionsHit": 5,
+      "uncovered": 0
+    },
+    "components/CollapsibleMessage.tsx": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
     },
     "components/CwdPicker.tsx": {
       "functionsFound": 6,
@@ -578,11 +593,6 @@
       "functionsHit": 22,
       "uncovered": 0
     },
-    "components/ExtensionStatusBar.tsx": {
-      "functionsFound": 6,
-      "functionsHit": 6,
-      "uncovered": 0
-    },
     "components/FileBrowserDialog.tsx": {
       "functionsFound": 59,
       "functionsHit": 57,
@@ -594,8 +604,8 @@
       "uncovered": 1
     },
     "components/FileExplorer.tsx": {
-      "functionsFound": 239,
-      "functionsHit": 146,
+      "functionsFound": 240,
+      "functionsHit": 147,
       "uncovered": 93
     },
     "components/FileIcons.tsx": {
@@ -650,8 +660,8 @@
     },
     "components/ModelsConfig.tsx": {
       "functionsFound": 222,
-      "functionsHit": 200,
-      "uncovered": 22
+      "functionsHit": 201,
+      "uncovered": 21
     },
     "components/motion/animation-mode.ts": {
       "functionsFound": 4,
@@ -914,8 +924,8 @@
       "uncovered": 2
     },
     "hooks/useAgentSession.ts": {
-      "functionsFound": 163,
-      "functionsHit": 134,
+      "functionsFound": 161,
+      "functionsHit": 132,
       "uncovered": 29
     },
     "hooks/useAudio.ts": {
@@ -1018,6 +1028,11 @@
       "functionsHit": 1,
       "uncovered": 0
     },
+    "lib/auto-name-result.ts": {
+      "functionsFound": 1,
+      "functionsHit": 1,
+      "uncovered": 0
+    },
     "lib/bash-output.ts": {
       "functionsFound": 3,
       "functionsHit": 3,
@@ -1051,6 +1066,11 @@
     "lib/calendar.ts": {
       "functionsFound": 44,
       "functionsHit": 44,
+      "uncovered": 0
+    },
+    "lib/chat-collapse.ts": {
+      "functionsFound": 9,
+      "functionsHit": 9,
       "uncovered": 0
     },
     "lib/chat-input-enter.ts": {
@@ -1094,8 +1114,8 @@
       "uncovered": 0
     },
     "lib/file-access.ts": {
-      "functionsFound": 9,
-      "functionsHit": 9,
+      "functionsFound": 10,
+      "functionsHit": 10,
       "uncovered": 0
     },
     "lib/file-actions-tree.ts": {
@@ -1280,8 +1300,8 @@
     },
     "lib/npx.ts": {
       "functionsFound": 8,
-      "functionsHit": 7,
-      "uncovered": 1
+      "functionsHit": 8,
+      "uncovered": 0
     },
     "lib/omp-runtime.ts": {
       "functionsFound": 8,
@@ -1419,9 +1439,9 @@
       "uncovered": 0
     },
     "lib/rpc-manager.ts": {
-      "functionsFound": 211,
-      "functionsHit": 156,
-      "uncovered": 55
+      "functionsFound": 213,
+      "functionsHit": 163,
+      "uncovered": 50
     },
     "lib/runtime-secrets.ts": {
       "functionsFound": 11,
@@ -1463,6 +1483,11 @@
       "functionsHit": 20,
       "uncovered": 0
     },
+    "lib/secret-mask.ts": {
+      "functionsFound": 2,
+      "functionsHit": 2,
+      "uncovered": 0
+    },
     "lib/session-archive.ts": {
       "functionsFound": 3,
       "functionsHit": 3,
@@ -1484,8 +1509,8 @@
       "uncovered": 0
     },
     "lib/session-reader.ts": {
-      "functionsFound": 42,
-      "functionsHit": 41,
+      "functionsFound": 47,
+      "functionsHit": 46,
       "uncovered": 1
     },
     "lib/session-row-context-menu.ts": {
@@ -1514,8 +1539,8 @@
       "uncovered": 0
     },
     "lib/session-title.ts": {
-      "functionsFound": 8,
-      "functionsHit": 8,
+      "functionsFound": 10,
+      "functionsHit": 10,
       "uncovered": 0
     },
     "lib/settings-api.ts": {
@@ -1578,14 +1603,44 @@
       "functionsHit": 2,
       "uncovered": 0
     },
+    "lib/tenant-namespace-probe.ts": {
+      "functionsFound": 8,
+      "functionsHit": 8,
+      "uncovered": 0
+    },
+    "lib/tenant-session-migration.ts": {
+      "functionsFound": 15,
+      "functionsHit": 15,
+      "uncovered": 0
+    },
+    "lib/tenant-sessions.ts": {
+      "functionsFound": 7,
+      "functionsHit": 7,
+      "uncovered": 0
+    },
+    "lib/tenant-worker-config.ts": {
+      "functionsFound": 12,
+      "functionsHit": 12,
+      "uncovered": 0
+    },
+    "lib/tenant-worker-session.ts": {
+      "functionsFound": 70,
+      "functionsHit": 25,
+      "uncovered": 45
+    },
+    "lib/tenant-worker.ts": {
+      "functionsFound": 37,
+      "functionsHit": 30,
+      "uncovered": 7
+    },
     "lib/terminal-input.ts": {
       "functionsFound": 3,
       "functionsHit": 3,
       "uncovered": 0
     },
     "lib/terminal-manager.ts": {
-      "functionsFound": 29,
-      "functionsHit": 25,
+      "functionsFound": 30,
+      "functionsHit": 26,
       "uncovered": 4
     },
     "lib/test-linkedom.mjs": {
@@ -1672,16 +1727,6 @@
       "functionsFound": 3,
       "functionsHit": 3,
       "uncovered": 0
-    },
-    "lib/tenant-worker.ts": {
-      "functionsFound": 28,
-      "functionsHit": 21,
-      "uncovered": 7
-    },
-    "lib/tenant-worker-session.ts": {
-      "functionsFound": 69,
-      "functionsHit": 24,
-      "uncovered": 45
     }
   }
 }

@@ -296,12 +296,10 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
 - **Darf nicht**: Kein weiterer belegter Punkt.
 - **Ort**: `components/OmpUpdateIndicator.tsx:51-253`
 
-### ExtensionStatusBar — Statuszeile der Erweiterungen
-- **Kann**: Einzeilige Statuszeile mit `role="status"`, Beschriftung und Tooltip aus dem Text.
-- **Tastatur**: **keine** (kein `onKeyDown` in der Datei).
-- **Darf nicht**: `role="status"` plus `title` **und** `aria-label` aus demselben Text
-  (`:28-30`) — die Zeile wird von Screenreadern vorgelesen, sie ist kein reines Dekor.
-- **Ort**: `components/ExtensionStatusBar.tsx:28-30`
+### Extension-Statuszeile — entfällt
+- **Zustand**: Plugin-Statuszeilen werden **nicht gerendert**; `ui.setStatus` ist im Browser ein
+  No-op, wie `setFooter`. Der Text gehört in die TUI-Statuszeile, die der Browser nicht hat;
+  `get_state` liefert kein `extensionStatuses` mehr.
 
 ### Login-Seite (`app/login/page.tsx`)
 - **Kann**: Anmeldung gegen `/api/web-access/login`; setzt das `httpOnly`-Sitzungscookie und
@@ -579,7 +577,7 @@ Die übrigen 25 sind **im aktuellen Stand ungenutzt** und existieren als Vorrat:
 - **Dialoge einzeln**: 3 (`ProjectTrustDialog`, `DirectoryPicker`, der Inline-Bestätigungsdialog
   in `UsersConfig`) plus 7 Dialoge mit je eigener Tastaturbindung (Datei-Auswahl, Bildvorschau,
   Systemverlauf, Update, Mermaid-Zoom, Subagent-Detail, OAuth in `ModelsConfig`)
-- **Bausteine**: 34 Dateien, davon 9 importiert, 25 ungenutzter Vorrat
+- **Bausteine**: 33 Dateien, davon 8 importiert, 25 ungenutzter Vorrat
 
 ### Nicht erreichbar / nicht belegbar
 
@@ -589,5 +587,5 @@ Die übrigen 25 sind **im aktuellen Stand ungenutzt** und existieren als Vorrat:
 | **„Rechtsklick/Strg-Klick schließt den Dialog nicht"** | **Belegt, zwei Ebenen.** `dismissable-layer` feuert `POINTER_DOWN_OUTSIDE` ohne Button-Prüfung (`index.mjs:240-280`); darüber prüft `DialogContentModal` `button === 2 || (button === 0 && ctrlKey)` und preventet (`react-dialog:177-183`), und `composeEventHandlers` (`primitive:6-12`) führt radix' Handler nur, wenn der App-Handler nicht selbst prevented hat. Details im Dialog-Abschnitt. |
 | **„ProjectTrustDialog hat jetzt Escape, vorher keines"** | Die **Gegenwart** ist belegt (`onEscapeKeyDown` → `onOpenChange(false)` → `onCancel`, `ProjectTrustDialog.tsx:93`, `:65-68`). Die **Vergangenheit** ist im Repository nicht belegbar — ich habe keine Historie ausgewertet. |
 | **`TerminalDropdown` Escape** | **unklar.** Die Datei benutzt `Enter` aus `motion/`, nicht `ui/dropdown-menu`; es gibt keinen DismissableLayer und keinen Tastatur-Handler. |
-| **`BranchNavigator`, `SystemStatsBadge`, `ExtensionStatusBar`, `MessageView`** | Keine eigenen Tastaturkürzel im Code — nicht geraten. |
+| **`BranchNavigator`, `SystemStatsBadge`, `MessageView`** | Keine eigenen Tastaturkürzel im Code — nicht geraten. |
 | **Historisches Verhalten** | „Vorher/nachher"-Aussagen sind nur dort belegt, wo der Quelltext sie selbst als Kommentar trägt (Shimmer/Sweep, Tab-`onReorder`, `autoFocus`, `select()`, `onReorder`-Asymmetrie). Alles andere habe ich als gegenwärtigen Zustand notiert, nicht als Vergleich. |

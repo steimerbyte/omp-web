@@ -96,7 +96,6 @@ let sessionState = {
     thinkingLevel: "low",
     configuredThinkingLevel: "medium",
     model: { id: "m", provider: "p" },
-    extensionStatuses: [{ key: "k", text: "status" }],
     extensionWidgets: [{ key: "w", lines: ["a"], placement: "aboveEditor" }],
     queuedMessages: { steering: ["wartet"], followUp: [] },
     subagents: [{ id: "a-state", index: 0, agent: "x", agentSource: "bundled", status: "completed", lastUpdate: 5 }],
@@ -256,17 +255,13 @@ test("event handler: streaming, messages, tools, notices, subagents, compaction,
   await fire({ type: "tool_execution_end", toolCallId: "t3" });
   assert.deepEqual(latest().agentPhase, { kind: "waiting_model" });
 
-  // Notices: prompt_error/extension_error + die sechs Extension-UI-Methoden.
+  // Notices: prompt_error/extension_error + die fünf Extension-UI-Methoden.
   await fire({ type: "prompt_error" });
   assert.equal(latest().notices.at(-1).message, "Command failed");
   await fire({ type: "extension_error", error: "kaputt" });
   assert.equal(latest().notices.at(-1).type, "error");
   await fire({ type: "extension_ui_request", method: "notify", id: "n1", message: "Hinweis", notifyType: "warning" });
   assert.equal(latest().notices.at(-1).message, "Hinweis");
-  await fire({ type: "extension_ui_request", method: "setStatus", statusKey: "k1", statusText: "laeuft" });
-  assert.deepEqual(latest().extensionStatuses.at(-1), { key: "k1", text: "laeuft" });
-  await fire({ type: "extension_ui_request", method: "setStatus", statusKey: "k1" });
-  assert.deepEqual(latest().extensionStatuses, [{ key: "k", text: "status" }]);
   await fire({ type: "extension_ui_request", method: "setWidget", widgetKey: "w1", widgetLines: ["a", "b"] });
   assert.equal(latest().extensionWidgets.at(-1).placement, "aboveEditor");
   await fire({ type: "extension_ui_request", method: "setWidget", widgetKey: "w1" });
@@ -346,7 +341,6 @@ test("event handler: streaming, messages, tools, notices, subagents, compaction,
     state: {
       contextUsage: { percent: 30, contextWindow: 1000, tokens: 300 },
       systemPrompt: "nachher",
-      extensionStatuses: [{ key: "k2", text: "x" }],
       extensionWidgets: [],
       subagents: [{ id: "a-state2", index: 2, agent: "y", agentSource: "user", status: "running", lastUpdate: 7 }],
       goal: { active: false },

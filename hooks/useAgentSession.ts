@@ -5,7 +5,6 @@ import type {
   AgentMessage,
   BlockingExtensionUiRequest,
   CustomMessage,
-  ExtensionStatusItem,
   ExtensionUiRequest,
   ExtensionWidgetItem,
   SessionInfo,
@@ -97,7 +96,6 @@ type AgentStateResponse = {
   isBashRunning?: boolean;
   isCompacting?: boolean;
   isHandoffRunning?: boolean;
-  extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   subagents?: SubagentSnapshot[];
@@ -435,7 +433,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
-  const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   const [subagents, setSubagents] = useState<SubagentSnapshot[]>([]);
@@ -584,7 +581,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.model && modelSwitchQueueRef.current.inFlight === null) {
             setCurrentModelOverride({ provider: liveState.model.provider, modelId: liveState.model.id });
           }
-          if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
           if (liveState.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, liveState.subagents ?? []));
@@ -901,14 +897,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       }
-      case "setStatus":
-        setExtensionStatuses((prev) => {
-          const rest = prev.filter((item) => item.key !== request.statusKey);
-          return request.statusText !== undefined
-            ? [...rest, { key: request.statusKey, text: request.statusText }]
-            : rest;
-        });
-        break;
       case "setWidget":
         setExtensionWidgets((prev) => {
           const rest = prev.filter((item) => item.key !== request.widgetKey);
@@ -1128,7 +1116,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (busy || !agentRunningRef.current) return;
       if (state) {
         if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
-        if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
         if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
       }
       await finishPromptWithoutStream(sid, runId);
@@ -1222,7 +1209,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             .then((d: { state?: AgentStateResponse }) => {
               if (d.state?.contextUsage !== undefined) setContextUsage(d.state.contextUsage ?? null);
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
-              if (d.state?.extensionStatuses !== undefined) setExtensionStatuses(d.state.extensionStatuses ?? []);
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
               if (d.state?.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, d.state?.subagents ?? []));
               if (d.state?.goal !== undefined) setGoalStatus(d.state.goal ?? null);
@@ -2285,7 +2271,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             setThinkingLevel((state.configuredThinkingLevel ?? state.thinkingLevel) as ThinkingLevelOption);
             setEffectiveThinkingLevel(state.thinkingLevel);
           }
-          if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
           if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
           if (state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(state.queuedMessages));
           if (state.subagents !== undefined) setSubagents((current) => mergeSubagentSnapshots(current, state.subagents ?? []));
@@ -2401,7 +2386,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching,
     modelSwitchError, clearModelSwitchError, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, subagents,
-    notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,

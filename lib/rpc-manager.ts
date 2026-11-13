@@ -404,7 +404,6 @@ export class AgentSessionWrapper {
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
   private activeCustomUis = new Map<string, ActiveCustomUi>();
-  private extensionStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
   private promptRunning = false;
   // Set while the handoff RPC is in flight so state polls and the running-set
@@ -1226,7 +1225,6 @@ export class AgentSessionWrapper {
           systemPrompt: [this.inner.agent.state?.systemPrompt ?? ""].flat().join("\n"),
           thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
           configuredThinkingLevel: this.inner.configuredThinkingLevel() ?? "off",
-          extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
           subagents: this.getSubagentSnapshots(),
           goal: this.goalMode.getStatus(),
@@ -1478,7 +1476,6 @@ export class AgentSessionWrapper {
           refreshCommands: () => {},
           reloadPlugins: async () => {
             await this.waitForExtensionsBound();
-            this.extensionStatuses.clear();
             this.extensionWidgets.clear();
             await this.inner.reload();
             await this.inner.refreshSkills?.();
@@ -1512,7 +1509,6 @@ export class AgentSessionWrapper {
 
       case "reload": {
         await this.waitForExtensionsBound();
-        this.extensionStatuses.clear();
         this.extensionWidgets.clear();
         await this.inner.reload();
         await this.inner.refreshSkills?.();
@@ -1632,10 +1628,6 @@ export class AgentSessionWrapper {
     const pending = this.pendingUiResponses.get(response.id);
     if (!pending) return;
     pending.resolve(response);
-  }
-
-  private getExtensionStatuses(): Array<{ key: string; text: string }> {
-    return Array.from(this.extensionStatuses, ([key, text]) => ({ key, text }));
   }
 
   /**
@@ -1907,17 +1899,9 @@ export class AgentSessionWrapper {
         } as ExtensionUiRequest as AgentEvent);
       },
       onTerminalInput: () => () => {},
-      setStatus: (key, text) => {
-        if (text === undefined) this.extensionStatuses.delete(key);
-        else this.extensionStatuses.set(key, text);
-        this.emit({
-          type: "extension_ui_request",
-          id: randomUUID(),
-          method: "setStatus",
-          statusKey: key,
-          statusText: text,
-        } as ExtensionUiRequest as AgentEvent);
-      },
+      // Kein TUI-Statuszeilen-Bereich im Browser: Plugin-Status gehoert wie
+      // `setFooter` nur in die TUI.
+      setStatus: () => {},
       setWorkingMessage: () => {},
       setWorkingVisible: () => {},
       setWorkingIndicator: () => {},

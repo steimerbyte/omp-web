@@ -28,7 +28,6 @@ import { Skeleton } from "./motion/Skeleton";
 import { useAnimationMode } from "./motion/hooks";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
-import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { OmpWordmark } from "./OmpWordmark";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -235,7 +234,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching,
     modelSwitchError, clearModelSwitchError, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages, subagents,
-    notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices, extensionDialog, extensionCustomUi, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -915,7 +914,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
           </div>
         </div>
         {chatInputElement}
-        <ExtensionStatusBar statuses={extensionStatuses} />
       </div>
       </>
       )}

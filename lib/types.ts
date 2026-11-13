@@ -254,13 +254,6 @@ export type ExtensionUiRequest =
   | {
       type: "extension_ui_request";
       id: string;
-      method: "setStatus";
-      statusKey: string;
-      statusText?: string;
-    }
-  | {
-      type: "extension_ui_request";
-      id: string;
       method: "setWidget";
       widgetKey: string;
       widgetLines?: string[];
@@ -295,11 +288,6 @@ export type ExtensionUiResponse =
   | { type: "extension_ui_response"; id: string; value: string }
   | { type: "extension_ui_response"; id: string; confirmed: boolean }
   | { type: "extension_ui_response"; id: string; cancelled: true };
-
-export interface ExtensionStatusItem {
-  key: string;
-  text: string;
-}
 
 export interface ExtensionWidgetItem {
   key: string;
