@@ -251,7 +251,9 @@ test("the narrow-viewport override cannot widen the row again", () => {
   const block = css.slice(start);
 
   let mobileWindow = null;
-  for (const m of block.matchAll(/(?:^|[},])\s*\.window\s*\{([^}]*)\}/g)) {
+  // `{` gehoert zu den Grenzen: `.window` kann die erste Regel im Block sein,
+  // seit der Fix vor `bare`-Fenstern kein eigenes `.backdrop`-Padding mehr setzt.
+  for (const m of block.matchAll(/(?:^|[{},])\s*\.window\s*\{([^}]*)\}/g)) {
     mobileWindow = m[1];  // last wins, as in CSS
   }
   assert.ok(mobileWindow, ".window wird im Mobile-Block nicht ueberschrieben");
