@@ -49,19 +49,58 @@ function DialogOverlay({
 
 function DialogContent({
   className,
+  overlayClassName,
+  overlayStyle,
+  bare = false,
   children,
   showCloseButton = true,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
+  /**
+   * Laesst die Panel-Klassen des Primaerformulars weg. Fuer Fenster, die ihre
+   * Groesse selbst mitbringen (Modul-CSS oder Inline): die Klassen wuerden
+   * sonst Breite, Padding, Gap und Ring dazwischensetzen.
+   */
+  bare?: boolean
+  /** Der Hintergrund gehoert dem Aufrufer — Modul-Klasse und Inline-Werte wie zuvor. */
+  overlayClassName?: string
+  overlayStyle?: React.CSSProperties
 }) {
+  /*
+   * Der Fokus geht beim Schliessen an das Element zurueck, das den Dialog
+   * geoeffnet hat.
+   *
+   * Radix' `DialogContent` verhindert mit `preventDefault()` den eigenen
+   * Rueckweg seines `FocusScope` und setzt den Fokus stattdessen auf seinen
+   * `DialogTrigger`. Diese Dialoge werden aber von aussen gemountet (`open`
+   * bleibt `true`, der Elternteil haelt den Zustand) und haben deshalb keinen
+   * Trigger — ohne diesen Griff landet der Fokus im `body`. Der Ausloeser wird
+   * beim Mounten gemerkt, also dann, wenn der Klick ihn noch traegt.
+   *
+   * `isConnected` trennt "der Knopf steht noch" von "der Elternteil hat ihn
+   * zusammen mit dem Dialog entfernt"; auf einen ausgebauten Knoten zu zeigen
+   * hilft niemandem. Ein eigener `onCloseAutoFocus` des Aufrufers gewinnt.
+   */
+  const [opener] = React.useState<HTMLElement | null>(() =>
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null)
+  )
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} style={overlayStyle} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        onCloseAutoFocus={
+          onCloseAutoFocus ??
+          ((event) => {
+            event.preventDefault()
+            if (opener?.isConnected) opener.focus()
+          })
+        }
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          !bare &&
+            "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

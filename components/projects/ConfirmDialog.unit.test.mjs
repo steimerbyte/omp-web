@@ -3,6 +3,7 @@ import test from "node:test";
 import * as linkedom from "linkedom";
 import React, { act } from "react";
 import { createJiti } from "jiti";
+import { restoreLinkedomPrototypesOnExit } from "../../lib/test-linkedom.mjs";
 
 /**
  * Der Loesch-Dialog ist die Rueckfrage, nicht der Schutz (der liegt in der
@@ -36,8 +37,27 @@ test.after(() => {
 
 const dom = linkedom.parseHTML("<!doctype html><html><body></body></html>");
 const win = dom.window;
+restoreLinkedomPrototypesOnExit(win);
 const fakeNavigator = { userAgent: "test", languages: ["de-DE"], language: "de-DE", platform: "linux" };
 win.getComputedStyle = () => new Proxy({}, { get: (_t, p) => (typeof p === "string" && p.startsWith("get") ? () => "" : "0px") });
+// linkedom hat keinen Fokus: `document.activeElement` ist `undefined` und
+// `focus()` tut nichts. Beides wird hier ersetzt, sonst ist der Rueckweg des
+// Fokus auf den Ausloeser nicht messbar. Ein Element, das ausgebaut wurde,
+// verliert den Fokus wie in Chromium.
+let activeElement = win.document.body;
+Object.defineProperty(win.document, "activeElement", {
+  get: () => (activeElement?.isConnected === false ? win.document.body : activeElement),
+  configurable: true,
+});
+/** Eigener Setter statt `activeElement = this`: `no-this-alias` verbietet das. */
+function setActive(element) {
+  activeElement = element;
+}
+win.HTMLElement.prototype.focus = function focus() {
+  const tag = this.tagName;
+  if (!(tag === "BUTTON" || tag === "INPUT" || tag === "TEXTAREA" || tag === "A" || tag === "SELECT") && !this.hasAttribute("tabindex")) return;
+  setActive(this);
+};
 globalThis.window = new Proxy(win, {
   get(target, prop) {
     if (prop === "navigator") return fakeNavigator;
@@ -96,6 +116,16 @@ const PROJECT = {
 const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); }); };
 const buttons = () => [...win.document.querySelectorAll("button")];
 const buttonWith = (text) => buttons().find((button) => button.textContent.trim() === text);
+// Radix haengt den Dialog als Portal an `document.body`; der Komponenten-
+// Container enthaelt ihn also nicht mehr.
+const dialog = () => win.document.querySelector('[role="alertdialog"]');
+const escape = () => Object.assign(new win.Event("keydown", { bubbles: true, cancelable: true }), { key: "Escape", code: "Escape" });
+// `button: 1` statt 0: bei der linken Taste wartet Radix' `DismissableLayer`
+// auf den folgenden `click` und liest dabei das `target` des weggeworfenen
+// `pointerdown`. linkedom setzt `target` nur waehrend des Versands zurueck,
+// danach ist es `undefined` — die mittlere Taste nimmt den direkten Weg, der
+// dieselbe Absicht prueft (" pointerdown ausserhalb").
+const pointerDownOutside = () => Object.assign(new win.Event("pointerdown", { bubbles: true, cancelable: true }), { button: 1, pointerType: "mouse" });
 
 async function mount(props) {
   win.document.body.innerHTML = "";
@@ -111,14 +141,14 @@ async function mount(props) {
 
 test("nennt Titel, Chatzahl und den Ordner und bestaetigt per Klick", async () => {
   const calls = [];
-  const { container, root } = await mount({
+  const { root } = await mount({
     project: PROJECT,
     busy: false,
     onConfirm: () => calls.push("confirm"),
     onCancel: () => calls.push("cancel"),
   });
 
-  const panel = container.querySelector('[role="alertdialog"]');
+  const panel = dialog();
   assert.ok(panel, "der Dialog wurde nicht gerendert");
   assert.equal(panel.getAttribute("aria-modal"), "true");
   assert.equal(panel.getAttribute("aria-label"), de["projects.delete.title"]);
@@ -141,34 +171,77 @@ test("nennt Titel, Chatzahl und den Ordner und bestaetigt per Klick", async () =
 
 test("ein Klick auf das Panel selbst bricht nicht ab, der Hintergrund schon", async () => {
   const calls = [];
-  const { container, root } = await mount({
+  const { root } = await mount({
     project: PROJECT,
     busy: false,
     onConfirm: () => {},
     onCancel: () => calls.push("cancel"),
   });
 
-  const panel = container.querySelector('[role="alertdialog"]');
-  const backdrop = panel.parentElement;
+  const panel = dialog();
   // Der Klick im Panel darf nicht bis zum Hintergrund durchschlagen — sonst
-  // schloesse der Bestaetigen-Knopf den Dialog, dem er gehoert.
-  await act(async () => { panel.querySelector("h2").click(); });
+  // schloesse der Bestaetigen-Knopf den Dialog, dem er gehoert. Radix liest
+  // dafuer `pointerdown`, nicht `click`.
+  await act(async () => { panel.querySelector("h2").dispatchEvent(pointerDownOutside()); });
   assert.deepEqual(calls, []);
-  await act(async () => { backdrop.click(); });
+  await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });
   assert.deepEqual(calls, ["cancel"]);
   await act(async () => { root.unmount(); });
 });
 
+test("Escape schliesst den Dialog", async () => {
+  const calls = [];
+  const { root } = await mount({
+    project: PROJECT,
+    busy: false,
+    onConfirm: () => {},
+    onCancel: () => calls.push("cancel"),
+  });
+
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  await flush();
+  assert.deepEqual(calls, ["cancel"]);
+  await act(async () => { root.unmount(); });
+});
+
+test("der Fokus steht im Dialog und nach dem Schliessen wieder auf dem Ausloeser", async () => {
+  win.document.body.innerHTML = "";
+  const trigger = win.document.createElement("button");
+  trigger.id = "delete-demo";
+  trigger.textContent = "delete";
+  win.document.body.appendChild(trigger);
+  trigger.focus();
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(I18nProvider, null, React.createElement(ConfirmDialog, {
+      project: PROJECT,
+      busy: false,
+      onConfirm: () => {},
+      onCancel: () => {},
+    })));
+  });
+  await flush();
+
+  const panel = dialog();
+  assert.ok(panel.contains(win.document.activeElement), `Fokus liegt ausserhalb des Dialogs: ${win.document.activeElement?.tagName}`);
+
+  await act(async () => { root.unmount(); });
+  await flush();
+  assert.equal(win.document.activeElement, trigger, "der Fokus ist nicht zum Ausloeser zurueckgekehrt");
+});
+
 test("ein geschuetzter Ordner nennt den Grund und laesst sich nicht bestaetigen", async () => {
   const calls = [];
-  const { container, root } = await mount({
+  const { root } = await mount({
     project: { ...PROJECT, isProtected: true },
     busy: false,
     onConfirm: () => calls.push("confirm"),
     onCancel: () => calls.push("cancel"),
   });
 
-  const panel = container.querySelector('[role="alertdialog"]');
+  const panel = dialog();
   assert.match(panel.textContent, new RegExp(de["projects.delete.protected"]));
   // Die Warnung ueber das Loeschen waere hier eine Luege: es wird nicht geloescht.
   assert.doesNotMatch(panel.textContent, /Dies kann nicht rückgängig gemacht werden/);
@@ -182,7 +255,7 @@ test("ein geschuetzter Ordner nennt den Grund und laesst sich nicht bestaetigen"
 
 test("waehrend der Anfrage ist jeder Weg blockiert", async () => {
   const calls = [];
-  const { container, root } = await mount({
+  const { root } = await mount({
     project: PROJECT,
     busy: true,
     onConfirm: () => calls.push("confirm"),
@@ -197,9 +270,10 @@ test("waehrend der Anfrage ist jeder Weg blockiert", async () => {
   assert.equal(cancel.disabled, true);
   await act(async () => { cancel.click(); });
 
-  // Der Hintergrund hat waehrend der Anfrage keinen Abbruch mehr.
-  const panel = container.querySelector('[role="alertdialog"]');
-  await act(async () => { panel.parentElement.click(); });
+  // Der Hintergrund und Escape haben waehrend der Anfrage keinen Abbruch mehr.
+  await act(async () => { win.document.body.dispatchEvent(pointerDownOutside()); });
+  await act(async () => { win.document.dispatchEvent(escape()); });
+  await flush();
   assert.deepEqual(calls, []);
   await act(async () => { root.unmount(); });
 });

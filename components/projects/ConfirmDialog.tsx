@@ -1,6 +1,6 @@
 "use client";
 
-import { ModalBackdrop, ModalPanel } from "@/components/motion/Enter";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Pressable } from "@/components/motion/Pressable";
 import { useI18n } from "@/hooks/useI18n";
 import type { ProjectView } from "@/lib/projects-schema";
@@ -34,26 +34,27 @@ export function ConfirmDialog({
   const { t } = useI18n();
 
   return (
-    <ModalBackdrop
-      onClick={busy ? undefined : onCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-        zIndex: 200,
-      }}
-    >
-      <ModalPanel
-        // Must not bubble to the backdrop, or pressing the confirm button
-        // would also close the dialog it belongs to.
-        onClick={(event) => event.stopPropagation()}
+    // Von aussen gesteuert: `open` bleibt `true`, `onOpenChange` meldet nur den
+    // Wunsch nach dem Schliessen zurueck. Waehrend der Anfrage gibt es keinen —
+    // Escape und der Klick daneben laufen beide hier durch.
+    <Dialog open onOpenChange={(next) => { if (!next && !busy) onCancel(); }}>
+      <DialogContent
+        bare
+        showCloseButton={false}
         role="alertdialog"
         aria-modal="true"
         aria-label={t("projects.delete.title")}
+        // Der alte Hintergrund war flach; `backdrop-blur-none` haelt die
+        // Weichzeichnung des Primaerformulars draussen.
+        overlayClassName="supports-backdrop-filter:backdrop-blur-none"
+        overlayStyle={{
+          background: "color-mix(in srgb, var(--bg-panel) 74%, transparent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          zIndex: 200,
+        }}
         style={{
           width: "100%",
           maxWidth: 430,
@@ -139,7 +140,7 @@ export function ConfirmDialog({
             {busy ? t("projects.delete.working") : t("projects.delete.confirm")}
           </Pressable>
         </div>
-      </ModalPanel>
-    </ModalBackdrop>
+      </DialogContent>
+    </Dialog>
   );
 }
