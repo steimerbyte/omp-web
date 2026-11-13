@@ -179,8 +179,9 @@ async function mount(props = {}) {
   return { root, container, calls, events };
 }
 
-const listbox = (container) => container.querySelector('[role="listbox"]');
-const rows = (container) => [...container.querySelectorAll('[role="listbox"] > *')];
+// Liste und Raster tragen keine Listenrolle mehr (die Eintraege sind Knoepfe);
+// der Ordner-Name am Container ist der stabile Griff.
+const listbox = (container) => container.querySelector('[aria-label="Current folder"]');
 const buttons = (container) => [...container.querySelectorAll("button")];
 
 test("Liste: sortiert Ordner vor Dateien, Dateien ohne allowFiles sind deaktiviert", async () => {
@@ -275,6 +276,38 @@ test("Tastatur: Pfeil ab/auf, Enter in Ordner, Backspace hoch, Home zur Wurzel",
   await act(async () => root.unmount());
   mounted.splice(0, mounted.length);
   container.remove();
+});
+
+test("Liste und Raster geben sich nicht als Listbox aus; Enter oeffnet weiterhin den aktiven Ordner", async () => {
+  const listMount = await mount({ view: "list" });
+  assert.equal(
+    listMount.container.querySelectorAll('[role="listbox"], [role="option"]').length,
+    0,
+    "der Container traegt keine Listenrolle, die seine Knopf-Kinder nicht erfuellen",
+  );
+  const list = listbox(listMount.container);
+  assert.ok(list);
+  assert.ok([...list.children].every((node) => node.tagName === "BUTTON" || node.getAttribute("aria-disabled") === "true"));
+  const panel = listMount.container.querySelector('[role="dialog"]');
+  await act(async () => {
+    fire(panel, "keydown", { key: "ArrowDown" });
+  });
+  const active = list.querySelector('[data-active="true"]');
+  assert.match(active.textContent, /alpha/, "die Pfeiltaste setzt die aktive Zeile wie zuvor");
+  await act(async () => {
+    fire(panel, "keydown", { key: "Enter" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  assert.equal(listMount.calls.at(-1), "/api/files/work/alpha?type=list");
+  await act(async () => listMount.root.unmount());
+  mounted.splice(0, mounted.length);
+  listMount.container.remove();
+
+  const gridMount = await mount({ view: "grid" });
+  assert.equal(gridMount.container.querySelectorAll('[role="listbox"], [role="option"]').length, 0);
+  await act(async () => gridMount.root.unmount());
+  mounted.splice(0, mounted.length);
+  gridMount.container.remove();
 });
 
 test("Brotkrume und Aufwaerts-Knopf navigieren nur bestaetigte Vorfahren", async () => {

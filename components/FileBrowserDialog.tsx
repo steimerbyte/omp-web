@@ -677,7 +677,7 @@ export function FileBrowserDialog({
         </div>
 
         {activeView === "list" ? (
-          <div ref={listRef} className={styles.list} role="listbox" aria-label={t("fileBrowser.currentFolder")}>
+          <div ref={listRef} className={styles.list} aria-label={t("fileBrowser.currentFolder")}>
             {loading ? (
               <div className={styles.state}>{t("fileBrowser.loading")}</div>
             ) : rows.length === 0 ? (
@@ -735,7 +735,6 @@ export function FileBrowserDialog({
           <div
             ref={gridRef}
             className={styles.grid}
-            role="listbox"
             aria-label={t("fileBrowser.currentFolder")}
            
             onScroll={(event) => setGridScrollTop(event.currentTarget.scrollTop)}
