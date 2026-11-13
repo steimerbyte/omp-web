@@ -287,6 +287,24 @@ test("Laufende und unbenutzte Sessions zeigen ihre Indikatoren", async () => {
   storage.clear();
 });
 
+test("Sessionzeile ist per Enter bedienbar und meldet die Auswahl", async () => {
+  storage.clear();
+  runningIds = [];
+  const selected = [];
+  const { container } = await mount({ selectedSessionId: "s1", onSelectSession: (session) => selected.push(session.id) });
+  const title = [...container.querySelectorAll("div")].find((node) => node.getAttribute("title") === "hello there");
+  assert.ok(title, "die Sessionzeile fehlt");
+  const row = title.parentElement;
+  assert.equal(row.getAttribute("role"), "button");
+  assert.equal(row.getAttribute("tabindex"), "0");
+  assert.equal(row.getAttribute("aria-current"), "true");
+  await act(async () => {
+    row.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true }), { key: "Enter" }));
+  });
+  await settle();
+  assert.deepEqual(selected, ["s1"]);
+});
+
 test("Hover zeigt Aktionen; Umbenennen, Archivieren und Shift-Loeschen laufen ueber die API", async () => {
   storage.clear();
   runningIds = [];

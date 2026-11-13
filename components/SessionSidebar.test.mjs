@@ -12,10 +12,15 @@ test("only Shift+click bypasses session deletion confirmation", () => {
   );
 });
 
-test("does not register row-level session deletion shortcuts", () => {
-  assert.doesNotMatch(sessionItemSource, /const handleKeyDown/);
-  assert.doesNotMatch(sessionItemSource, /onKeyDown=\{handleKeyDown\}/);
-  assert.doesNotMatch(sessionItemSource, /tabIndex=\{0\}/);
+test("session rows are keyboard-operable and register no deletion shortcut", () => {
+  assert.match(sessionItemSource, /role="button"/);
+  assert.match(sessionItemSource, /tabIndex=\{0\}/);
+  assert.match(sessionItemSource, /aria-current=\{isSelected \? "true" : undefined\}/);
+  assert.match(sessionItemSource, /e\.key === "Enter" \|\| e\.key === " "/);
+  assert.match(sessionItemSource, /onKeyDown=\{confirmDelete \|\| renaming \? undefined : handleRowKeyDown\}/);
+  // Escape belongs to the delete confirmation and the rename input; the row
+  // must not grow a Delete/Backspace shortcut.
+  assert.doesNotMatch(sessionItemSource, /e\.key === "Delete"|e\.key === "Backspace"/);
 });
 
 test("polls running sessions only while the tab is visible", () => {

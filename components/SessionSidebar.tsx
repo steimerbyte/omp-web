@@ -2391,12 +2391,26 @@ function SessionItem({
     e.stopPropagation();
   }, [onRenamed, session.cwd, session.id, session.name, session.path]);
 
+  const handleRowKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Only the row itself: Enter on a nested button must not select as well.
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      // Space would otherwise scroll the virtualized list.
+      e.preventDefault();
+      onClick();
+    }
+  }, [onClick]);
+
   // Fixed height keeps hover and confirmation states from reflowing the list.
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-current={isSelected ? "true" : undefined}
       onClick={confirmDelete || renaming ? undefined : onClick}
       onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
+      onKeyDown={confirmDelete || renaming ? undefined : handleRowKeyDown}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
