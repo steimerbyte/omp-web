@@ -105,6 +105,33 @@ test("keeps the model selector visible when a model error leaves no options", ()
 });
 
 /**
+ * Waehrend die Modellliste laedt, sitzt an ihrer Stelle ein Platzhalter.
+ *
+ * Der Waehler erschien bisher erst mit der ersten Liste, die untere Leiste
+ * wuchs also um 32 px, sobald sie ankam — und der Composer darueber rutschte
+ * mit. Geprueft wird die reservierte Hoehe, nicht die Klasse des Platzhalters.
+ */
+test("the model picker reserves its 32-px slot while the list loads", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ChatInput, {
+        onSend() {},
+        onAbort() {},
+        onModelChange() {},
+        isStreaming: false,
+        modelList: [],
+        modelNames: {},
+      }),
+    ),
+  );
+
+  assert.doesNotMatch(html, /title="No available models"/, "vor der ersten Liste gibt es keinen irrefuehrenden Knopf");
+  assert.match(html, /aria-hidden="true"[^>]*style="[^"]*height:\s*32px/, "ein 32-px-Platzhalter haelt die Zeile");
+});
+
+/**
  * Das `<button>` des Modell-Ausloesers, als Zeichenkette.
  *
  * Die Attribute stehen in Renderreihenfolge, nicht in der Reihenfolge des
@@ -113,7 +140,7 @@ test("keeps the model selector visible when a model error leaves no options", ()
  * Deshalb wird das ganze Tag herausgeschnitten und darin gesucht.
  */
 function modelTriggerTag(html) {
-  const titleAt = html.search(/title="(Change|Switching) model"/);
+  const titleAt = html.search(/title="[^"]*(Change|Switching) model"/);
   assert.ok(titleAt > 0, "der Modell-Ausloeser ist gerendert");
   const start = html.lastIndexOf("<button", titleAt);
   const end = html.indexOf(">", titleAt);
@@ -138,7 +165,7 @@ test("shows the optimistic model while a switch is pending and keeps the trigger
   );
 
   const tag = modelTriggerTag(html);
-  assert.match(tag, /title="Switching model"/);
+  assert.match(tag, /title="DeepSeek V4 Flash — Switching model"/, "der Titel nennt den Namen, nicht nur die Aktion");
   assert.match(tag, /aria-busy="true"/);
   assert.doesNotMatch(
     tag,

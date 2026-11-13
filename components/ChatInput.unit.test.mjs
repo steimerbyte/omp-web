@@ -252,7 +252,7 @@ test("a builtin slash command with a prompt sends that prompt while streaming", 
 test("the model menu opens, lists sorted options and closes on an outside mousedown", { timeout: 30_000 }, async () => {
   const ref = React.createRef();
   const { container, root } = await mount(ref);
-  const trigger = container.querySelector('button[title="Change model"]');
+  const trigger = container.querySelector('button[title$="Change model"]');
   assert.ok(trigger, "der Modell-Knopf traegt seinen Titel");
   assert.match(trigger.textContent, /Alpha/);
 
@@ -311,7 +311,7 @@ test("the composer's visible labels follow the chosen language", { timeout: 30_0
       "das Textfeld traegt seinen Namen aus dem Katalog",
     );
     assert.ok(
-      container.querySelector('button[title="Modell wechseln"]'),
+      container.querySelector('button[title$="Modell wechseln"]'),
       "der Modell-Knopf ist uebersetzt",
     );
     assert.ok(

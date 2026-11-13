@@ -37,6 +37,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { usePopupPlacement } from "@/hooks/usePopupPlacement";
 import { computePopupPlacement, preferredPopupHeight, POPUP_GAP_PX, type PopupSide } from "@/lib/popup-placement";
 import { Pressable } from "./motion/Pressable";
+import { Skeleton } from "./motion/Skeleton";
 import { useGradientBorderBar } from "./motion/GradientBorder";
 import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/hooks/useI18n";
@@ -2649,8 +2650,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 compaction/error path owns that recovery" (agent-session.d.ts:
                 1122-1130). A click while a switch is in flight is queued, last
                 one wins. */}
-            {(modelOptions.length > 0 || currentName || modelError) && onModelChange && (
+            {onModelChange && (
                 <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
+                  {modelOptions.length === 0 && !currentName && !modelError ? (
+                    // Vor der ersten Modellliste haelt ein Platzhalter die
+                    // 32-px-Zeile der unteren Leiste: sonst springt sie, sobald
+                    // der Waehler geliefert wird.
+                    <Skeleton width={isMobile ? "100%" : 132} height={32} radius={9} />
+                  ) : (
                   <button
                     onClick={(e) => {
                       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -2687,7 +2694,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       e.currentTarget.style.background = modelDropdownOpen ? "var(--bg-hover)" : "none";
                       e.currentTarget.style.color = "var(--text-muted)";
                     }}
-                    title={modelSwitching ? t("chat.modelSwitching") : modelOptions.length > 0 ? t("chat.changeModel") : t("chat.noModels")}
+                    title={`${currentName ? `${currentName} — ` : ""}${modelSwitching ? t("chat.modelSwitching") : modelOptions.length > 0 ? t("chat.changeModel") : t("chat.noModels")}`}
                   >
                     {modelSwitching ? (
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }} aria-hidden="true">
@@ -2707,6 +2714,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       {currentName ?? (modelOptions.length > 0 ? "Select model" : "No models")}
                     </span>
                   </button>
+                  )}
                   {modelDropdownOpen && modelDropdownRect && (() => {
                     const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
                     // Opening upwards is the norm, but the composer is centred
