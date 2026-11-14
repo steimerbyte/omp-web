@@ -1324,6 +1324,22 @@ TypeScript half type-checks against — keep the two in sync.
   bubble through the *React* tree, so without the stop a click on a menu item
   also fires the row handler whose button opened the menu. Hit targets are
   26 px (session row) and 24 px (tree row) on desktop, 44 px on touch.
+- **A row menu sits on layer 300, not on the primitive's default 50.** The
+  default is the dialog layer and is below the phone's drawer (200, its backdrop
+  199) and the file panel (250); measured, the menu was open but covered, and
+  the tap hit the drawer's backdrop and closed the sidebar. The explorer window
+  keeps 1310 so its menu clears its own panel (1300). And because
+  `body { pointer-events: none }` while such a menu is open, a touch row action
+  needs `pointer-events: auto` on itself (`.tree-row-action`,
+  `.sidebar-row-action`) — otherwise the compatibility click after the tap
+  lands on the drawer backdrop and takes the menu with it.
+- **A menu anchored to a row is portalled to `body` with `position: fixed`,
+  clamped into the viewport — never `absolute` inside the virtualized list.**
+  Measured: the project menu hung absolutely at 110 in a scrolling list, was
+  clipped by it, sat at x = -10 outside the viewport, and its button was
+  `opacity: 0` / `pointer-events: none` until hover, so on a desktop without
+  hover the trigger could not be hit at all (`elementFromPoint` returned the
+  row).
 
 ### Comments that state a number need a test that checks that number
 - **A comment naming a figure, a duration or a measurement requires a test that
