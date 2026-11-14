@@ -475,6 +475,31 @@ test("Enter oeffnet das Menue, Pfeiltasten navigieren, Escape gibt den Fokus zur
   assert.equal(window.document.activeElement, trigger, "der Fokus kehrt nicht zum Menueknopf zurueck");
 });
 
+test("das Zeilenmenue liegt ueber dem Schubfach und dem Datei-Panel", async () => {
+  storage.clear();
+  runningIds = [];
+  const { container } = await mount();
+  const trigger = container.querySelector('[title="Session actions"]');
+  assert.ok(trigger, "der Menueknopf fehlt");
+
+  await act(async () => { pointerDown(trigger); });
+  await settle(20);
+  const menu = window.document.querySelector('[role="menu"]');
+  assert.ok(menu, "das Menue ist nicht offen");
+  // Das Menue haengt am `body`. Auf dem Telefon liegt das Schubfach als
+  // festes Overlay auf 200 (Backdrop 199), das Datei-Panel auf 250 — auf der
+  // Standardebene 50 stand das Menue darunter und war unsichtbar.
+  assert.ok(
+    Number(menu.style.zIndex) > 250,
+    `das Menue liegt auf Ebene ${menu.style.zIndex || "auto"} und damit unter dem Schubfach (200) und dem Datei-Panel (250)`,
+  );
+
+  // Das Portal am `body` muss wieder weg, sonst reisst der naechste Mount es
+  // React unter den Haenden weg.
+  await act(async () => { keydown(window.document, "Escape"); });
+  await settle(20);
+});
+
 test("Klick auf den Menueknopf und auf einen Eintrag waehlt die Sitzung nicht aus", async () => {
   storage.clear();
   runningIds = [];

@@ -46,3 +46,15 @@ test("contains chat content and inputs within the mobile viewport", () => {
 test("prevents iOS focus zoom from widening the layout", () => {
   assert.match(cssSource, /@media \(max-width: 640px\)[\s\S]*?textarea,[\s\S]*?input,[\s\S]*?select \{\s*font-size: 16px !important;/);
 });
+
+test("der Menueknopf einer Baumzeile bleibt bei offenem Menue anklickbar", () => {
+  // Ein modal geoeffnetes Menue setzt `pointer-events: none` auf den `body`.
+  // Ohne die eigene Regel trifft der Kompatibilitaets-Klick nach dem Tippen
+  // den Schubfach-Backdrop, der auf `auto` steht — die Leiste schliesst und
+  // das Menue fliegt mit (gemessen am 2026-11-14 auf 390x844).
+  assert.match(
+    cssSource,
+    /\.tree-row-action \{[\s\S]{0,400}?pointer-events: auto;/,
+    "der Zeilenknopf erbt sonst das `pointer-events: none` des modalen Menues",
+  );
+});

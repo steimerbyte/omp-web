@@ -2849,9 +2849,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
   /**
    * Das Zeilenmenue haengt am `body`; im grossen Fenster (Ebene 1300) muss es
-   * ueber dessen Panel liegen, in der Seitenleiste reicht die Dialogebene.
+   * ueber dessen Panel liegen, sonst ueber Schubfach (200, Backdrop 199) und
+   * Datei-Panel (250). Auf der Standardebene 50 war es in beiden Overlays
+   * unsichtbar.
    */
-  const menuLayer = imageTarget === "openFile" ? 1310 : 50;
+  const menuLayer = imageTarget === "openFile" ? 1310 : 300;
 
   /**
    * Neuer Ordner im aktuell angezeigten Verzeichnis. Dieselbe Route wie das

@@ -1629,6 +1629,12 @@ html.dark .chat-session-column::before {
 @media (max-width: 640px), (hover: none) {
   .tree-row-action {
     position: relative;
+    /* Ein modal geoeffnetes Menue setzt `pointer-events: none` auf den `body`.
+       Der Zeilenknopf machte das nicht mit: auf dem Telefon traf der
+       Kompatibilitaets-Klick nach dem Tippen dann den Schubfach-Backdrop
+       (inline `auto`) und schloss die Leiste — das Menue flog mit. Der
+       Nachbarknopf `.sidebar-row-action` hat dieselbe Regel. */
+    pointer-events: auto;
   }
   .tree-row-action::after {
     content: "";

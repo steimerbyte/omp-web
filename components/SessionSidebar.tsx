@@ -2596,7 +2596,11 @@ function SessionItem({
                   <MoreVertical size={14} strokeWidth={2} aria-hidden="true" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-44">
+              {/* Ebene 300: das Menue haengt am `body`, das Schubfach liegt
+                  auf dem Telefon als festes Overlay auf 200 (Backdrop 199) und
+                  das Datei-Panel auf 250. Auf der Standardebene 50 stand das
+                  Menue darunter — der Tipp traf den Backdrop. */}
+              <DropdownMenuContent align="end" layer={300} className="min-w-44">
                 <DropdownMenuItem onSelect={startRename}>{t("sidebar.rename")}</DropdownMenuItem>
                 <DropdownMenuItem onSelect={performArchive}>{t("sidebar.archive")}</DropdownMenuItem>
                 <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>

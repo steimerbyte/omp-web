@@ -306,3 +306,21 @@ test("the popup explorer window offers the same menu, above its own panel", asyn
   });
 });
 
+
+test("das Zeilenmenue der Seitenleiste liegt ueber dem Schubfach", async () => {
+  await mountExplorer();
+  const row = rowByName("notes.md");
+  assert.ok(row, "die Textzeile fehlt");
+  await openRowMenu(row);
+
+  // Dasselbe Menue in der Seitenleiste: dort liegt auf dem Telefon das
+  // Schubfach (200) und das Datei-Panel (250) ueber der Seite. Auf der
+  // Standardebene 50 war es darunter und damit unsichtbar.
+  const menu = win.document.querySelector('[role="menu"]');
+  assert.ok(menu, "das Menue ist nicht offen");
+  assert.ok(
+    Number(menu.style.zIndex) > 250,
+    `das Menue liegt auf Ebene ${menu.style.zIndex || "auto"} und damit unter dem Schubfach (200) und dem Datei-Panel (250)`,
+  );
+  await closeMenu();
+});
