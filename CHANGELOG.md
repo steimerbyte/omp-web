@@ -3,6 +3,46 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.30.1
+Released 2026-11-14.
+
+### Behoben
+
+- **Der Drei-Punkte-Knopf der Sitzungs- und Baumzeile war auf dem Telefon
+  unsichtbar beziehungsweise auf dem PC nicht treffbar.** Zwei Ursachen, beide
+  gemessen. Erstens lag das Menü auf der Standardebene 50, während das
+  Schubfach auf 200 (Backdrop 199) und das Datei-Panel auf 250 liegen: das Menü
+  war offen, aber verdeckt — das oberste Element im Menüpunkt war
+  `div.sidebar-overlay-backdrop`, der Tipp traf den Backdrop und schloss die
+  Leiste. Zweitens setzt Radix bei offenem Menü `pointer-events: none` auf den
+  `body`; der Kompatibilitäts-Klick nach dem Tipp traf den Schubfach-Backdrop
+  (inline `auto`) und nahm das eben geöffnete Menü mit. Jetzt liegt das
+  Zeilenmenü auf Ebene **300** (im Explorer-Fenster 1310, über dessen Panel
+  1300), und `.tree-row-action` behält im Touch-Block `pointer-events: auto`
+  (der Nachbarknopf `.sidebar-row-action` hatte die Regel schon).
+- **Der Menüknopf der Projektzeile hing am Hover.** Inline `opacity: 0` und
+  `pointer-events: none` bis zum Überfahren: auf einem Desktop ohne Hover war
+  der Knopf nicht sichtbar und nicht tippbar, `elementFromPoint` in seiner
+  Mitte lieferte die Zeile statt des Knopfs. Sein Panel lag als
+  `position: absolute` in der virtualisierten Liste (`overflow: auto`), stand
+  bei 110 in der Liste, war davon abgeschnitten (`clippedByScroller=true`) und
+  lag bei x = -10 außerhalb des Viewports. Jetzt ist der Knopf immer sichtbar,
+  das Panel hängt per Portal am `body` mit `position: fixed`, Ebene 300, und
+  wird waagerecht in den Viewport geklemmt; der Outside-Klick erkennt es am
+  Merkmal `data-project-menu` statt am DOM-Baum. Einträge, Handler und
+  Rückfragen sind unverändert.
+- Nachher gemessen (390×844 mit Tipp, 1440×900 mit Maus, Sitzungszeile,
+  Baumzeile und Projektzeile): Menü offen, Ebene 300, oberstes Element im
+  Menüpunkt ist der Menüpunkt, die Leiste bleibt offen, Escape schließt, keine
+  Konsolenmeldung.
+- `trigger.click()` aus JavaScript öffnet das Menü weiterhin nicht — Radix
+  öffnet auf `pointerdown`, nicht auf `click`. Ein echter Klick und Enter tun
+  es.
+- Gate: **3127 pass, 3 skip, 0 fail** (3130 Tests in 395 Dateien), Coverage
+  4358/5061 Funktionen = 86,1 %. Ein erster Lauf war an einem Stream-Test rot
+  (`useAgentSession.flow.test.mjs`, der allein 6/6 grün läuft) — Last-Flake,
+  nicht diese Commits.
+
 ## v0.30.0
 Released 2026-11-13.
 
