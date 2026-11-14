@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { GitBranch, MoreVertical } from "lucide-react";
 import { Virtuoso, type ListProps, type ListRange, type VirtuosoHandle } from "react-virtuoso";
 import type { SessionInfo } from "@/lib/types";
@@ -352,6 +353,9 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 
   return (
     <div
+      /* Der Projektmenue-Inhalt liegt in einem Portal; der Outside-Klick in
+         dieser Datei erkennt ihn an diesem Merkmal statt am DOM-Baum. */
+      data-project-menu=""
       style={{
         ...style,
         opacity: visible ? 1 : 0,
@@ -475,6 +479,9 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const [hoveredProject, setHoveredProject] = useState<string | null>(null);
   const [projectMenuOpen, setProjectMenuOpen] = useState<string | null>(null);
+  /* Das Projektmenue haengt am `body` (siehe unten), also braucht es seine
+     Lage in Fensterkoordinaten statt einer Position im Zeilenfluss. */
+  const [projectMenuPosition, setProjectMenuPosition] = useState({ top: 0, left: 0 });
   const [removedProjects, setRemovedProjects] = useState<Set<string>>(() => new Set());
   const [wtFilter, setWtFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
@@ -883,16 +890,18 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   // Close the project actions menu on outside click.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (wtDropdownRef.current && !wtDropdownRef.current.contains(e.target as Node)) {
-        setProjectMenuOpen(null);
-        setWtDropdownOpen(false);
-        setWtNewOpen(false);
-        setWtNewBranch("");
-        setWtError(null);
-        setWtConfirmRemove(null);
-        setWtFilter("");
-        setHoveredProject(null);
-      }
+      const target = e.target as Element | null;
+      // Das Panel haengt in einem Portal am `body`; `contains` auf der Zeile
+      // sieht es nicht mehr. Das Merkmal `data-project-menu` schon.
+      if (wtDropdownRef.current?.contains(target as Node) || target?.closest?.("[data-project-menu]")) return;
+      setProjectMenuOpen(null);
+      setWtDropdownOpen(false);
+      setWtNewOpen(false);
+      setWtNewBranch("");
+      setWtError(null);
+      setWtConfirmRemove(null);
+      setWtFilter("");
+      setHoveredProject(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -1577,8 +1586,17 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                   <div style={{ position: "static", flexShrink: 0 }}>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={(event) => {
                         const nextOpen = projectMenuOpen === project ? null : project;
+                        /* `position: fixed` unter dem Portal: rechte Kante an der
+                           Knopfkante, aber in den Viewport geklemmt — sonst
+                           steht das 260-px-Panel links 10 px ausserhalb. */
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const width = Math.min(260, window.innerWidth - 24);
+                        setProjectMenuPosition({
+                          top: Math.round(rect.bottom) + 4,
+                          left: Math.round(Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))),
+                        });
                         setProjectMenuOpen(nextOpen);
                         setWtDropdownOpen(false);
                         setWtNewOpen(false);
@@ -1602,9 +1620,11 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                         background: projectMenuOpen === project ? "var(--bg-selected)" : "transparent",
                         color: isSelectedProject && currentWt && !currentWt.isMain ? "var(--accent)" : "var(--text-dim)",
                         cursor: "pointer",
-                        opacity: hoveredProject === project || projectMenuOpen === project ? 1 : 0,
-                        pointerEvents: hoveredProject === project || projectMenuOpen === project ? "auto" : "none",
-                        transition: "opacity var(--duration-hover), background var(--duration-hover), color var(--duration-hover)",
+                        /* Immer sichtbar und tippbar: der Hover-Halt war auf
+                           dem Telefon der Fehler, dort gibt es kein Hover —
+                           dieselbe Entscheidung wie am Menueknopf der
+                           Sitzungszeile. */
+                        transition: "background var(--duration-hover), color var(--duration-hover)",
                       }}
                       onFocus={() => setHoveredProject(project)}
                     >
@@ -1614,14 +1634,17 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                         <circle cx="11" cy="7" r="1.1" />
                       </svg>
                     </button>
+                    {typeof document !== "undefined" && createPortal(
                     <AnimatedDropdown
                       open={projectMenuOpen === project}
                       style={{
-                        position: "absolute",
-                        top: "calc(100% + 4px)",
-                        right: 3,
+                        position: "fixed",
+                        top: projectMenuPosition.top,
+                        left: projectMenuPosition.left,
                         width: "min(260px, calc(100vw - 24px))",
-                        zIndex: 110,
+                        /* Ueber Schubfach (200) und Datei-Panel (250), wie die
+                           Menues der Sitzungs- und Baumzeilen (300). */
+                        zIndex: 300,
                         background: "var(--bg)",
                         border: "1px solid var(--border)",
                         borderRadius: "var(--radius-panel)",
@@ -1948,7 +1971,9 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                           </svg>
                           {t("sidebar.removeProject")}
                         </button>
-                      </AnimatedDropdown>
+                      </AnimatedDropdown>,
+                      document.body,
+                    )}
                   </div>
                 )}
               </div>

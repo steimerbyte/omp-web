@@ -290,12 +290,57 @@ test("Projekt- und Sessionzeilen kommen aus /api/sessions, Kollaps und Entfernen
   await settle();
   // Das Menue oeffnet sich animiert; nach zwei Frames ist der Inhalt da.
   await settle(60);
-  const remove = [...container.querySelectorAll("button")].find((node) => node.textContent.includes("Remove from sidebar"));
+  // Das Projektmenue haengt in einem Portal am `body`, nicht im Container.
+  const remove = [...window.document.querySelectorAll("button")].find((node) => node.textContent.includes("Remove from sidebar"));
   assert.ok(remove, "der Entfernen-Eintrag fehlt im Menue");
   await act(async () => { remove.click(); });
   await settle();
   assert.equal(storage.get("omp-web:removed-projects"), JSON.stringify([CWD]));
   assert.equal(container.textContent.includes("hello there"), false, "die Projektzeile blieb trotz Entfernen stehen");
+});
+
+test("der Projektmenue-Knopf steht ohne Hover in der Zeile und das Menue haengt am body", async () => {
+  storage.clear();
+  const { container } = await mount();
+  const actions = container.querySelector('[title="Project actions"]');
+  assert.ok(actions, "der Projekt-Menueknopf fehlt");
+  // Kein Hover-Halt: auf dem Telefon gibt es kein Hover, dort war der Knopf
+  // unsichtbar und nicht tippbar.
+  assert.notEqual(actions.style.opacity, "0", "der Knopf ist ohne Hover unsichtbar");
+  assert.notEqual(actions.style.pointerEvents, "none", "der Knopf ist ohne Hover nicht tippbar");
+
+  await act(async () => { actions.click(); });
+  await settle(60);
+  const panel = window.document.querySelector("[data-project-menu]");
+  assert.ok(panel, "das Projektmenue ist nicht offen");
+  // Portal am `body`: in der virtualisierten Liste schneidet `overflow: auto`
+  // das Menue ab, sobald die Zeile nicht mehr weit oben steht.
+  assert.equal(container.contains(panel), false, "das Menue steckt noch in der Liste");
+  assert.equal(panel.parentElement, window.document.body, "das Menue haengt nicht am body");
+  assert.equal(panel.style.position, "fixed", "das Menue positioniert sich im Zeilenfluss");
+  assert.ok(
+    Number(panel.style.zIndex) > 250,
+    `das Menue liegt auf Ebene ${panel.style.zIndex} und damit unter dem Schubfach (200) und dem Datei-Panel (250)`,
+  );
+  // Ein Druck in das Panel darf es nicht schliessen: der Outside-Klick
+  // erkennt es am Merkmal `data-project-menu`, nicht am DOM-Baum (Portal).
+  await act(async () => {
+    panel.querySelector("button").dispatchEvent(Object.assign(new window.Event("mousedown", { bubbles: true }), {}));
+  });
+  await settle(20);
+  assert.ok(window.document.querySelector("[data-project-menu]"), "der Druck in das Menue hat es geschlossen");
+
+  // Eintraege unveraendert: Worktree-Verwaltung und Projekt entfernen.
+  const labels = [...panel.querySelectorAll("button")].map((node) => (node.textContent ?? "").trim());
+  assert.ok(labels.some((label) => label.includes("Worktrees")), `der Worktree-Eintrag fehlt: ${JSON.stringify(labels)}`);
+  assert.ok(labels.some((label) => label.includes("Remove from sidebar")), `der Entfernen-Eintrag fehlt: ${JSON.stringify(labels)}`);
+
+  // Wieder schliessen, und zwar vor dem naechsten Mount: der Ausblend-Timer
+  // des Portals wuerde sonst nach `body.innerHTML = ""` auf einen Knoten
+  // zeigen, den React nicht mehr besitzt.
+  await act(async () => { window.document.body.dispatchEvent(new window.Event("mousedown", { bubbles: true })); });
+  await settle(300);
+  assert.equal(window.document.querySelector("[data-project-menu]"), null, "das Menue blieb offen");
 });
 
 test("Worktree-Menue zeigt Pfad-Label und Home-Kuerzung", async () => {
@@ -304,12 +349,15 @@ test("Worktree-Menue zeigt Pfad-Label und Home-Kuerzung", async () => {
   const actions = container.querySelector('[title="Project actions"]');
   await act(async () => { actions.click(); });
   await settle(60);
-  const worktrees = [...container.querySelectorAll("button")].find((node) => node.textContent.includes("Worktrees"));
+  const worktrees = [...window.document.querySelectorAll("button")].find((node) => node.textContent.includes("Worktrees"));
   assert.ok(worktrees, "der Worktree-Eintrag fehlt");
   await act(async () => { worktrees.click(); });
   await settle(60);
-  assert.match(container.textContent, /main/);
-  assert.match(container.textContent, /~\/work-feature/, "displayCwd hat das Home-Verzeichnis nicht gekuerzt");
+  // Auch der Worktree-Eintrag liegt im Portal am `body`.
+  assert.match(window.document.body.textContent, /main/);
+  assert.match(window.document.body.textContent, /~\/work-feature/, "displayCwd hat das Home-Verzeichnis nicht gekuerzt");
+  await act(async () => { window.document.body.dispatchEvent(new window.Event("mousedown", { bubbles: true })); });
+  await settle(300);
 });
 
 test("Laufende und unbenutzte Sessions zeigen ihre Indikatoren", async () => {
