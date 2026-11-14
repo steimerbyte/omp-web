@@ -3,6 +3,43 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## v0.30.2
+Released 2026-11-14.
+
+### Behoben
+
+- **Die eigene Nachricht stand im Transkript zweimal.** Der Abgleich der
+  gelieferten User-Nachricht im Hook lief per Nachbarzeile; landete etwas
+  dazwischen — ein abgebrochener Turn (`assistant` mit `content: []` und
+  `stopReason: "aborted"`) oder ein `custom_message` —, galt sie als neu und
+  wurde ein zweites Mal angehängt. Gematcht wird jetzt per Schlüssel über die
+  ganze Liste (`hooks/useAgentSession.ts:1296-1327`). Live gemessen: 2 → 1
+  Kopie, 5 Antwortzeilen unverändert, 0 „aborted" im DOM.
+- **Ein Anschlag konnte denselben Text ein zweites Mal als Steer absenden.**
+  `sendQueued` las den Render-Stand `value` statt `valueRef`; im selben Frame
+  sah es den Text, den `clearInput` schon entfernt hatte, und schickte ihn als
+  Steer in denselben Turn (`components/ChatInput.tsx:1303-1332`). Jetzt liest
+  es `valueRef.current`; `queuedSendRef` hält ein Absenden pro Tastendruck fest
+  und deckt auch das Netzfenster von `runBuiltinCommand`, `handleSend` hat
+  denselben Guard.
+- **Das Steering-Echo von omp ist keine zweite Zeile.** omp reicht den Prompt
+  eines abgebrochenen Turns als User-Nachricht mit `steering: true` erneut ein.
+  Die reine Regel `isSteeringEcho` (`lib/message-display.ts:83-95`) erkennt das
+  und wird beim Laden der Sitzung (`lib/session-reader.ts:576-579`, Eintrag und
+  id zusammen übersprungen, damit `entryIds` ausgerichtet bleibt) und im
+  Live-Pfad angewendet. Grenze: erkannt wird nur `steering: true` **und**
+  identischer Text zur letzten User-Nachricht — ein echtes Queue-Steering mit
+  eigenem Wortlaut bleibt sichtbar, ein bewusst gleicher Wortlaut verschwindet.
+- **Ein Assistant ohne sichtbaren Block erzeugt keine Zusammenfassungszeile
+  mehr.** `lib/chat-collapse.ts:58-66`: ohne Block und ohne Fehlertext gibt es
+  nichts zu kollabieren — vorher stand „Antwort · Request was aborted" als
+  Systemzeile im Verlauf.
+- Beweislage: 1 048 lokale und 669 Sitzungsdateien auf agent-pc gelesen; 16
+  Dateien mit doppeltem User-Text, 5 davon mit unter 30 s Abstand, und in 5 von
+  5 saß ein abgebrochener Assistant dazwischen.
+- Gate: **3133 pass, 3 skip, 0 fail** (3136 Tests in 395 Dateien), Coverage
+  4363/5066 Funktionen = 86,1 %. `bun run typecheck` grün.
+
 ## v0.30.1
 Released 2026-11-14.
 
