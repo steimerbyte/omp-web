@@ -15,6 +15,7 @@ import type { ContextUsage } from "./omp-types";
 import type { SessionEntry as OmpSessionEntry, SessionInfo as OmpSessionInfo } from "@oh-my-pi/pi-coding-agent";
 import { getOmpRuntime } from "./omp-runtime";
 import { normalizeToolCalls } from "./normalize";
+import { isSteeringEcho, lastUserMessage } from "./message-display";
 import { sessionPathKey } from "./session-path";
 import { isPathWithinRoots } from "./path-security";
 import { getUserHome, type WebIdentity } from "./request-identity";
@@ -571,10 +572,13 @@ export function buildSessionContext(
   const entryIds: string[] = [];
   for (const entry of collectDisplayEntries(entries, byId, leafId)) {
     const m = entryToUiMessage(entry, options);
-    if (m) {
-      messages.push(m);
-      entryIds.push(entry.id);
-    }
+    if (!m) continue;
+    // Ein Steering-Echo desselben Prompts ist keine zweite Nachricht: omp
+    // schickt den Text eines abgebrochenen Turns so erneut, und die Datei
+    // enthaelt dann beide Zeilen.
+    if (isSteeringEcho(lastUserMessage(messages), m)) continue;
+    messages.push(m);
+    entryIds.push(entry.id);
   }
 
   return {

@@ -1,4 +1,4 @@
-import type { AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
 
 export interface DisplayOptions {
   isStreaming?: boolean;
@@ -54,4 +54,42 @@ export function splitFinalAssistantBlocks(
 
 export function countToolCallBlocks(blocks: AssistantContentBlock[]): number {
   return blocks.filter((block): block is ToolCallContent => block.type === "toolCall").length;
+}
+
+/** Klartext einer User-Nachricht, ohne Bilder und ohne Reihenfolge-Rauschen. */
+export function userMessageText(message: AgentMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block): block is { type: "text"; text: string } => (
+      Boolean(block) && typeof block === "object"
+      && (block as { type?: unknown }).type === "text"
+      && typeof (block as { text?: unknown }).text === "string"
+    ))
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
+
+/** Die letzte User-Nachricht der Liste, auch wenn ein abgebrochener Turn dazwischen liegt. */
+export function lastUserMessage(messages: readonly AgentMessage[]): AgentMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "user") return messages[i];
+  }
+  return undefined;
+}
+
+/**
+ * omp reicht den Prompt eines abgebrochenen Turns als Steering-Nachricht erneut
+ * ein: im Transkript steht derselbe Text zweimal hintereinander, die zweite
+ * Zeile traegt `steering: true` (so in den Sitzungsdateien auf agent-pc
+ * gemessen). Fuer den Operator sieht das aus, als haette das System seine
+ * Nachricht ein zweites Mal geschickt.
+ */
+export function isSteeringEcho(previousUser: AgentMessage | undefined, next: AgentMessage): boolean {
+  if (next.role !== "user") return false;
+  if ((next as { steering?: unknown }).steering !== true) return false;
+  if (!previousUser || previousUser === next) return false;
+  return userMessageText(previousUser) === userMessageText(next);
 }

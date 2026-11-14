@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
+import { isSteeringEcho, lastUserMessage } from "@/lib/message-display";
 import { stripAnsi } from "@/lib/ansi";
 import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import {
@@ -1306,6 +1307,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const optimisticKey = optimisticUserMessageKeyRef.current;
           optimisticUserMessageKeyRef.current = null;
           setMessages((prev) => {
+            // omp schickt den Prompt eines abgebrochenen Turns als
+            // Steering-Nachricht erneut; derselbe Text ist kein zweiter Prompt.
+            if (isSteeringEcho(lastUserMessage(prev), delivered)) return prev;
             if (!optimisticKey) return [...prev, delivered];
             let at = -1;
             for (let i = prev.length - 1; i >= 0; i -= 1) {

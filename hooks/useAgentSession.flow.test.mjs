@@ -393,3 +393,41 @@ test("eine eingeschobene Nachricht laesst die eigene User-Nachricht nicht doppel
 
   await act(async () => { root.unmount(); });
 });
+
+// Gemessen auf dem Live-Host: omp schickt den Prompt eines abgebrochenen Turns
+// als Steering-Nachricht erneut, und zwar nachdem der optimistische Bubble
+// bereits durch die echte Nachricht ersetzt wurde (kein offener Key mehr). Die
+// alte Regel haengte den Text dann ein zweites Mal an — fuer den Operator sah
+// das aus, als haette das System seine Nachricht wiederholt geschickt.
+test("ein Steering-Echo desselben Prompts haengt keine zweite User-Zeile an", async () => {
+  FakeEventSource.mode = "connect";
+  FakeEventSource.instances.length = 0;
+  agentGet = async () => ({ running: true, state: { isStreaming: true, isPromptRunning: true } });
+  postReply = async () => ({ data: null });
+  requests.length = 0;
+  const { latest, root } = await mount();
+  const fire = async (event) => {
+    await act(async () => { latest().handleAgentEventRef.current(event); });
+  };
+  const own = () => latest().messages.filter(
+    (message) => message.role === "user" && message.content === "Bitte immer prasent",
+  );
+
+  await act(async () => { await latest().handleSend("Bitte immer prasent"); });
+  // Die echte Prompt-Nachricht ersetzt den optimistischen Bubble.
+  await fire({ type: "message_end", message: { role: "user", content: "Bitte immer prasent", timestamp: 2 } });
+  await fire({ type: "message_end", message: { role: "assistant", content: [], stopReason: "aborted", errorMessage: "Request was aborted", timestamp: 3 } });
+  // Das Echo traegt das Steering-Flag — dieselbe Nachricht, kein zweiter Prompt.
+  await fire({ type: "message_end", message: { role: "user", content: "Bitte immer prasent", steering: true, timestamp: 4 } });
+  assert.equal(own().length, 1);
+
+  // Ein echter Steering-Prompt mit eigenem Text bleibt eine Zeile.
+  await fire({ type: "message_end", message: { role: "user", content: "Bitte immer prasent, aber kurz", steering: true, timestamp: 5 } });
+  assert.equal(
+    latest().messages.filter((message) => message.role === "user" && message.content === "Bitte immer prasent, aber kurz").length,
+    1,
+  );
+  assert.equal(own().length, 1);
+
+  await act(async () => { root.unmount(); });
+});

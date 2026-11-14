@@ -1,4 +1,5 @@
 import type { AgentMessage, AssistantContentBlock, CustomMessage } from "./types";
+import { getAssistantErrorMessage, getDisplayableAssistantBlocks } from "./message-display";
 
 /**
  * Die Regel, nach der eine Ausgabe im Transkript zu einer Zeile wird.
@@ -47,9 +48,19 @@ export function shouldCollapseOutput(signal: CollapseSignal): boolean {
  * Die Einheiten, die eine Zusammenfassungszeile bekommen. Werkzeug-Ergebnisse
  * fehlen: `MessageView` rendert sie inline unter ihrem Aufruf und liefert
  * eigenstaendig `null`, eine Karte darum waere eine leere Zeile.
+ *
+ * Ein Assistant-Turn ohne sichtbaren Block zaehlt nicht dazu: `MessageView`
+ * liefert fuer ihn `null` (abgebrochener Lauf, `stopReason: "aborted"`, leerer
+ * Inhalt), die Karte zeigte aber Etikett und Fehlertext — eine Systemzeile
+ * mitten im Transkript. Sichtbar bleibt nur, was auch einen Block hat, oder der
+ * Fehlertext eines wirklich gescheiterten Requests.
  */
 export function isCollapsibleOutput(message: AgentMessage): boolean {
-  if (message.role === "assistant" || message.role === "bashExecution") return true;
+  if (message.role === "assistant") {
+    return getDisplayableAssistantBlocks(message).length > 0
+      || getAssistantErrorMessage(message) !== null;
+  }
+  if (message.role === "bashExecution") return true;
   if (message.role === "custom") return (message as CustomMessage).display === true;
   return false;
 }
