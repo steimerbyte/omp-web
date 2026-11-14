@@ -316,3 +316,34 @@ test("a /vibe typed while a turn runs is not steered into the running turn", asy
     "nur der vom Befehl gelieferte Prompt wird waehrend des Turns abgeschickt",
   );
 });
+
+test("a second Enter during the command lookup does not send the text twice", async () => {
+  // Das Fenster, das die Geste nicht abdeckt: `runBuiltinCommand` haengt an
+  // einem Netzaufruf, das Feld ist noch voll, und der zweite Anschlag kommt
+  // nach `DOUBLE_ENTER_WINDOW_MS`. Ohne die Sperre schickt `sendQueued` den
+  // Text ein zweites Mal — in den laufenden Turn, als zweiten Steer.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const builtinCalls = [];
+  const { sent, textarea } = await mountInput({
+    isStreaming: true,
+    draftKey: "enter-gesture-test",
+    slashCommands: [],
+    slashCommandsLoading: true,
+    onBuiltinCommand: async (message) => {
+      builtinCalls.push(message);
+      await gate;
+      return { handled: false };
+    },
+  });
+
+  await type(textarea, "/langsam");
+  await pressEnter(textarea);
+  // Ueber das Geste-Fenster hinaus, mit geflushter React-Queue.
+  await act(async () => { await new Promise((r) => setTimeout(r, 450)); });
+  await pressEnter(textarea);
+  await act(async () => { release(); await new Promise((r) => setTimeout(r, 20)); });
+
+  assert.deepEqual(builtinCalls, ["/langsam"], "der Befehl wird einmal aufgeloest");
+  assert.deepEqual(sent.steers, ["/langsam"], "der Text geht genau einmal als Steer hinaus");
+});

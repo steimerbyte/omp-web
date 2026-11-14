@@ -362,3 +362,34 @@ test("eingebaute Slash-Befehle: name, copy, session, compact, reload, handoff, u
 
   await act(async () => { root.unmount(); });
 });
+
+test("eine eingeschobene Nachricht laesst die eigene User-Nachricht nicht doppelt erscheinen", async () => {
+  FakeEventSource.mode = "connect";
+  FakeEventSource.instances.length = 0;
+  agentGet = async () => ({ running: true, state: { isStreaming: true, isPromptRunning: true } });
+  postReply = async () => ({ data: null });
+  requests.length = 0;
+  const { latest, root } = await mount();
+  const fire = async (event) => {
+    await act(async () => { latest().handleAgentEventRef.current(event); });
+  };
+
+  await act(async () => { await latest().handleSend("Bitte immer prasent"); });
+  const own = () => latest().messages.filter(
+    (message) => message.role === "user" && message.content === "Bitte immer prasent",
+  );
+  assert.equal(own().length, 1);
+
+  // Der abgebrochene Turn schreibt eine leere Assistant-Nachricht zwischen den
+  // optimistischen Bubble und die echte User-Nachricht — wie in den Dateien auf
+  // dem Live-Host (stopReason "aborted", content []).
+  await fire({ type: "message_end", message: { role: "assistant", content: [], stopReason: "aborted", timestamp: 2 } });
+  await fire({ type: "message_end", message: { role: "user", content: "Bitte immer prasent", timestamp: 3 } });
+  assert.equal(own().length, 1);
+
+  // Eine echte Queue-Zustellung mit eigenem Text kommt weiterhin an.
+  await fire({ type: "message_end", message: { role: "user", content: "und jetzt anders", timestamp: 4 } });
+  assert.equal(latest().messages.filter((message) => message.role === "user").length, 3);
+
+  await act(async () => { root.unmount(); });
+});

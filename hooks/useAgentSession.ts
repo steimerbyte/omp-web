@@ -1295,20 +1295,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (completed && completed.role === "user") {
           // Delivered steering/follow-up messages surface here as user
           // messages. The run's initial prompt also emits one, but handleSend
-          // already appended it optimistically. Consume only the still-adjacent
-          // optimistic bubble; later same-text queue deliveries must render.
+          // already appended it optimistically. The match is by key, not by
+          // position: anything can land between the bubble and this event — an
+          // aborted/empty assistant stop, a `custom_message`, a file reload —
+          // and an adjacency test then appends the operator's own message a
+          // second time, with that entry between the two copies. Later
+          // same-text queue deliveries carry their own key and still render.
           const delivered = normalizeToolCalls(completed);
           const deliveredKey = userMessageKey(delivered);
           const optimisticKey = optimisticUserMessageKeyRef.current;
           optimisticUserMessageKeyRef.current = null;
           setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (optimisticKey && last?.role === "user" && userMessageKey(last) === optimisticKey) {
-              return optimisticKey === deliveredKey
-                ? prev
-                : [...prev.slice(0, -1), delivered];
+            if (!optimisticKey) return [...prev, delivered];
+            let at = -1;
+            for (let i = prev.length - 1; i >= 0; i -= 1) {
+              const candidate = prev[i];
+              if (candidate.role === "user" && userMessageKey(candidate) === optimisticKey) {
+                at = i;
+                break;
+              }
             }
-            return [...prev, delivered];
+            if (at === -1) return [...prev, delivered];
+            if (optimisticKey === deliveredKey) return prev;
+            const next = [...prev];
+            next[at] = delivered;
+            return next;
           });
         } else if (completed) {
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);

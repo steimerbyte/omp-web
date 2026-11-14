@@ -611,6 +611,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
    * liegt nur der Zustand zwischen zwei Tastendruecken.
    */
   const enterGestureRef = useRef<EnterGestureState>(createEnterGestureState());
+  // Ein Absenden pro Anschlag: das Feld wird erst nach dem Netzaufruf geleert,
+  // also muss der laufende Absende-Vorgang selbst den zweiten abweisen.
+  const queuedSendRef = useRef(false);
   const slashCommandsRequestedRef = useRef(false);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -1038,13 +1041,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const files = uploadedFiles;
     if (!msg && !attachedImages.length && !files.length) return;
     if (isStreaming) return;
+    // Dasselbe Fenster wie in `sendQueued`: das Feld wird erst nach
+    // `runBuiltinCommand` geleert, und ein zweiter Anschlag darin schickte den
+    // Text ein zweites Mal.
+    if (queuedSendRef.current) return;
+    queuedSendRef.current = true;
     onAudioUnlock?.();
-    if (!attachedImages.length && !files.length && await runBuiltinCommand(msg, onSend)) return;
-    // Der Agent bekommt den Pfad als Text: die Datei liegt bereits im
-    // Arbeitsordner, in dem er laeuft.
-    const outgoing = appendUploadReferences(msg, files);
-    clearInput();
-    onSend(outgoing, attachedImages.length ? attachedImages : undefined);
+    try {
+      if (!attachedImages.length && !files.length && await runBuiltinCommand(msg, onSend)) return;
+      // Der Agent bekommt den Pfad als Text: die Datei liegt bereits im
+      // Arbeitsordner, in dem er laeuft.
+      const outgoing = appendUploadReferences(msg, files);
+      clearInput();
+      onSend(outgoing, attachedImages.length ? attachedImages : undefined);
+    } finally {
+      queuedSendRef.current = false;
+    }
   }, [value, attachedImages, uploadedFiles, isStreaming, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
@@ -1289,9 +1301,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
-    const msg = value.trim();
+    // `valueRef`, wie in `classifyEnter`: `value` ist der Stand des letzten
+    // Renderns, und ein Anschlag im selben Frame sieht dort noch den Text, den
+    // `clearInput` laengst aus dem Feld genommen hat. Genau daraus wird die
+    // eigene Nachricht ein zweites Mal abgeschickt (als Steer in den laufenden
+    // Turn), waehrend ein abgebrochener Turn zwischen beiden im Transkript
+    // steht.
+    const msg = valueRef.current.trim();
     if (!msg && !attachedImages.length) return;
     if (attachedImages.length) return;
+    // `runBuiltinCommand` haengt an einem Netzaufruf, und erst danach wird das
+    // Feld geleert. Ein zweiter Anschlag in diesem Fenster fand den Text noch
+    // vor und schickte ihn ein zweites Mal — als Steer in denselben Turn.
+    if (queuedSendRef.current) return;
+    queuedSendRef.current = true;
     onAudioUnlock?.();
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
     // A running turn is the window where a slash command used to reach the
@@ -1301,7 +1324,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (onPromptWithStreamingBehavior) onPromptWithStreamingBehavior(prompt, streamingBehavior);
       else onSend(prompt);
     };
-    if (await runBuiltinCommand(msg, sendPrompt)) return;
+    let consumed: boolean;
+    try {
+      consumed = await runBuiltinCommand(msg, sendPrompt);
+    } finally {
+      queuedSendRef.current = false;
+    }
+    if (consumed) return;
     // Auch hier die Referenzen: sonst ginge eine gesteuerte Nachricht ohne den
     // Anhang hinaus, obwohl der Chip einen verspricht.
     const outgoing = appendUploadReferences(msg, uploadedFiles);
@@ -1311,7 +1340,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     } else if (mode === "followup" && onFollowUp) {
       onFollowUp(outgoing, attachedImages.length ? attachedImages : undefined);
     }
-  }, [value, attachedImages, uploadedFiles, onSteer, onFollowUp, onSend, runBuiltinCommand, onPromptWithStreamingBehavior, clearInput, onAudioUnlock]);
+  }, [attachedImages, uploadedFiles, onSteer, onFollowUp, onSend, runBuiltinCommand, onPromptWithStreamingBehavior, clearInput, onAudioUnlock]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
