@@ -207,6 +207,9 @@ test("the time picker opens on the hour face with both rings", async () => {
   }));
 
   assert.equal($('[data-time-picker="true"]') !== null, true);
+  // Radix setzt `aria-modal` in dieser Fassung nicht selbst; ohne das Attribut
+  // weiss eine Vorlesehilfe nicht, dass der Rest der Seite still ist.
+  assert.equal($('[data-time-picker="true"]').getAttribute("aria-modal"), "true");
   assert.equal(field("hour").textContent.trim(), "20");
   assert.equal(field("minute").textContent.trim(), "00");
   // Die Stunde ist der erste Schritt und traegt deshalb den Akzent.
@@ -423,6 +426,15 @@ test("the date picker names the chosen day in the header", async () => {
   assert.equal(win.document.body.textContent.includes("November 2026"), true);
   // Sechs Wochen, aber nur die Tage des Monats als Knoepfe.
   assert.equal(win.document.querySelectorAll("[data-picker-day]").length, 30);
+  assert.equal($('[data-date-picker="true"]').getAttribute("aria-modal"), "true");
+  // Der Name des Dialogs ist die Ueberschrift, nicht ein beliebiger Text.
+  const labelledBy = $('[data-date-picker="true"]').getAttribute("aria-labelledby");
+  assert.ok(labelledBy, "der Dialog nennt sich nach seiner Ueberschrift");
+  assert.equal(
+    win.document.getElementById(labelledBy).textContent.trim().startsWith(deMessages["calendar.datePicker.title"]),
+    true,
+    "der Name des Dialogs beginnt mit seiner Aufgabe, nicht mit der Jahreszahl",
+  );
   assert.equal($('[data-picker-day="2026-11-18"]').getAttribute("aria-pressed"), "true");
 });
 
@@ -500,6 +512,23 @@ test("the arrows follow the grid and the month follows the arrows", async () => 
   await press(grid, "ArrowRight");
   assert.equal(win.document.body.textContent.includes("Dezember 2026"), true);
   assert.equal($('[data-picker-day="2026-12-01"]').getAttribute("aria-pressed"), "true");
+});
+
+test("enter confirms the day under the cursor", async () => {
+  const recorderUnderTest = recorder();
+  await mount(React.createElement(DatePickerDialog, {
+    value: "2026-11-18",
+    onCancel: recorderUnderTest.onCancel,
+    onConfirm: recorderUnderTest.onConfirm,
+  }));
+
+  const grid = $('[data-picker-grid="true"]');
+  await press(grid, "ArrowRight");
+  await press(grid, "Enter");
+
+  // Auf einem Knopf waere Enter nur ein zweiter Klick auf denselben Tag; der
+  // Dialog bliebe offen. Enter heisst hier: uebernehmen.
+  assert.deepEqual(recorderUnderTest.calls, [{ kind: "confirm", value: "2026-11-19" }]);
 });
 
 test("browsing months does not change the chosen day", async () => {

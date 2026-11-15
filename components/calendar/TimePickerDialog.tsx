@@ -34,9 +34,11 @@ import {
  *
  * Alle Kantenlaengen kommen aus `PICKER_RATIO` (gemessen an der Vorlage) mal
  * `PICKER_WIDTH`; hier steht keine einzige Zahl, die nicht dort herkommt.
- * Farben sind ausschliesslich Theme-Variablen — das Zifferblatt traegt
- * `--bg-subtle`, die gewaehlte Zahl `--bg-selected`, damit es in hell und
- * dunkel dasselbe Bild ergibt.
+ * Farben sind ausschliesslich Theme-Variablen — das Zifferblatt und die
+ * inaktiven Felder tragen `--bg` mit einem Rand, die gewaehlte Zahl und das
+ * aktive Feld `--bg-selected`. `--bg-subtle` taugt hier nicht: es kann im
+ * selben Palette denselben Wert wie `--bg-selected` tragen, und dann
+ * verschwindet der gewaehlte Kreis.
  */
 
 /** Zwei Ziffern mit fuehrender Null. */
@@ -94,13 +96,16 @@ export function TimePickerDialog({
   /** Ein Wert wurde auf dem Zifferblatt gewaehlt. */
   const pick = (next: number) => {
     if (face === "hour") {
-      setHour(next);
       // Die Vorlage springt nach der Stunde auf die Minuten; die Stunde ist
       // damit gesetzt, und `:00` steht schon im Minutenfeld.
+      setHour(next);
       setFace("minute");
       return;
     }
-    setMinute(next);
+    // Minuten sind Fuenf-Minuten-Schritte. Eine Zahl, die noch von der
+    // Stundenscheibe stammt (ein Klick, der waehrend des Blattwechsels
+    // eintrifft), wuerde sonst eine Minute wie 16:04 setzen.
+    setMinute((Math.round(next / 5) * 5) % 60);
   };
 
   /**
@@ -155,8 +160,12 @@ export function TimePickerDialog({
     lineHeight: 1,
     fontVariantNumeric: "tabular-nums",
     color: "var(--text)",
-    background: activeField ? "var(--bg-selected)" : "var(--bg-subtle)",
-    border: "none",
+    // Ein eigenes Feld hebt sich in JEDEM Theme ab: `--bg-subtle` und
+    // `--bg-selected` koennen im selben Palette den gleichen Wert tragen
+    // (gemessen: gruvbox setzt beide auf #282828), dann verschwindet das
+    // Zifferblatt im Feld. Der Rand traegt den Rest.
+    background: activeField ? "var(--bg-selected)" : "var(--bg)",
+    border: "1px solid var(--border)",
     borderRadius: 6,
     cursor: "pointer",
   });
@@ -168,6 +177,7 @@ export function TimePickerDialog({
         layer={layer}
         showCloseButton={false}
         aria-describedby={undefined}
+        aria-modal="true"
         data-time-picker="true"
         style={{
           background: "var(--bg-panel)",
@@ -290,7 +300,11 @@ export function TimePickerDialog({
                 aspectRatio: "1",
                 alignSelf: "center",
                 borderRadius: "50%",
-                background: "var(--bg-subtle)",
+                // Eigene Flaeche statt `--bg-subtle`: der gewaehlte Kreis
+                // traegt `--bg-selected`, und in manchen Paletten ist das
+                // derselbe Farbwert — der Kreis waere unsichtbar.
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
                 touchAction: "none",
                 userSelect: "none",
               }}
@@ -333,6 +347,7 @@ export function TimePickerDialog({
                   borderRadius: "50%",
                   background: "var(--bg-selected)",
                   transform: "translate(-50%, -50%)",
+                  pointerEvents: "none",
                 }}
               />
 

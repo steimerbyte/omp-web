@@ -85,7 +85,12 @@ export function DatePickerDialog({
    * Schritt der neue.
    */
   useEffect(() => {
-    dayRefs.current.get(selected)?.focus();
+    // Erst im naechsten Task: Radix setzt den Fokus beim Oeffnen selbst auf
+    // das erste bedienbare Element, und ein Fokus aus demselben Durchlauf
+    // wird davon wieder ueberschrieben (gemessen: der Fokus stand auf einem
+    // anderen Knopf, die Pfeiltasten liefen ins Leere).
+    const timer = setTimeout(() => dayRefs.current.get(selected)?.focus(), 0);
+    return () => clearTimeout(timer);
   }, [selected, month]);
 
   /** Ein Tag wurde angetippt. */
@@ -95,7 +100,16 @@ export function DatePickerDialog({
 
   /** Pfeiltasten, Bild auf/ab, Pos1/Ende — die Rechnung steht in der Domane. */
   const handleGridKey = (keyEvent: React.KeyboardEvent) => {
-    if (keyEvent.key === "Enter" || keyEvent.key === " ") return;
+    // Enter uebernimmt den Tag. Auf einem Knopf waere es sonst nur ein
+    // zweiter Klick auf denselben Tag, und der Dialog bliebe offen.
+    if (keyEvent.key === "Enter") {
+      keyEvent.preventDefault();
+      confirm();
+      return;
+    }
+    // Die Leertaste waehlt den Tag wie ein Klick — das ist die native
+    // Bedeutung eines Knopfes und bleibt.
+    if (keyEvent.key === " ") return;
     const next = nextPickerDate(selected, keyEvent.key);
     if (next === selected) return;
     keyEvent.preventDefault();
@@ -119,8 +133,6 @@ export function DatePickerDialog({
     onConfirm(selected);
   };
 
-  const cell = PICKER_WIDTH * 0.125;
-
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
       <DialogContent
@@ -128,6 +140,7 @@ export function DatePickerDialog({
         layer={layer}
         showCloseButton={false}
         aria-describedby={undefined}
+        aria-modal="true"
         data-date-picker="true"
         style={{
           background: "var(--bg-panel)",
@@ -161,6 +174,9 @@ export function DatePickerDialog({
             }}
           >
             <DialogTitle style={{ fontSize: PICKER_WIDTH * PICKER_RATIO.year, fontWeight: 500, lineHeight: 1.2 }}>
+              {/* Das Jahr ist die Ueberschrift, die man sieht; der Name des
+                  Dialogs fuer eine Vorlesehilfe ist trotzdem, was er tut. */}
+              <span className="sr-only">{t("calendar.datePicker.title")} </span>
               {year}
             </DialogTitle>
             <span style={{ fontSize: PICKER_WIDTH * PICKER_RATIO.bigDate, lineHeight: 1.1, fontWeight: 400 }}>
@@ -216,13 +232,13 @@ export function DatePickerDialog({
               onKeyDown={handleGridKey}
               style={{
                 display: "grid",
-                // Sieben gleiche Spalten, die schrumpfen duerfen, und eine
-                // Obergrenze von der gemessenen Zellgroesse: auf einem 320 px
-                // breiten Bildschirm wird das Raster kleiner statt
-                // abgeschnitten.
+                // Sieben gleiche Spalten, die schrumpfen duerfen: auf einem
+                // 320 px breiten Bildschirm wird das Raster kleiner statt
+                // abgeschnitten. Kein `margin: auto` — in einer Flexbox
+                // verhindern auto-Ränder das Strecken, und das Raster faellt
+                // auf die Breite seiner Ziffern zusammen (gemessen: 17-px-
+                // Zellen statt 45).
                 gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-                maxWidth: cell * 7,
-                margin: "0 auto",
                 fontSize: PICKER_WIDTH * PICKER_RATIO.day,
               }}
             >

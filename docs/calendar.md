@@ -567,7 +567,9 @@ keinen Ring — er ist ein Hinweis, keine Auswahl; gewählt ist nur, was gefüll
 ist. Die Tage des Nachbarmonats bleiben leer. Die Pfeiltasten laufen über das
 Raster (`nextPickerDate`): links/rechts ein Tag, hoch/runter eine **Zeile**
 (sieben Tage), `Pos1`/`Ende` an Montag und Sonntag der Woche, `Bild auf/ab`
-einen Monat. Wandert die Auswahl über den Monatsrand, blättert der Monat mit.
+einen Monat, `Enter` übernimmt den Tag und schließt die Wahl, `Escape` bricht
+ab. Beim Öffnen liegt der Fokus auf dem gewählten Tag, und `Tab` bleibt im
+Dialog. Wandert die Auswahl über den Monatsrand, blättert der Monat mit.
 
 **Die Uhrzeit.** Oben zwei große Felder (Stunde, Minute), darunter das
 Zifferblatt: außen 0–11, innen 12–23, Minuten als zwölf Fünf-Minuten-Schritte.
@@ -591,9 +593,11 @@ speichern.
 Die Maße der beiden Wahlen stehen in `components/calendar/calendar-picker.ts`
 (`PICKER_RATIO`, gemessen an den Screenshots) und werden mit `PICKER_WIDTH`
 multipliziert; die Komponenten rechnen damit und erfinden keine eigene
-Geometrie. Farben sind ausschließlich Theme-Variablen — die gewählte Fläche
-trägt `--bg-selected`, das Zifferblatt `--bg-subtle` —, damit hell und dunkel
-dasselbe Bild ergeben.
+Geometrie. Farben sind ausschließlich Theme-Variablen — die gewählten Flächen
+tragen `--bg-selected`, Zifferblatt und inaktive Felder `--bg` mit einem Rand —,
+damit hell und dunkel dasselbe Bild ergeben. `--bg-subtle` wäre hier falsch: in
+manchen Paletten (gemessen: gruvbox-amoled) trägt es denselben Wert wie
+`--bg-selected`, und der gewählte Kreis wäre unsichtbar.
 
 ### Die Farbe eines Termins
 
