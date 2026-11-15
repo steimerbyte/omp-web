@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { restoreLinkedomPrototypesOnExit } from "../../lib/test-linkedom.mjs";
 import * as linkedom from "linkedom";
 import React from "react";
 import { createJiti } from "jiti";
@@ -21,6 +22,13 @@ import { createJiti } from "jiti";
 
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
 const win = dom.window;
+// linkedom teilt die Prototypen prozessweit; nach dieser Datei zurueckgeben.
+restoreLinkedomPrototypesOnExit(win);
+// Der geerbte Wert: `restore` stellt genau den wieder her, und der Hook am
+// Dateiende prueft das. `undefined` waere die falsche Erwartung, denn eine
+// fruehere Datei im selben Prozess darf den Patch gesetzt haben.
+const inheritedAttachEvent = win.HTMLElement.prototype.attachEvent;
+const inheritedDetachEvent = win.HTMLElement.prototype.detachEvent;
 const fakeNavigator = { userAgent: "test", languages: ["de-DE"], language: "de-DE", platform: "linux" };
 
 win.getComputedStyle = () => new Proxy({}, {
@@ -609,4 +617,20 @@ test("escape cancels the date picker", async () => {
 
   await press($('[data-date-picker="true"]'), "Escape");
   assert.deepEqual(recorderUnderTest.calls, [{ kind: "cancel" }]);
+});
+
+// Der Rueckbau oben ist eine Zusage, also wird er geprueft: `after`-Hooks
+// laufen in der Reihenfolge ihrer Registrierung, dieser hier damit nach
+// `restoreLinkedomPrototypesOnExit`.
+test.after(() => {
+  assert.equal(
+    win.HTMLElement.prototype.attachEvent,
+    inheritedAttachEvent,
+    "der Prototyp-Patch bleibt nicht am prozessweit geteilten HTMLElement",
+  );
+  assert.equal(
+    win.HTMLElement.prototype.detachEvent,
+    inheritedDetachEvent,
+    "detachEvent bleibt nicht am prozessweit geteilten HTMLElement",
+  );
 });

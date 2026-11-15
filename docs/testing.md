@@ -143,21 +143,36 @@ einen Chip 600 px hoch). `restoreLinkedomPrototypesOnExit(win)` direkt nach
 `parseHTML` aufrufen, vor jedem Patch. `globalThis.window` ist ebenfalls ein
 geteilter Slot: eine Datei darf nur ihren eigenen Stub entfernen.
 
+Nachtrag 2026-11-15 (bun 1.4.4): zwischen **Testdateien** wird nichts mehr
+getragen. Eine Probe-Datei sieht `globalThis.HTMLElement` und `globalThis.document`
+gar nicht erst (`undefined`), auch wenn `calendar-picker-dialogs.test.mjs` im
+selben `bun test`-Lauf mitläuft — weder mit noch ohne Rückbau. Innerhalb *einer*
+Datei gilt das Teilen weiter: zwei `parseHTML`-Fenster haben dieselbe
+`HTMLElement`-Klasse (`a.HTMLElement === b.HTMLElement`), und ein Patch an `a`
+ist an `b` sichtbar (gemessen mit einem Zwei-Fenster-Skript). Der Rückbau bleibt
+deshalb Pflicht — nur wirkt er innerhalb der Datei, nicht mehr zwischen Dateien.
+
 **Ein roter Test ohne Namen (2026-11-15).** Der erste `bun run verify` des Tages
-meldete `1 fail` (`3217 pass`, 399 Dateien, dasselbe Bündel wie zuvor); weil die
-Ausgabe auf `tail -14` gekürzt war, ist der Testname verloren. Drei Vollläufe
-danach — zwei davon direkt hintereinander mit identischem Befehl
-(`OMP_TEST_PARALLEL=2`, `nice -n 19 taskset -c 0-1`) — waren grün:
-`3218 pass / 3 skip / 0 fail` und `✓ Gate bestanden`. Ein grüner Zwischenlauf
-zählte `3217 pass`, also einen Pass weniger bei 0 Failures: der Test wackelt,
-der Stand ist nicht kaputt. Verdacht, kein Nachweis: die beiden großen
-Kalender-Dialog-Dateien (`components/calendar/calendar-event-dialog.test.mjs`,
-`calendar-picker-dialogs.test.mjs`) patchen `HTMLElement.prototype.attachEvent`
-und `detachEvent` (die `HTMLInputElement`-Setter lesen sie nur), ohne
-`restoreLinkedomPrototypesOnExit(win)` zu rufen — entgegen der Regel darüber.
-Wer den Namen braucht: den Lauf ohne Kürzung in eine Datei schreiben und
-`(fail)` greppen; die Kalender-Suite war als Ganzes grün (127 Tests, 8 Dateien),
-`calendar-picker-dialogs.test.mjs` allein 21/21.
+meldete `1 fail` (`3217 pass`, 399 Dateien); weil die Ausgabe auf `tail -14`
+gekürzt war, ist der Testname verloren. Sechs Vollläufe danach waren grün —
+fünf mit `3218 pass`, einer mit `3217 pass`, alle mit `3 skip / 0 fail`,
+`3221 Tests` und `✓ Gate bestanden`; zwei davon direkt hintereinander mit
+identischem Befehl (`OMP_TEST_PARALLEL=2`, `nice -n 19 taskset -c 0-1`). Der
+Lauf mit `3217` zählte einen Pass weniger bei 0 Failures: der Test wackelt, der
+Stand ist nicht kaputt.
+
+Der Verdacht — die beiden großen Kalender-Dialog-Dateien patchen
+`HTMLElement.prototype.attachEvent`/`detachEvent` ohne
+`restoreLinkedomPrototypesOnExit(win)` — ist **widerlegt**: Stubs einer Datei
+erreichen die nächste nicht (Messung im Absatz oben). Die Umstellung ist
+trotzdem drin und mit diesem Eintrag committet, weil sie die Regel erfüllt:
+beide Dateien rufen `restoreLinkedomPrototypesOnExit(win)` direkt nach
+`parseHTML`, und `calendar-picker-dialogs.test.mjs` prüft den Rückbau am
+Dateiende in einem `test.after`-Hook gegen den geerbten Wert. Ein absichtlich
+falscher Erwartungswert macht den Lauf rot (`1 error`, Exit 1, gemessen), der
+Hook ist also ein Wächter und keine Dekoration. Der Flake selbst bleibt
+**offen** und unbenannt: wer ihn braucht, schreibt den Lauf ungekürzt in eine
+Datei und greppt `(fail)`.
 
 ## Wie man einen neuen Test schreibt
 
