@@ -154,9 +154,10 @@ der Stand ist nicht kaputt. Verdacht, kein Nachweis: die beiden großen
 Kalender-Dialog-Dateien (`components/calendar/calendar-event-dialog.test.mjs`,
 `calendar-picker-dialogs.test.mjs`) patchen `HTMLElement.prototype.attachEvent`
 und `detachEvent` (die `HTMLInputElement`-Setter lesen sie nur), ohne
-`restoreLinkedomPrototypesOnExit(win)` zu rufen — entgegen der Regel darüber. Wer den Namen braucht: den Lauf ohne Kürzung
-in eine Datei schreiben und `(fail)` greppen; einzelne Kandidaten einzeln fahren
-(allein war keine Datei rot).
+`restoreLinkedomPrototypesOnExit(win)` zu rufen — entgegen der Regel darüber.
+Wer den Namen braucht: den Lauf ohne Kürzung in eine Datei schreiben und
+`(fail)` greppen; die Kalender-Suite war als Ganzes grün (127 Tests, 8 Dateien),
+`calendar-picker-dialogs.test.mjs` allein 21/21.
 
 ## Wie man einen neuen Test schreibt
 
