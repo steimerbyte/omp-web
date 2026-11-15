@@ -34,6 +34,13 @@ a stale install does not fail the build: it builds green and boots the old SDK
 under the new code. A green verify build therefore says nothing about the
 dependencies. Install in the dev checkout before you run the script.
 
+The script puts `/home/pi/.bun/bin` in its own `PATH` before it builds, because
+`bun run build` starts the `build` script from `package.json`, which calls `bun`
+again. That matters when the script is invoked through `sudo -u pi`: sudo resets
+`PATH` to its `secure_path`, and the rebuild failed with
+`bun: command not found` (127) before the script did this. If you call it from a
+shell that already has bun, the line is a no-op.
+
 `package.json` and the tag must agree *in the source*. The release workflow
 does not check this, and a mismatch ships a release whose tarball reports the
 wrong version.

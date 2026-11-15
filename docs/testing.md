@@ -143,6 +143,21 @@ einen Chip 600 px hoch). `restoreLinkedomPrototypesOnExit(win)` direkt nach
 `parseHTML` aufrufen, vor jedem Patch. `globalThis.window` ist ebenfalls ein
 geteilter Slot: eine Datei darf nur ihren eigenen Stub entfernen.
 
+**Ein roter Test ohne Namen (2026-11-15).** Der erste `bun run verify` des Tages
+meldete `1 fail` (`3217 pass`, 399 Dateien, dasselbe Bündel wie zuvor); weil die
+Ausgabe auf `tail -14` gekürzt war, ist der Testname verloren. Drei Vollläufe
+danach — zwei davon direkt hintereinander mit identischem Befehl
+(`OMP_TEST_PARALLEL=2`, `nice -n 19 taskset -c 0-1`) — waren grün:
+`3218 pass / 3 skip / 0 fail` und `✓ Gate bestanden`. Ein grüner Zwischenlauf
+zählte `3217 pass`, also einen Pass weniger bei 0 Failures: der Test wackelt,
+der Stand ist nicht kaputt. Verdacht, kein Nachweis: die beiden großen
+Kalender-Dialog-Dateien (`components/calendar/calendar-event-dialog.test.mjs`,
+`calendar-picker-dialogs.test.mjs`) patchen `HTMLElement.prototype.attachEvent`
+und `detachEvent` (die `HTMLInputElement`-Setter lesen sie nur), ohne
+`restoreLinkedomPrototypesOnExit(win)` zu rufen — entgegen der Regel darüber. Wer den Namen braucht: den Lauf ohne Kürzung
+in eine Datei schreiben und `(fail)` greppen; einzelne Kandidaten einzeln fahren
+(allein war keine Datei rot).
+
 ## Wie man einen neuen Test schreibt
 
 Datei neben das Modul, `*.test.mjs`, `node:test`-API, ausgeführt von Bun.

@@ -31,6 +31,10 @@ LIVE_DIR="/home/pi/omp-web"
 VERIFY_PORT=8799
 LIVE_PORT=8788
 BUN="/home/pi/.bun/bin/bun"
+# `bun run build` startet das Skript aus package.json, und das ruft selbst
+# `bun` auf: ohne diesen Pfad endet der Rebuild mit 127, sobald das Skript
+# ueber `sudo -u pi` laeuft (sudo setzt PATH auf secure_path).
+export PATH="$(dirname "$BUN"):$PATH"
 LOG_TAG="omp-web-deploy"
 
 LIVE=0
