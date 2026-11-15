@@ -10,6 +10,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useCalendarText } from "./useCalendarText";
+import { DatePickerDialog } from "./DatePickerDialog";
+import { TimePickerDialog } from "./TimePickerDialog";
 import {
   CALENDAR_COLOR_PRESET_LABELS,
   CALENDAR_COLOR_PRESETS,
@@ -139,6 +141,63 @@ function defaultEndTime(presetTime: string | null): string {
   return `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
 }
 
+/**
+ * Die Symbole der beiden Wahlen — Kalenderblatt und Uhr.
+ *
+ * Pfade von Hand, wie im Rest des Kalenders (`DayEventsSheet`): `lucide-react`
+ * waere fuer zwei Symbole eine Abhaengigkeit, die die Kalender-Oberflaeche
+ * sonst nirgends braucht.
+ */
+const PICKER_ICONS: Record<"date" | "time", string> = {
+  date: "M7 2v2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7Zm12 6v11H5V8h14ZM7 10v2h2v-2H7Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Zm-8 4v2h2v-2H7Zm4 0v2h2v-2h-2Z",
+  time: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16Zm-1 3v6l5 3 1-1.7-4-2.3V7h-2Z",
+};
+
+/**
+ * Der Knopf neben einem Feld, der die Datums- oder Uhrzeitwahl oeffnet.
+ *
+ * Auf Modulebene und nicht im Dialog: eine Komponente, die beim Rendern neu
+ * entsteht, ist fuer React ein neuer Typ — sie wuerde das Eingabefeld daneben
+ * bei jedem Tastendruck neu montieren, und ein nicht kontrolliertes Feld
+ * verloere dabei seinen Text. Aussen ist er deshalb an der Konstante.
+ */
+function PickerButton({ kind, which, label, disabled = false, onClick }: {
+  kind: "date" | "time";
+  which: "start" | "end";
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      data-picker-open={kind}
+      data-picker-for={which}
+      style={{
+        flex: "0 0 auto",
+        display: "grid",
+        placeItems: "center",
+        width: 32,
+        height: 32,
+        color: "var(--text-muted)",
+        background: "var(--bg)",
+        border: "1px solid var(--border)",
+        borderRadius: 7,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d={PICKER_ICONS[kind]} />
+      </svg>
+    </button>
+  );
+}
+
 export function CalendarEventDialog({
   event,
   preset,
@@ -248,6 +307,17 @@ export function CalendarEventDialog({
   const [endTouched, setEndTouched] = useState(false);
 
   /**
+   * Die geoeffnete Datums- oder Uhrzeitwahl, oder `null`.
+   *
+   * Die Wahl ist ein *zweiter* Dialog ueber diesem: sie schreibt in dasselbe
+   * Feld, das der Nutzer sonst tippt, und geht durch dieselbe Pruefung
+   * (`handleDateInput` / `handleTimeInput`). Deshalb gibt es hier keinen
+   * zweiten Weg zu einem gueltigen Termin — nur einen zweiten Weg, denselben
+   * Wert einzugeben.
+   */
+  const [picker, setPicker] = useState<{ kind: "date" | "time"; which: "start" | "end" } | null>(null);
+
+  /**
    * Das Formular an den bearbeiteten Termin anpassen.
    *
    * Der Vergleich laeuft ueber die Kennung, nicht ueber die Objektidentitaet:
@@ -271,6 +341,7 @@ export function CalendarEventDialog({
     setEndDate(nextEndDate);
     setEndTime(nextEndTime);
     setEndTouched(false);
+    setPicker(null);
     setColor(nextColor);
     setCustomOpen(nextHex !== "");
     setHexText(nextHex);
@@ -365,6 +436,39 @@ export function CalendarEventDialog({
     const field = which === "start" ? startDateRef : endDateRef;
     const normalized = normalizeDateInput(field.current?.value ?? "");
     if (normalized) field.current!.value = formatGermanDate(normalized);
+  };
+
+  /**
+   * Ein Tag aus der Datumswahl.
+   *
+   * Der Wert geht durch `handleDateInput`, also durch dieselbe Pruefung wie
+   * ein getipptes Datum; das Feld zeigt danach die deutsche Form, so wie
+   * nach dem Verlassen eines getippten Feldes. Ein zweiter Weg am Formular
+   * vorbei waere die Stelle, an der die beiden Wege spaeter verschiedene
+   * Termine erzeugen.
+   */
+  const applyPickedDate = (which: "start" | "end", date: string) => {
+    const text = formatGermanDate(date);
+    const field = which === "start" ? startDateRef : endDateRef;
+    if (field.current) field.current.value = text;
+    handleDateInput(which, text);
+    // Ein Beginn *nach* dem Ende waere ein Termin, den niemand gemeint hat —
+    // und das Formular liesse ihn nicht speichern. Wer den Tag nach vorne
+    // legt, meint den Termin an diesem Tag; das Ende wandert deshalb mit,
+    // wie es beim Zeitfeld schon mitwandert.
+    if (which === "start" && endDate !== null && endDate < date) {
+      if (endDateRef.current) endDateRef.current.value = text;
+      handleDateInput("end", text);
+    }
+    setPicker(null);
+  };
+
+  /** Eine Uhrzeit aus der Uhrzeitwahl — dieselbe Regel wie oben. */
+  const applyPickedTime = (which: "start" | "end", time: string) => {
+    const field = which === "start" ? startTimeRef : endTimeRef;
+    if (field.current) field.current.value = time;
+    handleTimeInput(which, time);
+    setPicker(null);
   };
 
   /**
@@ -522,6 +626,9 @@ export function CalendarEventDialog({
    */
   const releasedStyle = { opacity: 0.45, cursor: "not-allowed" as const };
 
+  /** Das Feld und der Knopf, der die Wahl dazu oeffnet, in einer Zeile. */
+  const fieldRowStyle = { display: "flex", alignItems: "center", gap: 6, minWidth: 0 };
+
   const timeInvalid = startTime === null || endTime === null;
   const dateInvalid = startDate === null || endDate === null;
   const hexInvalid = hexText !== "" && !isCalendarHexColor(hexText);
@@ -676,64 +783,98 @@ export function CalendarEventDialog({
             >
               <div style={{ minWidth: 0 }}>
                 <label style={labelStyle} htmlFor="calendar-start-date">{t("calendar.eventStart")}</label>
-                <input
-                  id="calendar-start-date"
-                  ref={startDateRef}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  defaultValue={formatGermanDate(startDate ?? preset.date)}
-                  onChange={(inputEvent) => handleDateInput("start", inputEvent.target.value)}
-                  onBlur={() => handleDateBlur("start")}
-                  aria-label={t("calendar.eventStartDate")}
-                  pattern="\d{1,2}\.\d{1,2}\.\d{4}"
-                  style={inputStyle}
-                />
-                <input
-                  ref={startTimeRef}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  defaultValue={startTime ?? "09:00"}
-                  onChange={(inputEvent) => handleTimeInput("start", inputEvent.target.value)}
-                  onBlur={() => handleTimeBlur("start")}
-                  aria-label={t("calendar.eventStartTime")}
-                  pattern="([01]\d|2[0-3]):[0-5]\d"
-                  disabled={allDay}
-                  style={{ ...inputStyle, marginTop: 6, ...(allDay ? releasedStyle : null) }}
-                />
+                <div style={fieldRowStyle}>
+                  <input
+                    id="calendar-start-date"
+                    ref={startDateRef}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    defaultValue={formatGermanDate(startDate ?? preset.date)}
+                    onChange={(inputEvent) => handleDateInput("start", inputEvent.target.value)}
+                    onBlur={() => handleDateBlur("start")}
+                    aria-label={t("calendar.eventStartDate")}
+                    pattern="\d{1,2}\.\d{1,2}\.\d{4}"
+                    style={{ ...inputStyle, flex: "1 1 auto" }}
+                  />
+                  <PickerButton
+                    kind="date"
+                    which="start"
+                    label={t("calendar.datePicker.title")}
+                    onClick={() => setPicker({ kind: "date", which: "start" })}
+                  />
+                </div>
+                <div style={{ ...fieldRowStyle, marginTop: 6 }}>
+                  <input
+                    ref={startTimeRef}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    defaultValue={startTime ?? "09:00"}
+                    onChange={(inputEvent) => handleTimeInput("start", inputEvent.target.value)}
+                    onBlur={() => handleTimeBlur("start")}
+                    aria-label={t("calendar.eventStartTime")}
+                    pattern="([01]\d|2[0-3]):[0-5]\d"
+                    disabled={allDay}
+                    style={{ ...inputStyle, flex: "1 1 auto", ...(allDay ? releasedStyle : null) }}
+                  />
+                  <PickerButton
+                    kind="time"
+                    which="start"
+                    label={t("calendar.timePicker.title")}
+                    onClick={() => setPicker({ kind: "time", which: "start" })}
+                    disabled={allDay}
+                  />
+                </div>
                 {dateInvalid ? <span style={errorStyle}>{t("calendar.invalidDate")}</span> : null}
                 {!allDay && timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
                 <span style={hintStyle}>{t("calendar.dateFormatHint")}</span>
               </div>
               <div style={{ minWidth: 0 }}>
                 <label style={labelStyle} htmlFor="calendar-end-date">{t("calendar.eventEnd")}</label>
-                <input
-                  id="calendar-end-date"
-                  ref={endDateRef}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  defaultValue={formatGermanDate(endDate ?? preset.date)}
-                  onChange={(inputEvent) => handleDateInput("end", inputEvent.target.value)}
-                  onBlur={() => handleDateBlur("end")}
-                  aria-label={t("calendar.eventEndDate")}
-                  pattern="\d{1,2}\.\d{1,2}\.\d{4}"
-                  style={inputStyle}
-                />
-                <input
-                  ref={endTimeRef}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  defaultValue={endTime ?? "10:00"}
-                  onChange={(inputEvent) => handleTimeInput("end", inputEvent.target.value)}
-                  onBlur={() => handleTimeBlur("end")}
-                  aria-label={t("calendar.eventEndTime")}
-                  pattern="([01]\d|2[0-3]):[0-5]\d"
-                  disabled={allDay}
-                  style={{ ...inputStyle, marginTop: 6, ...(allDay ? releasedStyle : null) }}
-                />
+                <div style={fieldRowStyle}>
+                  <input
+                    id="calendar-end-date"
+                    ref={endDateRef}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    defaultValue={formatGermanDate(endDate ?? preset.date)}
+                    onChange={(inputEvent) => handleDateInput("end", inputEvent.target.value)}
+                    onBlur={() => handleDateBlur("end")}
+                    aria-label={t("calendar.eventEndDate")}
+                    pattern="\d{1,2}\.\d{1,2}\.\d{4}"
+                    style={{ ...inputStyle, flex: "1 1 auto" }}
+                  />
+                  <PickerButton
+                    kind="date"
+                    which="end"
+                    label={t("calendar.datePicker.title")}
+                    onClick={() => setPicker({ kind: "date", which: "end" })}
+                  />
+                </div>
+                <div style={{ ...fieldRowStyle, marginTop: 6 }}>
+                  <input
+                    ref={endTimeRef}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    defaultValue={endTime ?? "10:00"}
+                    onChange={(inputEvent) => handleTimeInput("end", inputEvent.target.value)}
+                    onBlur={() => handleTimeBlur("end")}
+                    aria-label={t("calendar.eventEndTime")}
+                    pattern="([01]\d|2[0-3]):[0-5]\d"
+                    disabled={allDay}
+                    style={{ ...inputStyle, flex: "1 1 auto", ...(allDay ? releasedStyle : null) }}
+                  />
+                  <PickerButton
+                    kind="time"
+                    which="end"
+                    label={t("calendar.timePicker.title")}
+                    onClick={() => setPicker({ kind: "time", which: "end" })}
+                    disabled={allDay}
+                  />
+                </div>
                 {dateInvalid ? <span style={errorStyle}>{t("calendar.invalidDate")}</span> : null}
                 {!allDay && timeInvalid ? <span style={errorStyle}>{t("calendar.invalidTime")}</span> : null}
                 {rangeInvalid ? <span style={errorStyle}>{t("calendar.invalidRange")}</span> : null}
@@ -1063,6 +1204,27 @@ export function CalendarEventDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+
+      {/* Die Wahl liegt *ueber* diesem Dialog: sie schreibt in ein Feld, das
+          hier steht, und muss deshalb sichtbar bleiben, waehrend sie offen
+          ist. `layer` hebt sie ueber das Fenster darunter. */}
+      {picker ? (
+        picker.kind === "date" ? (
+          <DatePickerDialog
+            value={picker.which === "start" ? startDate : endDate}
+            onCancel={() => setPicker(null)}
+            onConfirm={(date) => applyPickedDate(picker.which, date)}
+            layer={60}
+          />
+        ) : (
+          <TimePickerDialog
+            value={picker.which === "start" ? startTime : endTime}
+            onCancel={() => setPicker(null)}
+            onConfirm={(time) => applyPickedTime(picker.which, time)}
+            layer={60}
+          />
+        )
+      ) : null}
     </Dialog>
   );
 }

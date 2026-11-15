@@ -544,6 +544,57 @@ Grenze zum Kalenderformat, in `normalizeTimeInput()` und
 `14.3.2026` und `14.03.2026` beide `2026-03-14`. Beim Verlassen des Feldes
 bekommt der Text seine endgültige Form.
 
+### Die Datums- und Uhrzeitwahl
+
+Neben jedem Datums- und Zeitfeld steht ein Knopf, der die **Wahl** öffnet:
+das Zifferblatt für die Uhrzeit, das Monatsraster für das Datum. Beide haben
+dieselbe Form wie in der Android-Vorlage. Die Android-Hülle bleibt dabei
+unberührt: die Oberfläche läuft im Browser, die App zeigt dieselben Dialoge in
+ihrem Engine-Fenster — ohne eigenen Code dafür.
+
+Beide Wahlen sind ein **zweiter Weg zu demselben Wert**, nicht ein zweiter
+Wert: sie schreiben in dasselbe Feld und laufen durch dieselbe Prüfung
+(`applyPickedDate` / `applyPickedTime` → `normalizeDateInput` /
+`normalizeTimeInput`). Damit gibt es genau eine Stelle, an der ein Termin
+gültig wird.
+
+**Das Datum.** Kopfband mit Jahr und gewähltem Tag in Worten („Mi., 18. Nov."),
+darunter Monat mit zwei Pfeilen, die Wochentags-Initialen `M D M D F S S` und
+ein Raster aus **sechs** Wochen. Die Sechs-Zeilen-Regel ist dieselbe wie in
+der Monatsansicht: ein Monat mit vier Wochen springt beim Blättern sonst unter
+dem Finger weg. Der heutige Tag ist **blasser** als die anderen und trägt
+keinen Ring — er ist ein Hinweis, keine Auswahl; gewählt ist nur, was gefüllt
+ist. Die Tage des Nachbarmonats bleiben leer. Die Pfeiltasten laufen über das
+Raster (`nextPickerDate`): links/rechts ein Tag, hoch/runter eine **Zeile**
+(sieben Tage), `Pos1`/`Ende` an Montag und Sonntag der Woche, `Bild auf/ab`
+einen Monat. Wandert die Auswahl über den Monatsrand, blättert der Monat mit.
+
+**Die Uhrzeit.** Oben zwei große Felder (Stunde, Minute), darunter das
+Zifferblatt: außen 0–11, innen 12–23, Minuten als zwölf Fünf-Minuten-Schritte.
+Die gewählte Zahl sitzt in einem gefüllten Kreis, ein Zeiger verbindet sie mit
+der Mitte. Wie in der Vorlage sind es **zwei Schritte** — erst die Stunde,
+dann die Minute; wer zurück will, tippt auf das Stundenfeld. Der Knopf unten
+links schaltet auf **Tippen** um: dort nimmt das Feld jede Form an, die das
+Kalenderformat kennt (`930` ist `09:30`, `16:3` ist `16:03`), und ein
+unbrauchbarer Text wird begründet statt bestätigt.
+
+Auf dem Zifferblatt **rasten** die Minuten auf fünf Minuten: `16:37` tippt man,
+es zeigt sich als Punkt zwischen 35 und 40. Eine gerastete Minute, die niemand
+gemeint hat, wäre schlimmer als ein Zifferblatt, das nur die Schritte kennt.
+
+Dieselbe Regel wie beim Tippen gilt auch für die Nachbarn der Wahl: eine neue
+Beginnzeit zieht das Ende mit (solange es nicht selbst gesetzt wurde), und ein
+gewählter Beginn **nach** dem bisherigen Ende zieht das Enddatum mit — sonst
+wäre der Termin unmittelbar nach der Wahl ungültig und ließe sich nicht
+speichern.
+
+Die Maße der beiden Wahlen stehen in `components/calendar/calendar-picker.ts`
+(`PICKER_RATIO`, gemessen an den Screenshots) und werden mit `PICKER_WIDTH`
+multipliziert; die Komponenten rechnen damit und erfinden keine eigene
+Geometrie. Farben sind ausschließlich Theme-Variablen — die gewählte Fläche
+trägt `--bg-selected`, das Zifferblatt `--bg-subtle` —, damit hell und dunkel
+dasselbe Bild ergeben.
+
 ### Die Farbe eines Termins
 
 Ein Termin kann farblich markiert werden. Der Dialog bietet fünf

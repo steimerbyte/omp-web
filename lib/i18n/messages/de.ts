@@ -1006,5 +1006,12 @@ export const deLocale: LocalePlugin = {
     "calendar.import.errorForbidden": "Zugriff auf den Kalender verweigert",
     "calendar.import.errorTooLarge": "Die Datei ist zu groß (höchstens {max} MB)",
     "calendar.import.errorFailed": "Der Import ist fehlgeschlagen",
+    "calendar.datePicker.title": "Datum auswählen",
+    "calendar.timePicker.title": "Uhrzeit auswählen",
+    "calendar.picker.hour": "Stunde",
+    "calendar.picker.minute": "Minute",
+    "calendar.picker.keyboard": "Tippen statt wählen",
+    "calendar.picker.previousMonth": "Voriger Monat",
+    "calendar.picker.nextMonth": "Nächster Monat",
   },
 };

@@ -775,3 +775,154 @@ test("ein Termin ueber Mitternacht braucht das Enddatum des naechsten Tages", as
     "ein gueltiger Termin ueber Mitternacht wurde als Fehler gemeldet",
   );
 });
+
+// --- Die beiden Wahlen ------------------------------------------------------
+// Der Dialog traegt neben jedem Datums- und Zeitfeld einen Knopf, der die
+// Wahl oeffnet. Sie schreibt in dasselbe Feld, das der Nutzer sonst tippt —
+// deshalb wird hier nicht der Wert der Wahl geprueft, sondern was am Ende
+// **gespeichert** wird. Genau dazwischen liegt der Weg, den ein Fehler
+// nehmen wuerde: ein Feld, das den Wert nur anzeigt, aber nicht kennt.
+
+/** Der Knopf, der die Wahl neben einem Feld oeffnet. */
+const wahlKnopf = (kind, which) => win.document.querySelector(`[data-picker-open="${kind}"][data-picker-for="${which}"]`);
+
+/** Ein Klick, wie ihn ein Finger ausloest. */
+async function click(element) {
+  assert.ok(element, "das Element, das geklickt werden soll, gibt es nicht");
+  await act(async () => { element.click(); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+}
+
+/**
+ * Ein Knopf **innerhalb** der offenen Wahl.
+ *
+ * „Abbrechen" gibt es zweimal, sobald die Wahl offen ist: im Termin-Dialog
+ * und in der Wahl. Gesucht wird hier in der Wahl, sonst klickt der Test den
+ * Termin-Dialog zu und die Wahl bleibt stehen.
+ */
+const wahlButton = (text) =>
+  [...win.document.querySelectorAll('[data-time-picker="true"] button, [data-date-picker="true"] button')]
+    .find((node) => node.textContent.trim() === text);
+
+/** Das Formular der offenen Wahl abschicken (linkedom kennt die implizite Absendung nicht). */
+async function submitPicker() {
+  const panel = win.document.querySelector('[data-time-picker="true"], [data-date-picker="true"]');
+  assert.ok(panel, "die Wahl ist nicht offen");
+  await act(async () => {
+    panel.querySelector("form").dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+}
+
+test("ein gewaehltes Datum steht im Feld und wird gespeichert", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: "14:00" },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  await click(wahlKnopf("date", "start"));
+  assert.ok(win.document.querySelector('[data-date-picker="true"]'), "die Datumswahl ist nicht aufgegangen");
+  await click(win.document.querySelector('[data-picker-day="2026-03-20"]'));
+  await submitPicker();
+
+  assert.equal(win.document.querySelector('[data-date-picker="true"]'), null, "die Wahl ist nicht zugegangen");
+  assert.equal(byId("calendar-start-date").value, "20.03.2026", "das Feld zeigt nicht den gewaehlten Tag");
+
+  // Das Ende lag auf dem 14. und wandert mit: ein Termin, dessen Ende vor
+  // dem Beginn liegt, liesse sich nicht speichern.
+  assert.equal(byId("calendar-end-date").value, "20.03.2026");
+
+  await submitWithTitle("Termin am 20.");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].start, "2026-03-20T14:00");
+  assert.equal(saved[0].end, "2026-03-20T15:00");
+});
+
+test("eine gewaehlte Beginnzeit zieht das Ende mit", async () => {
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: "14:00" },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  await click(wahlKnopf("time", "start"));
+  await click(win.document.querySelector('[data-picker-value="16"]'));
+  await click(win.document.querySelector('[data-picker-value="30"]'));
+  await submitPicker();
+
+  assert.equal(startZeitFeld().value, "16:30");
+  // Das Ende ist nicht gesetzt worden und wandert deshalb mit — dieselbe
+  // Regel wie beim Tippen (`defaultEndTime`).
+  assert.equal(endZeitFeld().value, "17:30");
+
+  await submitWithTitle("Termin um halb fünf");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].start, "2026-03-14T16:30");
+  assert.equal(saved[0].end, "2026-03-14T17:30");
+});
+
+test("ein Ganztagestermin oeffnet die Uhrzeitwahl nicht", async () => {
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: "14:00" },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  const ganztaegig = win.document.querySelector('input[type="checkbox"]');
+  // `checked` vor dem Klick setzen: linkedom legt den Haekchenzustand nicht
+  // selbst um — React liest ihn beim Klick aus dem Element.
+  await act(async () => {
+    ganztaegig.checked = true;
+    ganztaegig.dispatchEvent(new win.Event("click", { bubbles: true }));
+  });
+  await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+  assert.equal(wahlKnopf("time", "start").disabled, true, "die Uhrzeitwahl ist trotz Ganztagestermin erreichbar");
+  assert.equal(wahlKnopf("time", "end").disabled, true, "die Uhrzeitwahl des Endes ist erreichbar");
+  // Das Datum bleibt waehlbar — ein Ganztagestermin hat eines.
+  assert.equal(wahlKnopf("date", "start").disabled, false);
+
+  // Und die Wahl des *Endes* oeffnet dasselbe Raster: ein Abbruch laesst
+  // alles, wie es war.
+  await click(wahlKnopf("date", "end"));
+  assert.ok(win.document.querySelector('[data-date-picker="true"]'), "die Datumswahl des Endes ist nicht aufgegangen");
+  await click(wahlButton(deMessages["common.cancel"]));
+  assert.equal(win.document.querySelector('[data-date-picker="true"]'), null, "die Wahl ist nicht zugegangen");
+  assert.equal(byId("calendar-end-date").value, "14.03.2026", "der Abbruch hat das Feld veraendert");
+});
+
+test("die Uhrzeitwahl des Endes laesst sich ohne Aenderung schliessen", async () => {
+  await mount(React.createElement(CalendarEventDialog, {
+    event: {
+      id: "e1", title: "Teammeeting", allDay: false,
+      start: "2026-03-14T15:00", end: "2026-03-14T16:30",
+    },
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  await click(wahlKnopf("time", "end"));
+  assert.ok(win.document.querySelector('[data-time-picker="true"]'), "die Uhrzeitwahl des Endes ist nicht aufgegangen");
+  // Die Wahl des Endes zeigt die Endzeit, nicht die des Beginns.
+  assert.equal(win.document.querySelector('[data-picker-field="hour"]').textContent.trim(), "16");
+  assert.equal(win.document.querySelector('[data-picker-field="minute"]').textContent.trim(), "30");
+
+  await click(wahlButton(deMessages["common.cancel"]));
+  assert.equal(win.document.querySelector('[data-time-picker="true"]'), null, "die Wahl ist nicht zugegangen");
+  assert.equal(endZeitFeld().value, "16:30", "der Abbruch hat das Feld veraendert");
+});
