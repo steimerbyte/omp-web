@@ -325,3 +325,166 @@ test("the real clock comes back at the end", () => {
   globalThis.Date.now = realNow;
   assert.equal(typeof Date.now(), "number");
 });
+
+test("a term far in the future arms the timer at the maximum delay", async () => {
+  // 40 Tage entfernt — mehr, als `setTimeout` kann (2^31 − 1 ms ≈ 24,8 Tage).
+  // Der Hook muss klemmen und sich am Ende neu stellen; ein Delay von 40 Tagen
+  // wuerde im Browser sofort feuern statt in 40 Tagen.
+  clock = at(2026, 3, 14, 12, 0);
+  reset("granted");
+  const far = reminderEvent({
+    id: "ev-far",
+    start: "2026-04-23T15:00",
+    end: "2026-04-23T16:00",
+  });
+  const delays = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay, ...rest) => {
+    delays.push(Number(delay));
+    return realSetTimeout(callback, delay, ...rest);
+  };
+  let root;
+  try {
+    ({ root } = await mount([far]));
+    assert.equal(shown.length, 0);
+    assert.ok(
+      delays.includes(2 ** 31 - 1),
+      `kein Maximum in den Delays: ${delays.join(", ")}`,
+    );
+    assert.ok(
+      delays.every((delay) => delay <= 2 ** 31 - 1),
+      "kein Delay ueber der Grenze von setTimeout",
+    );
+  } finally {
+    if (root) await unmount(root);
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+test("two wake-up events in a row show the reminder once", async () => {
+  // `visibilitychange` und `focus` hoeren beide auf denselben Rueckweg. Ein
+  // Tab, der zurueckkommt, meldet oft beide — die Erinnerung darf trotzdem
+  // nur einmal erscheinen, und dafuer sorgt der Schluessel im Speicher.
+  clock = REMINDER_AT - 3_600_000;
+  reset("granted");
+  const { root } = await mount([reminderEvent()]);
+  try {
+    assert.equal(shown.length, 0);
+    clock = REMINDER_AT + 1_000;
+    await act(async () => {
+      win.document.dispatchEvent(new win.Event("visibilitychange"));
+      win.dispatchEvent(new win.Event("focus"));
+    });
+    assert.equal(shown.length, 1, "der zweite Weckruf zeigt dieselbe Erinnerung nicht noch einmal");
+  } finally {
+    await unmount(root);
+  }
+});
+
+test("two tabs share the dedupe through the same storage", async () => {
+  // Zwei Tabs desselben Origins teilen `localStorage`. Tab A feuert, Tab B
+  // liest den Schluessel beim naechsten Tick und schweigt — `tag` waere nur
+  // die zweite Sicherung.
+  clock = REMINDER_AT - 3_600_000;
+  reset("granted");
+  const tabA = await mount([reminderEvent()]);
+  const tabB = await mount([reminderEvent()]);
+  try {
+    clock = REMINDER_AT + 1_000;
+    await act(async () => {
+      win.document.dispatchEvent(new win.Event("visibilitychange"));
+    });
+    assert.equal(shown.length, 1, "Tab B hat den Schluessel von Tab A gelesen");
+    assert.equal(storage.get("omp-calendar-fired").includes(`ev-1@${REMINDER_AT}`), true);
+  } finally {
+    await unmount(tabA.root);
+    await unmount(tabB.root);
+  }
+});
+
+test("a broken storage neither crashes nor blocks the notification", async () => {
+  // `localStorage` ist eine Datei, die ein Nutzer bearbeiten kann. Was dort
+  // nicht steht, ist kein Grund, den Kalender sterben zu lassen.
+  clock = REMINDER_AT + 30_000;
+  reset("granted");
+  storage.set("omp-calendar-fired", "{kein json");
+  const { root } = await mount([reminderEvent()]);
+  try {
+    assert.equal(shown.length, 1, "kaputtes JSON: die Erinnerung kommt trotzdem");
+    assert.deepEqual(
+      JSON.parse(storage.get("omp-calendar-fired")),
+      [`ev-1@${REMINDER_AT}`],
+      "der Speicher ist danach wieder lesbar",
+    );
+    // Und die Dedupe greift wieder: der naechste Weckruf schweigt.
+    await act(async () => {
+      win.document.dispatchEvent(new win.Event("visibilitychange"));
+    });
+    assert.equal(shown.length, 1, "nach dem Aufraeumen zaehlt der Schluessel wieder");
+  } finally {
+    await unmount(root);
+  }
+});
+
+test("a storage that refuses writes does not block the notification", async () => {
+  // Voller Speicher (QuotaExceededError) oder ein gesperrter Speicher: die
+  // Benachrichtigung darf daran nicht scheitern.
+  clock = REMINDER_AT + 30_000;
+  reset("granted");
+  const realSetItem = win.localStorage.setItem;
+  win.localStorage.setItem = () => {
+    throw new Error("QuotaExceededError");
+  };
+  let root;
+  try {
+    ({ root } = await mount([reminderEvent()]));
+    assert.equal(shown.length, 1, "die Benachrichtigung entsteht auch ohne schreibbaren Speicher");
+    // Ohne Speicher kann der Schluessel nicht ueberleben: der naechste Weckruf
+    // zeigt die Erinnerung erneut — aber mit demselben `tag`, damit der
+    // Browser sie ersetzt statt zu stapeln.
+    await act(async () => {
+      win.document.dispatchEvent(new win.Event("visibilitychange"));
+    });
+    assert.equal(shown.length, 2);
+    assert.equal(shown[1].options.tag, shown[0].options.tag);
+  } finally {
+    if (root) await unmount(root);
+    win.localStorage.setItem = realSetItem;
+  }
+});
+
+test("hasUpcoming follows the events and is not frozen at the first render", async () => {
+  // Der Knopf haengt an dieser Zahl: sie muss nach einer Aenderung der
+  // Terminliste neu gerechnet werden — und sie bleibt `true`, wenn die
+  // Erlaubnis erteilt wird (dort verschwindet der Knopf ueber die Erlaubnis,
+  // nicht ueber diese Zahl).
+  clock = REMINDER_AT + 86_400_000;
+  reset("default");
+  const sink = { current: null };
+  const container = win.document.createElement("div");
+  win.document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(React.createElement(Probe, { sink, events: [reminderEvent()] }));
+    });
+    assert.equal(sink.current.hasUpcoming, false, "der einzige Zeitpunkt ist vorbei");
+
+    const later = reminderEvent({ id: "ev-later", start: "2026-03-20T15:00", end: "2026-03-20T16:00" });
+    await act(async () => {
+      root.render(React.createElement(Probe, { sink, events: [reminderEvent(), later] }));
+    });
+    assert.equal(sink.current.hasUpcoming, true, "ein kuenftiger Termin kommt dazu");
+
+    FakeNotification.requestPermission = () => {
+      FakeNotification.permission = "granted";
+      return Promise.resolve("granted");
+    };
+    sink.current.requestPermission();
+    await tick();
+    assert.equal(sink.current.permission, "granted");
+    assert.equal(sink.current.hasUpcoming, true, "die Erlaubnis aendert die Zahl nicht");
+  } finally {
+    await unmount(root);
+  }
+});
