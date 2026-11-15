@@ -919,6 +919,8 @@ export const deLocale: LocalePlugin = {
     "calendar.open": "Kalender öffnen",
     "calendar.short": "Kalender",
     "calendar.newEvent": "Neuer Termin",
+    "calendar.reminders.enable": "Erinnerungen erlauben",
+    "calendar.reminders.hint": "Der Kalender erinnert dich an Termine, solange dieser Tab offen ist.",
     "calendar.editEvent": "Termin bearbeiten",
     "calendar.deleteEvent": "Termin löschen",
     "calendar.deleteConfirm": "„{title}“ wirklich löschen?",

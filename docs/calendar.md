@@ -758,6 +758,56 @@ und der Abonnent vergleicht deren Benutzernamen mit dem eigenen. Das lässt
 sich in einem prozess-globalen Broadcast nicht entscheiden — dort kennt der
 Broadcast nur die Identität, die geschrieben hat, nicht die, die zuhört.
 
+### Erinnerungen im Browser
+
+Ein Termin kann Erinnerungen tragen (Feld `reminders`): Minuten vor dem
+Beginn bei einem Termin mit Uhrzeit, Tage und Uhrzeit bei einem
+Ganztagstermin. Der offene Client spielt sie als **Browser-Notifications** ab.
+
+Voraussetzungen: ein Browser mit der Notification-API, die Erlaubnis des
+Nutzers — und ein **offener Tab**. Ohne Erlaubnis passiert nichts, und der
+Kalender fragt auch nicht von selbst: `Notification.requestPermission()`
+außerhalb einer Nutzerinteraktion blockt Chrome weg. Deshalb steht in der
+Kopfzeile ein Knopf „Erinnerungen erlauben", und der erscheint nur, wenn der
+Browser noch nicht gefragt hat (`Notification.permission === "default"`) und
+es überhaupt eine künftige Erinnerung gibt.
+
+#### Was bei geschlossenem Tab passiert: nichts
+
+Es gibt keinen Service Worker und kein Push. Die Benachrichtigung entsteht im
+Client, also nur solange der Tab offen ist. Ein Termin, der in der Nacht
+fällig wird, wird am nächsten Morgen **nicht** nachgeholt: eine Erinnerung,
+die mehr als zehn Minuten vorbei ist, fällt weg (`REMINDER_GRACE_MS` in
+`lib/calendar-reminders.ts`). Diese Grenze ist der Grund, warum ein Tab, der
+über Nacht im Hintergrund lag, beim Aufwachen keinen Schwall alter
+Benachrichtigungen zeigt.
+
+#### Der Timer steht auf dem nächsten Zeitpunkt
+
+Der Hook (`hooks/useCalendarReminders.ts`) pollt nicht: er stellt einen
+`setTimeout` auf den nächsten fälligen Zeitpunkt (`nextReminderAt`). Nur ein
+Tab-Wechsel oder ein Fokus (`visibilitychange`, `focus`) stellt die Uhr neu —
+dort kann eine Erinnerung verpasst worden sein. `setTimeout` kennt höchstens
+24,8 Tage; ein weiter entfernter Termin weckt den Tab an dieser Grenze und
+stellt sich neu.
+
+#### Dedupe: der Schlüssel und `tag`
+
+Jede Erinnerung hat einen stabilen Schlüssel: Termin-Kennung und Zeitpunkt,
+`${id}@${atMs}`. Er wandert in `localStorage` (`omp-calendar-fired`), damit
+ein Neuladen nicht doppelt feuert, und in `tag` der Notification-API, damit
+zwei Tabs mit demselben Kalender sich in der Mitteilungszentrale ersetzen
+statt zu doppeln. Schlüssel, die älter als ein Tag sind, werden beim nächsten
+Schreiben entfernt.
+
+Was **nicht** passiert: eine Erinnerung wird nicht als gelesen markiert, und
+der Kalender zählt sie nicht. Der Speicher ist ein Verlauf, kein Zustand.
+
+Zwei Regeln des Vertrags, die der Client nur liest: fehlt das Feld
+`reminders`, gilt der Altbestand (fünf Minuten vorher, ganztags 08:00 am Tag
+selbst) — ein Termin von vor der Einführung erinnert also mit demselben
+Vorlauf. Ein leeres Array heißt bewusst „keine Erinnerung".
+
 ---
 
 ## 5. Die API
@@ -1125,6 +1175,8 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 | `app/api/calendar/events/route.ts` | Der SSE-Strom. |
 | `app/globals.css` | Die Theme-Variablen — und dort auch `--violet`, die fünfte Preset-Farbe, in beiden Themes. |
 | `hooks/useCalendar.ts` | Laden, Schreiben und die Verbindung zum SSE-Strom. |
+| `hooks/useCalendarReminders.ts` | Die Bindung der Erinnerungen an den Browser: Timer auf den nächsten Zeitpunkt, Erlaubnis aus einem Klick, `localStorage` gegen doppelte Benachrichtigungen. |
+| `lib/calendar-reminders.ts` | Welche Erinnerung wann fällig ist, der nächste Zeitpunkt und die deutschen Texte — ohne DOM und ohne `fs`, damit ein Test ohne Fenster rechnen kann. |
 | `components/CalendarView.tsx` | Die Oberfläche. |
 | `components/calendar/calendar-model.ts` | Die Rechenlogik der Anzeige: wo ein Termin sitzt, wie lang er ist, wie er verschoben wird — und welche Termine zu einem Tag gehören (`eventsForDay`). |
 | `components/calendar/CalendarEventDialog.tsx` | Der Dialog zum Anlegen und Bearbeiten eines Termins. |
@@ -1153,6 +1205,8 @@ Der Kalender ist pro Konto getrennt, an drei Stellen:
 | `components/calendar/calendar-import.test.mjs` | Der Import der Oberfläche: der erste Request liest nur und schreibt nichts, „Importieren" schickt `apply: true`, eine zu große Datei erzeugt keinen Request, der Serverfehler steht **im Dialog**, der Statuscode nennt die deutsche Überschrift, eine Datei ohne Termine wird als solche gemeldet, und die Zahl steht im richtigen Numerus. Der Block „Diese Angaben wurden nicht übernommen" erscheint **nur**, wenn ein Zähler über null liegt, und die Vorschau nennt alle neun verworfenen Formate mit ihrem deutschen Namen statt eines Rohschlüssels. Ebenso die Grenze von 4000 Zeichen für Notiz und Ort, mit der Warnung in der Vorschau. |
 | `components/calendar/calendar-view.test.mjs` | Die verdrahtete Ansicht: Ziehen im Monats- und im Wochenraster, ein Klick auf einen Tag öffnet überall die Tagesübersicht (auch leer), der Tagesknopf trägt Datum und Zahl der Termine in seinem Namen, der Knopf „Termin hinzufügen" legt am Tag der Übersicht an, die Übersicht gibt den Fokus an die Zelle zurück, und der Servertext erscheint nicht unübersetzt. |
 | `components/calendar/calendar-sse.test.mjs` | Der SSE-Strom: die Änderung erreicht einen Listener, für den der Client sich tatsächlich registriert. |
+| `lib/calendar-reminders.test.mjs` | Die Fälligkeit: Altbestand bei fehlendem Feld, leeres Array als „keine", die zwei Formen (Minuten bzw. Tage + Uhrzeit), die Grenzen 0…20160 und 0…14, ungültige Einträge einzeln, höchstens fünf je Termin (die fünf kleinsten Vorläufe), doppelte Einträge einmal, die Zehn-Minuten-Regel an beiden Rändern, der nächste Zeitpunkt, der stabile Schlüssel und die Textformen („in 15 Minuten", „in 1 Stunde", „in 1 Tag", „jetzt", „Ganztägig · in 1 Tag · Di 17.11."). |
+| `hooks/useCalendarReminders.test.mjs` | Die Bindung an den Browser, mit gestellter Uhr und einem `Notification`-Stub: eine fällige Erinnerung erscheint genau einmal und trägt ihren Schlüssel als `tag`, ein Neuladen feuert nicht erneut, der Timer feuert genau zum Zeitpunkt, die Erlaubnis wird nur auf Klick gefragt, ohne Notification-API passiert nichts, `visibilitychange` prüft die Uhr neu, und alte Schlüssel fallen aus dem Speicher. |
 | `hooks/useCalendar.test.mjs` | Der Generationszähler des Hooks: die jüngere Antwort gewinnt, auch wenn die ältere später eintrifft, eine ältere Antwort wird verworfen, keine der Anfragen wird abgebrochen, ein veralteter Fehler meldet nichts, und beim Abbau wird die laufende Anfrage abgebrochen. |
 | `lib/i18n/locale-parity.test.mjs` | Die Vollständigkeit des deutschen Pakets und die `calendar.*`-Ausnahme. |
 | `lib/i18n/registry.test.mjs` | Die Erkennung der deutschen Browsersprache und die Registrierung. |

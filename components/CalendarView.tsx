@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Bell, Plus } from "lucide-react";
 import {
   GERMAN_WEEKDAYS_MIN,
   addDays,
@@ -29,6 +29,7 @@ import {
   todayDateString,
 } from "./calendar/calendar-model";
 import { useCalendar, type CalendarEventInput } from "@/hooks/useCalendar";
+import { useCalendarReminders } from "@/hooks/useCalendarReminders";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { CalendarEventDialog } from "./calendar/CalendarEventDialog";
 import { CalendarImportButton } from "./calendar/CalendarImport";
@@ -144,6 +145,15 @@ interface EditingState {
 export function CalendarView() {
   const t = useCalendarText();
   const { events, error, create, update, remove, reload } = useCalendar();
+  /**
+   * Die Erinnerungen im offenen Tab.
+   *
+   * Der Hook zeigt die Benachrichtigungen und fragt **nie** von selbst nach
+   * der Erlaubnis — dafuer steht der Knopf in der Kopfzeile, und der
+   * erscheint nur, solange der Browser noch nicht gefragt hat und es
+   * ueberhaupt eine kuenftige Erinnerung gibt.
+   */
+  const reminders = useCalendarReminders(events);
   /** `true` unter 640 Pixel — dieselbe Schwelle wie `app/globals.css`. */
   const isMobile = useIsMobile();
 
@@ -502,6 +512,43 @@ export function CalendarView() {
             * nach einem Neuladen sichtbar — ein halber Import.
             */}
           <CalendarImportButton onImported={() => { void reload(); }} />
+
+          {/*
+            * Der Erlaubnis-Knopf.
+            *
+            * `Notification.requestPermission()` aus dem Nichts blockt Chrome
+            * weg — der Nutzer muss klicken. Deshalb gibt es diesen Knopf, und
+            * deshalb erscheint er nur, wenn der Browser noch nicht gefragt
+            * hat (`default`) und es ueberhaupt etwas zu erinnern gibt: ein
+            * Knopf fuer eine Erlaubnis, die nie gebraucht wird, ist ein
+            * Knopf, der nur stoert.
+            */}
+          {reminders.permission === "default" && reminders.hasUpcoming ? (
+            <button
+              type="button"
+              onClick={reminders.requestPermission}
+              title={t("calendar.reminders.hint")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 12px",
+                fontSize: 12,
+                fontWeight: 550,
+                borderRadius: 8,
+                cursor: "pointer",
+                border: "1px solid var(--border)",
+                background: "none",
+                color: "var(--text)",
+                fontFamily: "inherit",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}
+            >
+              <Bell size={13} strokeWidth={2} />
+              {t("calendar.reminders.enable")}
+            </button>
+          ) : null}
 
           <button
             type="button"
