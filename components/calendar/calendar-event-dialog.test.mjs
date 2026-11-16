@@ -184,14 +184,17 @@ async function withFetchSpy(run) {
 }
 
 /**
- * Das Zeitfeld des Beginns und das des Endes.
+ * Das Feld des Beginns und das des Endes.
  *
- * Beide tragen kein `id` — sie werden ueber ihre Beschriftung gefunden. Die
- * Beschriftung kommt aus dem deutschen Sprachpaket, also wird sie hier auch
- * daher geholt und nicht noch einmal abgeschrieben.
+ * Beide sind die Schaltflaeche, die ihre Wahl oeffnet — es gibt keinen
+ * zweiten Knopf daneben, deshalb findet sie auch nur dieses eine Attribut.
  */
-const startZeitFeld = () => win.document.querySelector(`input[aria-label="${deMessages["calendar.eventStartTime"]}"]`);
-const endZeitFeld = () => win.document.querySelector(`input[aria-label="${deMessages["calendar.eventEndTime"]}"]`);
+const startZeitFeld = () => win.document.querySelector('[data-picker-open="time"][data-picker-for="start"]');
+const endZeitFeld = () => win.document.querySelector('[data-picker-open="time"][data-picker-for="end"]');
+
+/** Der Text, der in einem Feld steht: die Felder sind Knoepfe, keine Eingaben. */
+const feldWert = (kind, which) =>
+  win.document.querySelector(`[data-picker-open="${kind}"][data-picker-for="${which}"]`)?.textContent.trim();
 
 /**
  * Die Minuten zwischen zwei Zeitstempeln (`YYYY-MM-DDTHH:MM`).
@@ -546,15 +549,14 @@ test("aendert sich die Beginnzeit, laeuft das Ende mit — nicht nur beim Oeffne
   }));
 
   // Das Ende steht am Anfang auf 15:00 — eine Stunde nach dem Beginn.
-  assert.equal(endZeitFeld()?.value, "15:00", "das Ende ist nicht die Stunde nach dem Beginn");
+  assert.equal(endZeitFeld()?.textContent.trim(), "15:00", "das Ende ist nicht die Stunde nach dem Beginn");
 
-  // Jetzt aendert der Nutzer die Beginnzeit — auf 16:00.
-  const startFeld = startZeitFeld();
-  assert.ok(startFeld, "das Zeitfeld des Beginns fehlt");
-  await setInputValue(startFeld, "16:00");
+  // Jetzt aendert der Nutzer die Beginnzeit — auf 16:00, getippt in der Wahl.
+  assert.ok(startZeitFeld(), "das Zeitfeld des Beginns fehlt");
+  await eintippen("time", "start", "16:00");
 
   // Und das Ende wandert mit: 16:00 bis 17:00.
-  assert.equal(endZeitFeld()?.value, "17:00", "das Ende laeuft der geaenderten Beginnzeit nicht mit");
+  assert.equal(endZeitFeld()?.textContent.trim(), "17:00", "das Ende laeuft der geaenderten Beginnzeit nicht mit");
 
   await submitWithTitle("Teammeeting");
   assert.equal(saved.length, 1, "das Formular wurde nicht abgeschickt");
@@ -607,8 +609,8 @@ test("ein bestehender Termin mit Uhrzeit zeigt und behaelt seine Zeitfelder", as
     onDelete: () => {},
   }));
 
-  assert.equal(startZeitFeld()?.value, "15:00", "die Beginnzeit steht nicht im Feld");
-  assert.equal(endZeitFeld()?.value, "16:30", "die Endzeit steht nicht im Feld");
+  assert.equal(startZeitFeld()?.textContent.trim(), "15:00", "die Beginnzeit steht nicht im Feld");
+  assert.equal(endZeitFeld()?.textContent.trim(), "16:30", "die Endzeit steht nicht im Feld");
   assert.equal(startZeitFeld()?.disabled, false, "die Beginnzeit ist gesperrt");
 
   await submitWithTitle("Teammeeting");
@@ -638,7 +640,7 @@ test("ein Ganztagestermin behaelt seine Uhrzeit beim Umschalten", async () => {
   assert.ok(kaestchen, "das Kaestchen „Ganztägig\" fehlt");
   assert.equal(kaestchen.checked, true, "der Ganztagestermin ist nicht als solcher markiert");
 
-  const vorher = { start: startZeitFeld().value, ende: endZeitFeld().value };
+  const vorher = { start: startZeitFeld().textContent.trim(), ende: endZeitFeld().textContent.trim() };
   assert.equal(startZeitFeld().disabled, true, "das Zeitfeld des Beginns ist bedienbar");
 
   // Abwaehlen: bedienbar, aber unveraendert. `checked` wird vor dem Klick
@@ -651,8 +653,8 @@ test("ein Ganztagestermin behaelt seine Uhrzeit beim Umschalten", async () => {
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
   assert.equal(startZeitFeld().disabled, false, "nach dem Abwaehlen bleibt das Feld gesperrt");
   assert.equal(endZeitFeld().disabled, false, "nach dem Abwaehlen bleibt das Endfeld gesperrt");
-  assert.equal(startZeitFeld().value, vorher.start, "der Beginn ging beim Umschalten verloren");
-  assert.equal(endZeitFeld().value, vorher.ende, "das Ende ging beim Umschalten verloren");
+  assert.equal(startZeitFeld().textContent.trim(), vorher.start, "der Beginn ging beim Umschalten verloren");
+  assert.equal(endZeitFeld().textContent.trim(), vorher.ende, "das Ende ging beim Umschalten verloren");
 
   // Wieder anhaken: gesperrt, gleicher Wert.
   await act(async () => {
@@ -662,7 +664,7 @@ test("ein Ganztagestermin behaelt seine Uhrzeit beim Umschalten", async () => {
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
   assert.equal(kaestchen.checked, true, "das Kaestchen liess sich nicht wieder ankreuzen");
   assert.equal(startZeitFeld().disabled, true, "das Feld blieb nach dem Ankreuzen bedienbar");
-  assert.equal(startZeitFeld().value, vorher.start, "der Beginn ging beim zweiten Umschalten verloren");
+  assert.equal(startZeitFeld().textContent.trim(), vorher.start, "der Beginn ging beim zweiten Umschalten verloren");
 });
 
 test("ein Ganztagestermin sperrt die Zeitfelder, statt sie zu verstecken", async () => {
@@ -695,10 +697,9 @@ test("ein Ende vor dem Beginn wird im Dialog gemeldet und nicht gespeichert", as
       onDelete: () => {},
     }));
 
-    const end = endZeitFeld();
-    assert.ok(end, "das Zeitfeld des Endes fehlt");
+    assert.ok(endZeitFeld(), "das Zeitfeld des Endes fehlt");
     // 18:00 bis 17:00 — ein Tippfehler, kein Termin.
-    await setInputValue(end, "17:00");
+    await eintippen("time", "end", "17:00");
 
     await submitWithTitle("Teammeeting");
 
@@ -728,8 +729,8 @@ test("ein Ende gleich dem Beginn wird ebenso abgelehnt", async () => {
       onDelete: () => {},
     }));
 
-    assert.equal(startZeitFeld().value, "15:00", "der Beginn ist nicht vorbelegt");
-    await setInputValue(endZeitFeld(), "15:00");
+    assert.equal(startZeitFeld().textContent.trim(), "15:00", "der Beginn ist nicht vorbelegt");
+    await eintippen("time", "end", "15:00");
 
     await submitWithTitle("Teammeeting");
 
@@ -755,12 +756,12 @@ test("ein Termin ueber Mitternacht braucht das Enddatum des naechsten Tages", as
   }));
 
   // Ohne neues Enddatum ist 22:00 bis 02:00 ungueltig …
-  await setInputValue(endZeitFeld(), "02:00");
+  await eintippen("time", "end", "02:00");
   await submitWithTitle("Nachtwache");
   assert.equal(saved.length, 0, "der ungueltige Zeitraum wurde gespeichert");
 
   // … mit dem 15. als Enddatum ist es ein gueltiger Termin ueber Mitternacht.
-  await setInputValue(byId("calendar-end-date"), "15.03.2026");
+  await eintippen("date", "end", "15.03.2026");
   const form = win.document.querySelector("form");
   await act(async () => {
     form.dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true }));
@@ -777,6 +778,66 @@ test("ein Termin ueber Mitternacht braucht das Enddatum des naechsten Tages", as
     false,
     "ein gueltiger Termin ueber Mitternacht wurde als Fehler gemeldet",
   );
+});
+
+test("getippte Werte kommen aus der Wahl und stehen in deutscher Form im Feld", async () => {
+  // Der Text-Modus der Wahl ist der einzige Tippweg; was er liefert, muss die
+  // kanonische Form tragen — „1.3.2026" wird zu „01.03.2026", „9:5" zu „09:05".
+  const saved = [];
+  await mount(React.createElement(CalendarEventDialog, {
+    event: null,
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: (input) => { saved.push(input); },
+    onDelete: () => {},
+  }));
+
+  await eintippen("date", "start", "1.3.2026");
+  await eintippen("time", "start", "9:5");
+
+  assert.equal(feldWert("date", "start"), "01.03.2026");
+  assert.equal(feldWert("time", "start"), "09:05");
+  await submitWithTitle("Teammeeting");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].start, "2026-03-01T09:05");
+  // Die Zeit des Endes wandert mit, solange sie nicht selbst gesetzt wurde;
+  // das Datum nur, wenn es vor dem Beginn laege (hier nicht: der 14. ist
+  // spaeter als der 1.).
+  assert.equal(saved[0].end, "2026-03-14T10:05");
+});
+
+test("das Feld selbst oeffnet die Wahl — kein zweiter Knopf daneben", async () => {
+  await mount(React.createElement(CalendarEventDialog, {
+    event: {
+      id: "e1", title: "Teammeeting", allDay: false,
+      start: "2026-03-14T15:00", end: "2026-03-14T16:30",
+    },
+    preset: { date: "2026-03-14", time: null },
+    busy: false,
+    onCancel: () => {},
+    onSave: () => {},
+    onDelete: () => {},
+  }));
+
+  const felder = [...win.document.querySelectorAll("[data-picker-open]")];
+  assert.equal(felder.length, 4, "es gibt mehr Ausloeser als Felder");
+  for (const feld of felder) {
+    // Ein Knopf, kein Eingabefeld: Enter und Leertaste oeffnen damit nativ,
+    // und der Wert bleibt sichtbar, was beim Tippen niemanden aussperrt.
+    assert.equal(feld.tagName, "BUTTON", "das Feld ist keine Schaltflaeche");
+    assert.equal(feld.getAttribute("type"), "button");
+    assert.equal(feld.getAttribute("aria-haspopup"), "dialog", "der Dialog ist nicht angekuendigt");
+    assert.ok(feld.textContent.trim(), "das Feld zeigt keinen Wert");
+  }
+  assert.equal(feldWert("date", "start"), "14.03.2026");
+  assert.equal(feldWert("time", "start"), "15:00");
+  assert.equal(feldWert("time", "end"), "16:30");
+
+  // Der Klick auf das Feld oeffnet genau seine Wahl.
+  await click(feldWert("date", "start") === "14.03.2026" ? wahlKnopf("date", "start") : null);
+  assert.ok(win.document.querySelector('[data-date-picker="true"]'), "die Datumswahl ist nicht aufgegangen");
+  assert.equal(win.document.querySelector('[data-time-picker="true"]'), null, "es kam die falsche Wahl");
 });
 
 // --- Die beiden Wahlen ------------------------------------------------------
@@ -817,6 +878,22 @@ async function submitPicker() {
   await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
 }
 
+/**
+ * Tippen, wie es jetzt geht: in der Wahl, nicht im Feld des Dialogs.
+ *
+ * Das Feld ist eine Schaltflaeche; seine Tastatureingabe lebt im Text-Modus
+ * der Wahl. Der Helfer geht genau den Weg, den ein Nutzer geht — Wahl
+ * oeffnen, auf Tippen umschalten, Text eingeben, bestaetigen.
+ */
+async function eintippen(kind, which, text) {
+  await click(wahlKnopf(kind, which));
+  const panel = win.document.querySelector(kind === "date" ? '[data-date-picker="true"]' : '[data-time-picker="true"]');
+  assert.ok(panel, "die Wahl ist nicht offen");
+  await click(panel.querySelector("[data-picker-text-toggle]"));
+  await setInputValue(panel.querySelector("[data-picker-text]"), text);
+  await submitPicker();
+}
+
 test("ein gewaehltes Datum steht im Feld und wird gespeichert", async () => {
   const saved = [];
   await mount(React.createElement(CalendarEventDialog, {
@@ -834,11 +911,11 @@ test("ein gewaehltes Datum steht im Feld und wird gespeichert", async () => {
   await submitPicker();
 
   assert.equal(win.document.querySelector('[data-date-picker="true"]'), null, "die Wahl ist nicht zugegangen");
-  assert.equal(byId("calendar-start-date").value, "20.03.2026", "das Feld zeigt nicht den gewaehlten Tag");
+  assert.equal(feldWert("date", "start"), "20.03.2026", "das Feld zeigt nicht den gewaehlten Tag");
 
   // Das Ende lag auf dem 14. und wandert mit: ein Termin, dessen Ende vor
   // dem Beginn liegt, liesse sich nicht speichern.
-  assert.equal(byId("calendar-end-date").value, "20.03.2026");
+  assert.equal(feldWert("date", "end"), "20.03.2026");
 
   await submitWithTitle("Termin am 20.");
   assert.equal(saved.length, 1);
@@ -862,10 +939,10 @@ test("eine gewaehlte Beginnzeit zieht das Ende mit", async () => {
   await click(win.document.querySelector('[data-picker-value="30"]'));
   await submitPicker();
 
-  assert.equal(startZeitFeld().value, "16:30");
+  assert.equal(startZeitFeld().textContent.trim(), "16:30");
   // Das Ende ist nicht gesetzt worden und wandert deshalb mit — dieselbe
   // Regel wie beim Tippen (`defaultEndTime`).
-  assert.equal(endZeitFeld().value, "17:30");
+  assert.equal(endZeitFeld().textContent.trim(), "17:30");
 
   await submitWithTitle("Termin um halb fünf");
   assert.equal(saved.length, 1);
@@ -903,7 +980,7 @@ test("ein Ganztagestermin oeffnet die Uhrzeitwahl nicht", async () => {
   assert.ok(win.document.querySelector('[data-date-picker="true"]'), "die Datumswahl des Endes ist nicht aufgegangen");
   await click(wahlButton(deMessages["common.cancel"]));
   assert.equal(win.document.querySelector('[data-date-picker="true"]'), null, "die Wahl ist nicht zugegangen");
-  assert.equal(byId("calendar-end-date").value, "14.03.2026", "der Abbruch hat das Feld veraendert");
+  assert.equal(feldWert("date", "end"), "14.03.2026", "der Abbruch hat das Feld veraendert");
 });
 
 test("die Uhrzeitwahl des Endes laesst sich ohne Aenderung schliessen", async () => {
@@ -927,5 +1004,5 @@ test("die Uhrzeitwahl des Endes laesst sich ohne Aenderung schliessen", async ()
 
   await click(wahlButton(deMessages["common.cancel"]));
   assert.equal(win.document.querySelector('[data-time-picker="true"]'), null, "die Wahl ist nicht zugegangen");
-  assert.equal(endZeitFeld().value, "16:30", "der Abbruch hat das Feld veraendert");
+  assert.equal(endZeitFeld().textContent.trim(), "16:30", "der Abbruch hat das Feld veraendert");
 });

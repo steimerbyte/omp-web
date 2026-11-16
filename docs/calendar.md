@@ -511,8 +511,14 @@ konnte.
 
 ### Das Zeit- und Datumsfeld
 
-Der Dialog hat **eigene Textfelder** für Datum und Uhrzeit: die Uhrzeit im
+Der Dialog hat **eigene Felder** für Datum und Uhrzeit: die Uhrzeit im
 24-Stunden-Format `HH:MM`, das Datum in deutscher Schreibweise `DD.MM.JJJJ`.
+Das Feld ist selbst die Schaltfläche, die seine **Wahl** öffnet — ein
+`<button>`, kein `<input>`: ein Eingabefeld, das beim Klick einen Dialog
+aufzieht, wäre für Tastaturnutzer eine Sackgasse, während ein Knopf auf
+`Enter` und Leertaste nativ öffnet und den Wert sichtbar trägt. Einen zweiten
+Knopf daneben gibt es nicht. Getippt wird im **Text-Modus** der Wahl, den
+beide Wahlen haben.
 Die Uhrzeitfelder sind **immer** da. Bei einem Ganztagestermin sind sie
 gesperrt (und abgeblendet), nicht ausgeblendet: der Wert bleibt stehen, und
 ein gesperrtes Feld sagt die Wahrheit — ein Feld, das einen getippten Wert
@@ -535,28 +541,30 @@ Die nativen Felder wurden deshalb ersetzt, nicht umformatiert: ihr Format
 folgt dem **Browser**, nicht der Seite. Ein deutscher Kalender, in dem 15 Uhr
 als „03 PM" erscheint, ist falsch.
 
-Die Felder sind **uncontrolled**: der getippte Text steht im DOM, nicht im
-Zustand. Wer „15:3" schreibt, muss danach noch „0" schreiben können — ein
-Zustand, der schon beim Tippen normalisierte, würde die Eingabe zerstören.
 Der Zustand hält die *kanonischen* Werte; die Normalisierung sitzt an der
 Grenze zum Kalenderformat, in `normalizeTimeInput()` und
 `normalizeDateInput()`: `15`, `15:0` und `15:00` ergeben alle `15:00`, und
-`14.3.2026` und `14.03.2026` beide `2026-03-14`. Beim Verlassen des Feldes
-bekommt der Text seine endgültige Form.
+`14.3.2026` und `14.03.2026` beide `2026-03-14`. Das Feld zeigt danach die
+deutsche Form (`formatGermanDate()`), nie den getippten Text. Ein Wert, den
+die Prüfung nicht kennt, bleibt leer, statt auf einen Vorbelegungswert
+zurückzufallen: `preset` oder `09:00` als stille Rückfallwerte ließen einen
+ungültigen Zustand wie einen gültigen aussehen.
 
 ### Die Datums- und Uhrzeitwahl
 
-Neben jedem Datums- und Zeitfeld steht ein Knopf, der die **Wahl** öffnet:
-das Zifferblatt für die Uhrzeit, das Monatsraster für das Datum. Beide haben
-dieselbe Form wie in der Android-Vorlage. Die Android-Hülle bleibt dabei
+Ein Klick auf das Datums- oder Zeitfeld **selbst** öffnet die **Wahl**: das
+Zifferblatt für die Uhrzeit, das Monatsraster für das Datum. Die Felder
+kündigen das mit `aria-haspopup="dialog"` an und sind mindestens 44 Pixel
+hoch — die Tap-Fläche ist das ganze Feld. Beide Wahlen haben dieselbe Form
+wie in der Android-Vorlage. Die Android-Hülle bleibt dabei
 unberührt: die Oberfläche läuft im Browser, die App zeigt dieselben Dialoge in
 ihrem Engine-Fenster — ohne eigenen Code dafür.
 
-Beide Wahlen sind ein **zweiter Weg zu demselben Wert**, nicht ein zweiter
-Wert: sie schreiben in dasselbe Feld und laufen durch dieselbe Prüfung
-(`applyPickedDate` / `applyPickedTime` → `normalizeDateInput` /
-`normalizeTimeInput`). Damit gibt es genau eine Stelle, an der ein Termin
-gültig wird.
+Beide Wahlen sind der **einzige Eingabeweg** zu einem Wert — getippt wird in
+ihrem Text-Modus —, und sie schreiben in dasselbe Feld, durch dieselbe
+Prüfung (`applyPickedDate` / `applyPickedTime` → `handleDateInput` /
+`handleTimeInput` → `normalizeDateInput` / `normalizeTimeInput`). Damit gibt
+es genau eine Stelle, an der ein Termin gültig wird.
 
 **Das Datum.** Kopfband mit Jahr und gewähltem Tag in Worten („Mi., 18. Nov."),
 darunter Monat mit zwei Pfeilen, die Wochentags-Initialen `M D M D F S S` und

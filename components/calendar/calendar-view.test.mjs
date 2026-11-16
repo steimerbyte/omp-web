@@ -233,7 +233,12 @@ const buttonWith = (text) => [...win.document.querySelectorAll("button")].find((
 const byId = (id) => win.document.getElementById(id);
 
 /** Ein Eingabefeld ueber seine Beschriftung. */
-const inputWith = (label) => win.document.querySelector(`input[aria-label="${label}"]`);
+/**
+ * Datums- und Zeitfelder sind Schaltflaechen, die ihre Wahl oeffnen — der
+ * Wert steht als Text darin, nicht in einem Eingabefeld.
+ */
+const feld = (kind, which) => win.document.querySelector(`[data-picker-open="${kind}"][data-picker-for="${which}"]`);
+const feldText = (kind, which) => feld(kind, which)?.textContent.trim();
 
 /** Das Datum eines Termintags in der Schreibweise des Dialogs: `TT.MM.JJJJ`. */
 const formatDay = (date) => `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}`;
@@ -622,10 +627,10 @@ test("ein Klick auf einen leeren Tag oeffnet die Uebersicht, und ihr Knopf legt 
   const title = byId("calendar-title");
   assert.ok(title, "der Termin-Dialog ging aus der Uebersicht nicht auf");
   assert.equal(title.value, "", "der Dialog ist nicht leer");
-  assert.equal(byId("calendar-start-date").value, formatDay(emptyDay), "der neue Termin steht nicht am Tag der Uebersicht");
+  assert.equal(feldText("date", "start"), formatDay(emptyDay), "der neue Termin steht nicht am Tag der Uebersicht");
   // Ein neuer Termin bringt seine Uhrzeit selbst mit: 09:00 bis 10:00.
   assert.equal(
-    win.document.querySelector(`input[aria-label="Beginn (Uhrzeit)"]`)?.value,
+    feldText("time", "start"),
     "09:00",
     "der neue Termin hat keine Beginnzeit",
   );
@@ -860,11 +865,11 @@ test("Monatsansicht: der Klick auf einen Termin-Chip oeffnet die Tagesuebersicht
   const title = byId("calendar-title");
   assert.ok(title, "der Termin-Dialog ging aus der Uebersicht nicht auf");
   assert.equal(title.value, "Teammeeting", "der Dialog hat einen anderen Termin geladen");
-  assert.equal(byId("calendar-start-date").value, formatDay(EVENT_DAY), "das Startdatum fehlt");
-  assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Beginnzeit des Termins fehlt");
-  assert.equal(inputWith("Ende (Uhrzeit)").value, "16:30", "die Endzeit des Termins fehlt");
-  assert.equal(inputWith("Beginn (Uhrzeit)").disabled, false, "die Beginnzeit ist nicht editierbar");
-  assert.equal(inputWith("Ende (Uhrzeit)").disabled, false, "die Endzeit ist nicht editierbar");
+  assert.equal(feldText("date", "start"), formatDay(EVENT_DAY), "das Startdatum fehlt");
+  assert.equal(feldText("time", "start"), "15:00", "die Beginnzeit des Termins fehlt");
+  assert.equal(feldText("time", "end"), "16:30", "die Endzeit des Termins fehlt");
+  assert.equal(feld("time", "start").disabled, false, "die Beginnzeit ist nicht editierbar");
+  assert.equal(feld("time", "end").disabled, false, "die Endzeit ist nicht editierbar");
 
   await act(async () => { root.unmount(); });
 });
@@ -900,9 +905,9 @@ test("Wochenansicht: der Klick auf einen Terminblock oeffnet die Tagesuebersicht
   const title = byId("calendar-title");
   assert.ok(title, "der Termin-Dialog ging aus der Uebersicht nicht auf");
   assert.equal(title.value, "Teammeeting", "der Dialog hat einen anderen Termin geladen");
-  assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Beginnzeit des Termins fehlt");
-  assert.equal(inputWith("Ende (Uhrzeit)").value, "16:30", "die Endzeit des Termins fehlt");
-  assert.equal(inputWith("Beginn (Uhrzeit)").disabled, false, "die Beginnzeit ist nicht editierbar");
+  assert.equal(feldText("time", "start"), "15:00", "die Beginnzeit des Termins fehlt");
+  assert.equal(feldText("time", "end"), "16:30", "die Endzeit des Termins fehlt");
+  assert.equal(feld("time", "start").disabled, false, "die Beginnzeit ist nicht editierbar");
 
   await act(async () => { root.unmount(); });
 });
@@ -930,7 +935,7 @@ test("Tagesuebersicht: die gewaehlte Zeile oeffnet ihren Termin, nicht den erste
     const title = byId("calendar-title");
     assert.ok(title, "der Termin-Dialog ging nicht auf");
     assert.equal(title.value, "Teammeeting", "der Dialog zeigt nicht den gewaehlten Termin");
-    assert.equal(inputWith("Beginn (Uhrzeit)").value, "15:00", "die Uhrzeit gehoert nicht zu diesem Termin");
+    assert.equal(feldText("time", "start"), "15:00", "die Uhrzeit gehoert nicht zu diesem Termin");
 
     await act(async () => { root.unmount(); });
   });
@@ -957,7 +962,7 @@ test("Tagesuebersicht: „Termin hinzufügen“ oeffnet einen leeren Dialog am T
     assert.ok(title, "der Termin-Dialog ging nicht auf");
     assert.equal(title.value, "", "der Dialog ist nicht leer");
     assert.equal(
-      byId("calendar-start-date").value,
+      feldText("date", "start"),
       formatDay(EVENT_DAY),
       "der neue Termin steht nicht am Tag der Liste",
     );

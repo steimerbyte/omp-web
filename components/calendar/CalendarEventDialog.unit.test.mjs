@@ -88,7 +88,6 @@ const deText = deLocale.messages;
 
 const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 35)); }); };
 const byId = (id) => win.document.getElementById(id);
-const byLabel = (label) => win.document.querySelector(`input[aria-label="${label}"]`);
 const buttonWith = (text) => [...win.document.querySelectorAll("button")].find((button) => button.textContent.trim() === text);
 
 /** Setzt den Wert eines Feldes ueber den nativen Setter und meldet React die Aenderung. */
@@ -137,38 +136,6 @@ async function submit(title) {
   await act(async () => { form.dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true })); });
   await flush();
 }
-
-test("ein getippter Zeitwert bekommt beim Verlassen die kanonische Form", async () => {
-  const { root, saved } = await mount();
-  const startTime = byLabel(deText["calendar.eventStartTime"]);
-  assert.ok(startTime, "das Feld fuer die Beginn-Uhrzeit fehlt");
-
-  await type(startTime, "9:5");
-  await blur(startTime);
-
-  assert.equal(startTime.value, "09:05");
-  await submit("Teammeeting");
-  assert.equal(saved.length, 1);
-  // Der kanonische Wert ist auch der gespeicherte, nicht nur der angezeigte.
-  assert.equal(saved[0].start, "2026-03-14T09:05");
-  // Das Ende wandert mit, solange der Nutzer es nicht selbst gesetzt hat.
-  assert.equal(saved[0].end, "2026-03-14T10:05");
-  await act(async () => { root.unmount(); });
-});
-
-test("ein getipptes Datum bekommt beim Verlassen die deutsche Form", async () => {
-  const { root, saved } = await mount();
-  const startDate = byLabel(deText["calendar.eventStartDate"]);
-  assert.ok(startDate, "das Feld fuer das Beginn-Datum fehlt");
-
-  await type(startDate, "1.3.2026");
-  await blur(startDate);
-
-  assert.equal(startDate.value, "01.03.2026");
-  await submit("Teammeeting");
-  assert.equal(saved[0].start, "2026-03-01T14:00");
-  await act(async () => { root.unmount(); });
-});
 
 test("der native Farbwaehler setzt Hex-Feld und gespeicherte Farbe", async () => {
   const { root, saved } = await mount();
