@@ -95,7 +95,6 @@ function SidebarNavButton({
   label,
   active,
   disabled,
-  wide,
   children,
 }: {
   onClick?: () => void;
@@ -103,8 +102,6 @@ function SidebarNavButton({
   label: string;
   active?: boolean;
   disabled?: boolean;
-  /** Takes the whole grid row; the fifth entry cannot share a 2-column row. */
-  wide?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -115,7 +112,7 @@ function SidebarNavButton({
       aria-label={title}
       aria-pressed={active}
       disabled={disabled}
-      className={wide ? "sidebar-nav-button sidebar-nav-button--wide" : "sidebar-nav-button"}
+      className="sidebar-nav-button"
     >
       <span className="sidebar-nav-button__icon" aria-hidden="true">{children}</span>
       <span className="sidebar-nav-button__label">{label}</span>
@@ -1201,13 +1198,13 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           flexShrink: 0,
         }}
       >
-        {/* Die vier Ziele der Leiste, je mit Beschriftung. Das Wortzeichen
+        {/* Sechs Ziele der Leiste, je mit Beschriftung. Das Wortzeichen
             stand hier und hat ihnen die Breite genommen; es liegt jetzt als
             ruhiger Hintergrund hinter dem Chat (globals.css,
             `.chat-session-column::before`). Ein Raster und keine Zeile: bei
-            der schmalsten Leiste (180px) bleiben so zwei Spalten von rund
-            77px statt vier von 39px — der Unterschied zwischen einem
-            lesbaren und einem abgeschnittenen Wort. */}
+            der schmalsten Leiste (180px) bleibt so genug Breite fuer Symbol
+            und Wort, und sechs gleiche Zellen (drei Zeilen zu zwei) statt
+            einer Sonderzeile fuer einen Eintrag. */}
         <div className="sidebar-nav">
           <SidebarNavButton
             onClick={onShowProjectsDashboard}
@@ -1249,6 +1246,28 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
             </svg>
           </SidebarNavButton>
           <SidebarNavButton
+            onClick={() => handleNewSession()}
+            disabled={!selectedCwd}
+            title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
+            label={t("sidebar.new")}
+          >
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <line x1="6" y1="1" x2="6" y2="11" />
+              <line x1="1" y1="6" x2="11" y2="6" />
+            </svg>
+          </SidebarNavButton>
+          <SidebarNavButton
+            onClick={onShowSkills}
+            title={t("skills.title")}
+            label={t("skills.title")}
+            active={showSkills}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+          </SidebarNavButton>
+          <SidebarNavButton
             onClick={onShowNewsletters}
             title={t("newsletters.open")}
             label={t("newsletters.short")}
@@ -1260,34 +1279,6 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
               <path d="M18 14h-8" />
               <path d="M15 18h-5" />
               <path d="M10 6h8v4h-8V6z" />
-            </svg>
-          </SidebarNavButton>
-          <SidebarNavButton
-            onClick={() => handleNewSession()}
-            disabled={!selectedCwd}
-            title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
-            label={t("sidebar.new")}
-          >
-            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-              <line x1="6" y1="1" x2="6" y2="11" />
-              <line x1="1" y1="6" x2="11" y2="6" />
-            </svg>
-          </SidebarNavButton>
-          {/* Fuenfter Eintrag, eigene volle Zeile: bei 180px Leiste bliebe
-              neben vier anderen nur eine 72px-Zelle, und "Skills" waere
-              abgeschnitten. `grid-column: 1 / -1` zaehlt Spalten, nicht
-              Reihen — als letzter Eintrag bleibt die 2x2-Navigation oben
-              unveraendert. */}
-          <SidebarNavButton
-            onClick={onShowSkills}
-            title={t("skills.title")}
-            label={t("skills.title")}
-            active={showSkills}
-            wide
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
             </svg>
           </SidebarNavButton>
         </div>

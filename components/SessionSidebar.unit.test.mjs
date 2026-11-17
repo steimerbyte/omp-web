@@ -605,7 +605,7 @@ test("Kontextmenue-Ereignis ruft refresh und der Explorer meldet Aenderungen", a
   }
 });
 
-test("der Newsletter-Knopf steht direkt nach dem Zeitplan und oeffnet die Ansicht", async () => {
+test("die sechs Navigations-Knoepfe stehen in fester Reihenfolge im Raster", async () => {
   storage.clear();
   let opened = 0;
   const { container } = await mount({
@@ -613,19 +613,29 @@ test("der Newsletter-Knopf steht direkt nach dem Zeitplan und oeffnet die Ansich
     showNewsletters: false,
   });
 
-  // Keine Rollenangabe im Spiel: die Leiste bekommt keine, also ist der Knopf
-  // fuer jedes Konto da — anders als der Statistik-Knopf der Shell.
-  const newsletter = buttonByTitle(container, "Open newsletters");
-  assert.ok(newsletter, "der Newsletter-Knopf fehlt");
-  assert.equal(newsletter.getAttribute("aria-pressed"), "false");
-
-  const titles = [...container.querySelectorAll(".sidebar-nav button")].map((node) => node.getAttribute("title"));
-  assert.equal(
-    titles.indexOf("Open newsletters"),
-    titles.indexOf("Open scheduled tasks") + 1,
-    "der Newsletter-Knopf steht nicht direkt nach dem Zeitplan",
+  // Sechs gleiche Zellen: kein Knopf traegt eine Sonderbreite ueber eine
+  // zusaetzliche Klasse, und keiner steht ausserhalb des Rasters.
+  const nav = container.querySelector(".sidebar-nav");
+  const buttons = [...nav.querySelectorAll("button")];
+  assert.equal(buttons.length, 6, "die Leiste hat nicht sechs Ziele");
+  assert.deepEqual(
+    buttons.map((node) => node.className),
+    Array(6).fill("sidebar-nav-button"),
+    "ein Knopf traegt eine Modifier-Klasse",
   );
 
+  // Projekte, Kalender, Zeitplan, Neue Sitzung, Skills, Newsletter — Skills
+  // links unten, Newsletter rechts unten.
+  const titles = buttons.map((node) => node.getAttribute("title"));
+  assert.equal(titles[0], "Projects");
+  assert.equal(titles[2], "Open scheduled tasks");
+  assert.equal(titles[4], "Skills");
+  assert.equal(titles[5], "Open newsletters", "der Newsletter-Knopf steht nicht am Ende");
+
+  // Keine Rollenangabe im Spiel: die Leiste bekommt keine, also ist der Knopf
+  // fuer jedes Konto da — anders als der Statistik-Knopf der Shell.
+  const newsletter = buttons[5];
+  assert.equal(newsletter.getAttribute("aria-pressed"), "false");
   await act(async () => { newsletter.click(); });
   assert.equal(opened, 1);
 });
