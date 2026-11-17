@@ -252,6 +252,25 @@ test("Session-Statistik zeigt Dauer und kopiert Felder", async () => {
   await act(async () => root.unmount());
 });
 
+test("der Newsletter-Knopf schaltet die Shell auf die Newsletter-Ansicht", async () => {
+  // Der Knopf ist der einzige Weg in die Ansicht: ohne diesen Klick bleibt der
+  // Callback in `AppShell` toter Code, und der Coverage-Gate meldet ihn.
+  FakeEventSource.instances = [];
+  FakeNotification.instances = [];
+  const { root, container } = await mountShell("?session=s1");
+
+  const newsletters = container.querySelector('[title="Open newsletters"]');
+  assert.ok(newsletters, "der Newsletter-Knopf fehlt");
+  await act(async () => { newsletters.click(); });
+  await settle(120);
+
+  // Die Ansicht versucht zu laden; die Attrappe kennt /api/newsletters nicht,
+  // also steht dort der Fehler-Banner — und nicht mehr die Chat-Oberflaeche.
+  assert.match(container.textContent, /could not be loaded/, "die Newsletter-Ansicht wurde nicht geoeffnet");
+
+  await act(async () => root.unmount());
+});
+
 test("Separator-Taste und Ctrl+Alt+N laufen durch die Shortcut-Handler", async () => {
   FakeEventSource.instances = [];
   FakeNotification.instances = [];

@@ -158,6 +158,10 @@ interface Props {
   onShowScheduledTasks?: () => void;
   /** `true` while the scheduled tasks are showing, so the button can read as pressed. */
   showScheduledTasks?: boolean;
+  /** Show the newsletters instead of the chat. */
+  onShowNewsletters?: () => void;
+  /** `true` while the newsletters are showing, so the button can read as pressed. */
+  showNewsletters?: boolean;
   /** Show the skills manager instead of the chat. */
   onShowSkills?: () => void;
   /** `true` while the skills manager is showing, so the button can read as pressed. */
@@ -447,7 +451,7 @@ function SidebarVirtuosoFooter() {
   return <div style={{ height: 10 }} />;
 }
 
-export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onShowScheduledTasks, showScheduledTasks, onShowSkills, showSkills, onBackgroundTaskDone }: Props) {
+export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onExplorerPopupOpenChange, onAtMention, onAtMentions, onShowProjectsDashboard, showProjectsDashboard, onShowCalendar, showCalendar, onShowScheduledTasks, showScheduledTasks, onShowNewsletters, showNewsletters, onShowSkills, showSkills, onBackgroundTaskDone }: Props) {
   const { t } = useI18n();
   // `.sidebar-row-action` is 44px on touch (globals.css), so the desktop row
   // height would clip it there. One derived value feeds the row CSS,
@@ -1242,6 +1246,20 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="9" />
               <polyline points="12 7 12 12 15.5 14" />
+            </svg>
+          </SidebarNavButton>
+          <SidebarNavButton
+            onClick={onShowNewsletters}
+            title={t("newsletters.open")}
+            label={t("newsletters.short")}
+            active={showNewsletters}
+          >
+            {/* Eine Zeitung: was der Newsletter ist — eine Ausgabe zum Lesen. */}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0V9" />
+              <path d="M18 14h-8" />
+              <path d="M15 18h-5" />
+              <path d="M10 6h8v4h-8V6z" />
             </svg>
           </SidebarNavButton>
           <SidebarNavButton

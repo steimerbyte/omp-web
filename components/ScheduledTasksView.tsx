@@ -6,6 +6,13 @@ import { useScheduledTasks, type ScheduledTaskView } from "@/hooks/useScheduledT
 import { useScheduledSettings } from "@/hooks/useScheduledSettings";
 import { CwdPicker } from "./CwdPicker";
 import { describeSchedule, parseSchedule, SCHEDULE_PRESETS, ScheduleError, type ScheduleDescription } from "@/lib/schedule";
+import {
+  toCron,
+  toEditorValue,
+  WEEKDAY_VALUES,
+  weekdayLabelKey,
+  type EditorValue,
+} from "@/lib/schedule-editor";
 import { MAX_TASK_NAME_LENGTH, MAX_TASK_PROMPT_LENGTH } from "@/lib/scheduled-task-limits";
 import {
   Dialog,
@@ -99,7 +106,7 @@ function describeIn(
     case "daily": return t("scheduled.describeDaily", { time: clock(description.hour, description.minute) });
     case "weekdays": return t("scheduled.describeWeekdays", { time: clock(description.hour, description.minute) });
     case "weekly": return t("scheduled.describeWeekly", {
-      weekday: t(WEEKDAY_KEYS[description.weekday]),
+      weekday: t(weekdayLabelKey(String(description.weekday))),
       time: clock(description.hour, description.minute),
     });
     case "custom": return description.expression;
@@ -568,74 +575,6 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, r
       ) : null}
     </li>
   );
-}
-
-/** Die Vorbelegung fuer eine Minute/Stunde/Regel — was ein Preset in Felder schreibt. */
-interface EditorValue {
-  minute: string;
-  hour: string;
-  /** `*` (taeglich), `1-5` (werktags) oder ein einzelner Wochentag. */
-  weekday: string;
-}
-
-/**
- * Zerlegt einen Cron in die drei Felder des Editors — oder `null`.
- *
- * Der Editor kann nur darstellen, was die Presets erzeugen: eine feste Minute,
- * eine feste Stunde und ein Wochentagsfeld. Alles andere (`*` in der Minute,
- * Schritte, Listen im Monat) ist im Rohfeld besser aufgehoben als in einem
- * Formular, das den Ausdruck umschreiben muesste.
- *
- * Das Wochentagsfeld wird **unveraendert** uebernommen, auch `7`: beide
- * Schreibweisen fuer Sonntag stehen in {@link WEEKDAY_VALUES}, damit ein
- * gelesener Ausdruck beim Speichern derselbe bleibt. Ein Editor, der `7` auf
- * `0` normalisiert, aendert einen Zeitplan, den niemand angefasst hat.
- */
-function toEditorValue(cron: string): EditorValue | null {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  const [minute, hour, dayOfMonth, month, weekday] = parts;
-  if (dayOfMonth !== "*" || month !== "*") return null;
-  if (!/^\d{1,2}$/.test(minute) || !/^\d{1,2}$/.test(hour)) return null;
-  return { minute, hour, weekday };
-}
-
-/** Aus den drei Feldern wieder einen Cron. */
-function toCron(value: EditorValue): string {
-  return `${value.minute} ${value.hour} * * ${value.weekday}`;
-}
-
-/**
- * Die Namen der Wochentage, Index = `Date#getDay` (`0` = Sonntag).
- *
- * Dieselbe Tabelle benennt das Auswahlfeld und die Beschreibung, damit
- * "Montags um 08:00" und `value="1"` nie zwei verschiedene Tage meinen.
- */
-const WEEKDAY_KEYS: readonly string[] = [
-  "scheduled.weekdaySun",
-  "scheduled.weekdayMon",
-  "scheduled.weekdayTue",
-  "scheduled.weekdayWed",
-  "scheduled.weekdayThu",
-  "scheduled.weekdayFri",
-  "scheduled.weekdaySat",
-];
-
-/**
- * Die Werte des Wochentagsfeldes.
- *
- * `0` und `7` sind beide Sonntag, und beide stehen deshalb zur Wahl: ein
- * gespeicherter Ausdruck `0 8 * * 7` landet beim Bearbeiten als `7` im Feld,
- * und ein `<select>` ohne passende `<option>` zeigt sonst stillschweigend den
- * ersten Eintrag — ein Sonntag wuerde beim naechsten Speichern zu "taeglich".
- */
-const WEEKDAY_VALUES: readonly string[] = ["*", "1-5", "1", "2", "3", "4", "5", "6", "0", "7"];
-
-/** Der Katalogschluessel zu einem Feldwert; `7` ist Sonntag wie `0`. */
-function weekdayLabelKey(value: string): string {
-  if (value === "*") return "scheduled.weekdayEveryDay";
-  if (value === "1-5") return "scheduled.weekdayWeekdays";
-  return WEEKDAY_KEYS[Number(value) % 7];
 }
 
 /**

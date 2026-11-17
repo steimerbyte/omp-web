@@ -19,6 +19,7 @@ import { SubagentMobileToggle, SubagentPanel } from "./SubagentPanel";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 import { CalendarView } from "./CalendarView";
 import { ScheduledTasksView } from "./ScheduledTasksView";
+import { NewsletterView } from "./NewsletterView";
 import { SkillsManagerView } from "./SkillsManagerView";
 import { StatsView } from "./StatsView";
 import { ChatWindow } from "./ChatWindow";
@@ -180,10 +181,10 @@ export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
-  // Which of the three views is showing. Seeded from `?view=` so a reload or a
+  // Which view is showing. Seeded from `?view=` so a reload or a
   // shared link lands where the sender was, and kept in the URL below so it
   // survives the next reload too.
-  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled" | "skills" | "stats">(
+  const [activeView, setActiveView] = useState<"chat" | "projects" | "calendar" | "scheduled" | "skills" | "stats" | "newsletters">(
     () => initialNavigation.requestedView,
   );
   // The sidebar's *automatic* first cwd adoption is what would break a
@@ -207,7 +208,8 @@ export function AppShell() {
     || activeView === "calendar"
     || activeView === "scheduled"
     || activeView === "skills"
-    || activeView === "stats";
+    || activeView === "stats"
+    || activeView === "newsletters";
   // Whether this account may create projects. Creating one widens the file
   // allow-list, which `AGENTS.md` keeps admin-gated, so the button is hidden
   // for a tenant rather than shown and then refused. Asked the same way
@@ -1141,6 +1143,7 @@ export function AppShell() {
   const showScheduledTasks = activeView === "scheduled";
   const showSkills = activeView === "skills";
   const showStats = activeView === "stats";
+  const showNewsletters = activeView === "newsletters";
 
   // Keep the view in the URL. `replaceState` rather than a router navigation
   // so switching views never re-runs the server component tree — the
@@ -1153,6 +1156,7 @@ export function AppShell() {
     else if (activeView === "scheduled") url.searchParams.set("view", "scheduled");
     else if (activeView === "skills") url.searchParams.set("view", "skills");
     else if (activeView === "stats") url.searchParams.set("view", "stats");
+    else if (activeView === "newsletters") url.searchParams.set("view", "newsletters");
     else url.searchParams.delete("view");
     window.history.replaceState(window.history.state, "", url.toString());
   }, [activeView]);
@@ -1243,6 +1247,8 @@ export function AppShell() {
         showCalendar={activeView === "calendar"}
         onShowScheduledTasks={() => setActiveView("scheduled")}
         showScheduledTasks={activeView === "scheduled"}
+        onShowNewsletters={() => setActiveView("newsletters")}
+        showNewsletters={activeView === "newsletters"}
         onShowSkills={() => setActiveView("skills")}
         showSkills={activeView === "skills"}
         onBackgroundTaskDone={handleBackgroundTaskDone}
@@ -2146,6 +2152,8 @@ export function AppShell() {
             <CalendarView />
           ) : showScheduledTasks ? (
             <ScheduledTasksView onOpenSession={handleOpenScheduledSession} />
+          ) : showNewsletters ? (
+            <NewsletterView />
           ) : showSkills ? (
             <SkillsManagerView
               cwd={activeCwd}

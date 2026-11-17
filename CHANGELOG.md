@@ -7,6 +7,22 @@ upstream line — see the Provenance section in the README.
 
 ### Neu
 
+- **Die Newsletter-Ansicht zeigt die neueste Ausgabe als Dashboard.**
+  `?view=newsletters` listet die Newsletter des Kontos mit ihren Themen und
+  dem Zeitplan (nächster Lauf, letzter Status) und rendert die neueste Ausgabe
+  mit ihren Abschnitten; ältere Ausgaben sind als Chips wählbar, „Neueste“
+  springt zurück. Angelegt und bearbeitet wird im Dialog mit demselben
+  Zeitplan-Editor wie die geplanten Aufgaben (`lib/schedule-editor.ts`, jetzt
+  von beiden Ansichten geteilt); der Editor füllt seine Felder aus
+  `schedule.cron`, das die Route beim Lesen aus der geplanten Aufgabe
+  dazujoint, und schickt den Ausdruck bei jedem Speichern mit — auch wenn
+  `schedule` `null` ist, denn dann legt genau dieses Speichern die Aufgabe
+  neu an. Das Modell kommt aus `GET /api/models`. Die
+  Seite pollt alle 10 s, solange der Tab sichtbar ist — die Ausgabe schreibt
+  der geplante Agent erst Minuten nach dem Start, ein SSE-Strom wäre eine
+  dauerhafte Verbindung für eine langsame Anzeige. Quellen werden nur als
+  `http(s)` verlinkt und in einem neuen Tab geöffnet.
+
 - **Neue Sitzungen bekommen ihren Titel automatisch vom ersten Prompt.**
   `AgentSessionWrapper.send` startet beim ersten `prompt` genau einen
   Titelversuch (`lib/rpc-manager.ts`, `maybeAutoTitle`); Quelle ist der Prompt

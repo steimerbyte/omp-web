@@ -604,3 +604,28 @@ test("Kontextmenue-Ereignis ruft refresh und der Explorer meldet Aenderungen", a
     window.removeEventListener("pi-web:session-row-contextmenu", listener);
   }
 });
+
+test("der Newsletter-Knopf steht direkt nach dem Zeitplan und oeffnet die Ansicht", async () => {
+  storage.clear();
+  let opened = 0;
+  const { container } = await mount({
+    onShowNewsletters: () => { opened += 1; },
+    showNewsletters: false,
+  });
+
+  // Keine Rollenangabe im Spiel: die Leiste bekommt keine, also ist der Knopf
+  // fuer jedes Konto da — anders als der Statistik-Knopf der Shell.
+  const newsletter = buttonByTitle(container, "Open newsletters");
+  assert.ok(newsletter, "der Newsletter-Knopf fehlt");
+  assert.equal(newsletter.getAttribute("aria-pressed"), "false");
+
+  const titles = [...container.querySelectorAll(".sidebar-nav button")].map((node) => node.getAttribute("title"));
+  assert.equal(
+    titles.indexOf("Open newsletters"),
+    titles.indexOf("Open scheduled tasks") + 1,
+    "der Newsletter-Knopf steht nicht direkt nach dem Zeitplan",
+  );
+
+  await act(async () => { newsletter.click(); });
+  assert.equal(opened, 1);
+});

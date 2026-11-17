@@ -52,6 +52,7 @@ import { getOmpRuntime, getSettingsForIdentity } from "./omp-runtime";
 import { PRESET_FULL } from "./tool-presets";
 import { makePresentFilesTool } from "./present-files-tool";
 import { makeCalendarTools } from "./calendar-tool";
+import { makeNewsletterTools } from "./newsletter-tool";
 import { makeSessionShellGuard } from "./session-shell-guard";
 import { SessionRunBudget, type RunBudgetExhaustion, type RunBudgetLimits } from "./session-run-budget";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
@@ -2796,7 +2797,11 @@ export async function startRpcSession(
         // damit vom Vertrauen in dieses Projekt (`lib/project-trust.ts`),
         // waehrend der Kalender an der Identitaet haengt, die diese Sitzung
         // geoeffnet hat.
-        customTools: [makePresentFilesTool(), ...makeCalendarTools({ identity: options.identity })],
+        customTools: [
+          makePresentFilesTool(),
+          ...makeCalendarTools({ identity: options.identity }),
+          ...makeNewsletterTools({ identity: options.identity }),
+        ],
         // Die zweite Schneide. Die eigentliche Grenze fuer ein Nicht-Admin-Konto
         // ist der Worker-Prozess (`lib/tenant-worker.ts`): was dort nicht
         // gebunden ist, existiert nicht. Dieser Haken bleibt trotzdem, weil er

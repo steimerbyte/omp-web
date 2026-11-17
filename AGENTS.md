@@ -116,6 +116,9 @@ app/api/
   models-config/catalog/route.ts  GET models.dev pricing presets
   models-config/discover/route.ts POST fetch a configured provider's upstream model list
   models-config/test/route.ts     POST test a configured model/provider
+  newsletters/route.ts            GET/POST the account's newsletters
+  newsletters/[id]/route.ts       PATCH/DELETE one newsletter
+  newsletters/[id]/run/route.ts   POST start a run now
   plugins/route.ts                GET/POST omp plugin management
   projects/route.ts               GET/PUT/POST the projects dashboard registry
   projects/sizes/route.ts         GET the folder sizes (the cheap poll)
@@ -160,6 +163,10 @@ lib/
   calendar.ts          the calendar domain: event shape, German date rules, holidays
   calendar-store.ts    the per-account calendar file
   calendar-tool.ts     the calendar_read / calendar_write agent tools
+  newsletter.ts        the newsletter domain: row shape, issue shape, validation
+  newsletter-store.ts  the per-account newsletter file
+  newsletter-tool.ts   the newsletter_write agent tool
+  schedule-editor.ts   the shared cron editor fields (minute/hour/weekday)
   types.ts             shared TypeScript types
   normalize.ts         normalizeToolCalls() — field name mismatch between file format and our types
   worktree.ts          project/worktree resolution and git worktree operations
@@ -180,6 +187,7 @@ components/
   CodeHighlighterLazy.tsx the only door to react-syntax-highlighter (a direct import costs 102 ms of Prism grammar registration per boot, measured 2026-11-07)
   ModelsConfig.tsx    modal for providers/auth (opened from sidebar bottom)
   ModelRolesPanel.tsx per-role model assignment inside that modal
+  NewsletterView.tsx  the newsletter dashboard: latest issue, history, dialog
   PluginsConfig.tsx   modal for installed omp plugins
   SkillsConfig.tsx    modal for loaded/search/installable skills
   FileExplorer.tsx    file tree inside sidebar
@@ -197,6 +205,7 @@ hooks/
   useAudio.ts         completion sound + browser AudioContext unlock
   useDragDrop.ts      shared drag/drop state
   useIsMobile.ts      responsive breakpoint hook
+  useNewsletters.ts   newsletters: load, write, 10 s visible-tab poll
   useProjectSizes.ts  React binding for the size poll
   useStats.ts         stats fetch + bounded syncing poll + range state
   useTheme.ts         theme state
@@ -964,6 +973,37 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
   the process. It is bounded by design — one timer, one wakeup per due slot, no
   queue and no catch-up — so the load it creates without a request is a session
   the user asked for in advance, not work on a TTL.
+
+### A newsletter is topics plus a scheduled task
+- **The newsletter is not a second scheduler.** A row is a name, its topics,
+  a model and the id of a scheduled task (`lib/newsletter.ts`,
+  `lib/newsletter-store.ts`); the schedule itself is the task's, and `GET
+  /api/newsletters` joins it at read time into `schedule` (its `cron`, the next
+  run, the last run status). That join is the **only** way the cron expression
+  reaches the browser — it is never copied into the newsletter record nor into
+  `localStorage`, because a second copy would drift from the one the timer
+  reads. `schedule: null` therefore means the task is gone, not "no schedule
+  set"; the view says so, and the dialog's save always carries a `cron`, so
+  that save is what creates the task again.
+- **The issue is written by the agent, through a tool.** The task's prompt
+  tells the run to call `newsletter_write` (`lib/newsletter-tool.ts`), which
+  appends one issue to the newsletter. That keeps the writing under the same
+  budget and logging as any other agent turn, and the scheduler stays free of
+  report formatting.
+- **The page polls instead of streaming.** `hooks/useNewsletters.ts` reloads
+  every 10 s while the tab is visible. The calendar's SSE stream exists for an
+  *interactive* agent writing events the user is waiting for; here the writer
+  is the scheduler and the issue lands minutes after the run starts, because a
+  run is a full agent session. A stream would be a permanent connection for a
+  display whose honest currency is ten seconds. The poll is serialized behind
+  one in-flight request and a generation counter, so a slow answer can never
+  overwrite a newer one.
+- The UI is `components/NewsletterView.tsx` at `?view=newsletters`; it is in
+  `skipInitialProjectSelection` like the other dashboards. Its dialog reuses
+  the schedule editor of the scheduled tasks (`lib/schedule-editor.ts`: the
+  three cron fields and the weekday table) instead of growing a second one.
+  Text from an issue is rendered as text, never as markdown or HTML, and a
+  source link is only drawn for `http(s)`.
 
 ### The stats dashboard is embedded, not proxied
 - **No second server, no second browser.** The CLI's `/stats` starts its own
