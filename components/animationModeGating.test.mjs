@@ -26,8 +26,9 @@ import { createJiti } from "jiti";
  * `getAttribute("style")` every 25 ms and count the distinct strings it saw.
  * That is a race, and it lost: the ModelsConfig save button failed in roughly
  * a third of all runs with "skaliert auch im Modus full nicht". Instrumenting
- * the writes showed why — the press animation is `DURATION_FAST`, 120 ms, and
- * it is *written* within about 1 ms of the press, landing on two values
+ * the writes showed why — the press animation was `DURATION_FAST` (120 ms; heute
+ * `SPRING_PRESS`, 160 ms), and it is *written* within about 1 ms of the press,
+ * landing on two values
  * (`transform: scale(0.999…)` then `transform: scale(0.96)`). Whether the 25 ms
  * poll caught the intermediate value or only the settled one was decided by
  * where the sampler happened to land: measured `distinct` was 2 when the poll

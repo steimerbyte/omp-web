@@ -197,7 +197,9 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
-  transition: transform 160ms ease;
+  /* Ein Pfeil, der sich dreht: 120 ms, Standardkurve. 160 ms mit Browser-`ease`
+     ließ ihn erst zögern und dann schnappen. */
+  transition: transform var(--duration-hover) var(--ease-standard);
 }
 
 .viewToggle {

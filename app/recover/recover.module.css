@@ -75,6 +75,10 @@
 .input:focus { border-color: var(--accent); outline: none; }
 .input:disabled { opacity: .6; }
 
+/* Der Fokusrahmen wechselt die Farbe; 120 ms auf der Standardkurve, derselbe
+   Takt wie der Fokusrahmen der Login-Seite und jeder Hover in der App. */
+.input { transition: border-color var(--duration-hover) var(--ease-standard); }
+
 .primary, .secondary {
   display: block;
   width: 100%;

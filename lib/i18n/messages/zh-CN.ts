@@ -175,6 +175,8 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.refresh": "刷新",
     "sidebar.projects": "项目",
     "subagents.title": "子代理",
+    "subagents.open": "子代理：运行中 {count}",
+    "subagents.vibeWorkers": "Vibe 模式正在驱动 {count} 个工作会话。它们从聊天中进行指挥，不会作为子代理列出。",
     "subagents.running": "运行中",
     "subagents.finished": "已完成",
     "subagents.history": "历史",

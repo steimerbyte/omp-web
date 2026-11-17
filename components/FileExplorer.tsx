@@ -3304,7 +3304,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
             </div>
             {uploadPhase === "uploading" && (
               <div style={{ height: 3, marginTop: 4, overflow: "hidden", borderRadius: 4, background: "var(--border)" }}>
-                <div style={{ width: `${uploadProgress}%`, height: "100%", background: "var(--text-muted)", transition: "width 120ms ease" }} />
+                {/* `scaleX` statt `width`: der Fortschritt ist ein Zustand, kein
+                    Layout. Die Spur ist immer 100 % breit und schneidet den
+                    Balken; die angezeigte Prozentzahl bleibt dieselbe. */}
+                <div style={{ width: "100%", height: "100%", background: "var(--text-muted)", transform: `scaleX(${uploadProgress / 100})`, transformOrigin: "left center", transition: "transform var(--duration-hover) var(--ease-standard)" }} />
               </div>
             )}
           </div>

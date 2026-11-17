@@ -17,14 +17,27 @@
   background: var(--bg-panel);
 }
 
-/* Eine Scanline faehrt einmal durch die Karte und ruht dann.
+/* Eine Scanline faehrt dreimal durch die Karte und ruht dann.
+ *
+ * Die Karte traegt genau EINE Animation, und sie sitzt auf `::after`. Den
+ * Auftritt, den frueher `Reveal` auf die Karte gelegt hat (8 px Aufstieg,
+ * Unschaerfe, Accent-Wash), gibt es hier nicht mehr: eine Seite, die man nur
+ * betritt, braucht keine Ankunft, und zwei gleichzeitig laufende Bewegungen
+ * auf derselben Karte konkurrieren um dieselbe Aufmerksamkeit. Die Karte ist
+ * jetzt vom ersten Frame an da und still; es bewegt sich nur das Band.
+ *
+ * Damit ist auch eine gemessene Kollision strukturell weg: `Reveal` schrieb
+ * seinen `y: -8` als Inline-`transform` in jedem Frame des Einblendens, und
+ * eine CSS-Animation auf `transform` schlaegt im Kaskadenkontext den
+ * Inline-`transform` (Chromium, gemessen: der Translate-Anteil war in jedem
+ * Sample 0). Eine Karte ohne Inline-`transform` und ohne eigene Animation kann
+ * diesen Fehler nicht wiederholen; `login-motion.test.mjs` haelt beides fest.
  *
  * Drei Regeln, und keine ist verhandelbar:
  *
  * 1. Die Karte aendert ihre Groesse nie. Die Bewegung sitzt auf einem
  *    Pseudo-Element INNERHALB der Karte, nicht auf der Karte selbst.
- * 2. Die Fahrt endet. Ein `infinite` auf der Karte ist genau der Zustand,
- *    den diese Regel abstellt.
+ * 2. Die Fahrt endet. `iteration-count: 3`, kein `infinite`.
  * 3. Die Fahrt durchquert die Karte. Das Pseudo-Element ist so hoch wie die
  *    Karte, damit `translateY(-100 %)` bis `0 %` eine ganze Kartenhoehe sind;
  *    ein Band, das nur einen Bruchteil hoch ist, verschwindet oben und kommt
@@ -32,45 +45,32 @@
  *
  * Messung, Chromium 1237, Playwright 1.63, eigener Dev-Server auf Port 30142,
  * Seite `/login`, bounding box der Karte ueber aufeinanderfolgende animation
- * frames, jeweils nach dem 240-ms-Reveal:
+ * frames (damals noch nach dem 240-ms-Auftritt gemessen; der ist entfallen,
+ * die Aussage ueber die Box gilt unveraendert):
  *
  *   vorher (`scale`, 3.4s infinite)   30 Frames -> 30 verschiedene Boxen
  *                                      472.160x411.947 px -> 474.692x414.156 px
  *                                      locator.click(): Timeout nach 6 s,
  *                                      "element is not stable"
  *
- *   nachher (Scanline, einmal)         120 Frames -> 1 Box
+ *   nachher (Scanline)                 120 Frames -> 1 Box
  *                                      405|236.969|470|410.063 px, konstant
  *                                      ::after dabei in 66 verschiedenen
  *                                      Positionen, also sichtbar in Bewegung
  *                                      locator.click(): OK
- *
- * Auch mitten im 240-ms-Reveal, dem einzigen verbleibenden bewegten Zeitraum:
- * 154 Frames ab Dokumentstart -> 1 Box, und ein Klick direkt nach dem Mount
- * geht in 81 ms durch (`inlineTransform: translateY(-8px)` beweist, dass er
- * nicht erst nach dem Aufstieg abgeschickt wurde).
  *
  * 75 % von 3.2 s sind genau die 2.4 s Fahrt, die restlichen 25 % die 0.8 s
  * Ruhe, und `iteration-count: 3` macht daraus drei Durchlaeufe in 9.6 s. Auf
  * Produktion gemessen beginnt die Bewegung bei animTime 0 und laeuft bis 2400,
  * die Ruhe endet bei 3200, der zweite Durchlauf startet bei 3200.
  *
- * Warum das vorher so aussehen musste: Playwright vergleicht den bounding box
- * ueber zwei aufeinanderfolgende animation frames, bevor es klickt. `scale`
- * aendert die Box in JEDEM Frame, die Karte erreicht also nie Stabilitaet und
- * jeder Klick-Timeout war vorprogrammiert — nicht langsam, sondern gar nicht.
- * Der alte Kommentar an dieser Stelle erklaerte ausfuehrlich, warum `scale`
- * statt `transform` noetig sei: eine CSS-Animation schlaegt im Kaskadenkontext
- * den Inline-`transform: translateY(…)`, den `Reveal` bei jedem Frame neu
- * schreibt, und wuerde damit den 8-px-Aufstieg des Einblendens ueberschreiben.
- * Ein noch frueherer Kommentar an dieser Stelle behauptete, `Reveal` fahre nur
- * `opacity` und `filter` und die beiden Animationen griffen nicht in dieselbe
- * Eigenschaft ein. Genau diese Behauptung hat die kollidierende Achse
- * eingefuegt — wer sie wiederherstellt, baut den Fehler erneut ein.
- *
- * Die Achsenfrage loest sich hier von selbst: die Scanline faehrt `translateY`
- * auf `::after`, und `::after` hat keinen Inline-`transform` von `Reveal`, der
- * kollidiert werden koennte.
+ * Warum das Band nicht auf der Karte selbst sitzt: Playwright vergleicht den
+ * bounding box ueber zwei aufeinanderfolgende animation frames, bevor es
+ * klickt. `scale` auf der Karte aendert die Box in JEDEM Frame, die Karte
+ * erreicht also nie Stabilitaet und jeder Klick-Timeout war vorprogrammiert —
+ * nicht langsam, sondern gar nicht. `translateY` auf dem Pseudo-Element
+ * aendert die Box nicht, und `::after` hat auch keinen Inline-`transform`, mit
+ * dem es kollidieren koennte.
  *
  * Warum `::after` und kein Kindelement: ein Kindelement muesste im Stapel
  * ueber dem Formular liegen, braeuchte `z-index` und `pointer-events: none`,
@@ -83,8 +83,12 @@
  * sichtbarer Streifen auf `.page`. Der Klick auf die Karte bleibt moeglich,
  * `pointer-events: none` haelt den Streifen aus der Trefferflaeche.
  *
- * Die Zeiten: 2.4 s Fahrt bei `cubic-bezier(.4,0,.2,1)` — langsam genug, dass
- * der Start und das Ende als zwei Ereignisse lesbar sind, statt als Zittern.
+ * Die Zeiten: 2.4 s Fahrt, `linear`. Das ist die eine Stelle, an der keine
+ * Kurve hingehört: ein Band, das über eine Fläche fährt, ist ein Scanner und
+ * kein Element, das ankommt. Jede Einlaufkurve würde es am Anfang hetzen und
+ * am Ende kriechen lassen — gemessen unter `cubic-bezier(.4,0,.2,1)` lagen
+ * 46 % der Strecke schon nach 800 ms hinter ihm, die letzten 5 % brauchten
+ * dann 640 ms. Konstant ist es in beiden Richtungen lesbar.
  *
  * Das Verhaeltnis Fahrt zu Ruhe war die eigentliche Entscheidung, und es ist
  * einmal falsch gelaufen. Vorher standen 2.4 s Fahrt 4.8 s Ruhe gegenueber,
@@ -133,26 +137,25 @@
  * Anfang vollstaendig ueber ihrer Oberkante. Hell und dunkel liefern
  * dieselben Zahlen — die Strecke haengt an der Geometrie, nicht am Theme.
  *
- * Und die Verteilung ueber die Zeit. Die Fahrt laeuft nicht gleichmaessig:
- * `cubic-bezier(.4, 0, .2, 1)` steht in der Kurzform und gilt damit fuer den
- * ganzen Durchlauf, nicht fuer jeden Keyframe-Abschnitt einzeln. Gemessen
- * (nachher, hell; `ty` in px, dahinter der Anteil der Gesamtstrecke):
+ * Und die Verteilung ueber die Zeit. `linear` gilt fuer den ganzen Durchlauf,
+ * nicht fuer jeden Keyframe-Abschnitt einzeln. Nachgemessen 2026-11-17 in
+ * Chromium (Dev-Server 30141, `/login`, `animation.currentTime` gesetzt und
+ * `getComputedStyle(card, "::after").transform` gelesen; Karte 410.06 px,
+ * `ty` in px, dahinter der Anteil der Gesamtstrecke):
  *
  *   animTime        0 ms   ty -408.06   0 %    das Band liegt ueber der Karte
- *                320 ms   ty -387.69    5 %
- *                800 ms   ty -221.47   46 %
- *               1280 ms   ty  -75.72   81 %
- *               1760 ms   ty  -19.20   95 %
- *               2240 ms   ty   -1.00   99 %
+ *                320 ms   ty -353.65  13.3 %
+ *                800 ms   ty -272.04  33.3 %
+ *               1280 ms   ty -190.43  53.3 %
+ *               1760 ms   ty -108.82  73.3 %
+ *               2240 ms   ty  -27.20  93.3 %
  *               2400 ms   ty    0.00  100 %   Ruhe, 800 ms
  *               3200 ms   ty -408.06    0 %   zweiter Durchlauf
  *               9600 ms                  Ende — die Karte steht still
  *
- * Der Weg zwischen zwei Keyframes, die `transform` deklarieren, wird
- * interpoliert; die Stops 8 % und 70 % deklarieren nur `opacity` und
- * unterbrechen die Fahrt nicht. Wer die Zeitverteilung als Fehler sucht,
- * findet hier keine: die Bewegung laeuft von animTime 0 bis rund 2400 und
- * macht danach 800 ms nichts.
+ * Die Werte liegen exakt proportional zur Zeit (320 / 2400 = 13.3 %), das ist
+ * die ganze Aussage: das Band faehrt, es bremst nicht. Die Stops 8 % und 70 %
+ * deklarieren nur `opacity` und unterbrechen die Fahrt nicht.
  *
  * Abgetastet ueber 9.6 s: je Zyklus 144 von 192 Frames mit veraenderter
  * Position — die 75 % Fahrt, und in der Ruhe kein Zittern.
@@ -222,8 +225,12 @@
   opacity: .22;
   /* 3.2 s je Durchlauf: davon 2.4 s Fahrt (75 %) und 0.8 s Ruhe (25 %).
    * `3` Durchlaeufe statt `1`, damit die Karte nach der Fahrt kurz wieder
-   * aufwacht und nicht 4.8 s lang wie abgeschaltet wirkt. */
-  animation: login-scanline 3.2s cubic-bezier(.4, 0, .2, 1) 3 both;
+   * aufwacht und nicht 4.8 s lang wie abgeschaltet wirkt.
+   *
+   * `linear` und nicht eine der Hauskurven: siehe die Begruendung oben — die
+   * Fahrt ist eine Abtastung, keine Ankunft. Sie gilt fuer den ganzen
+   * Durchlauf, nicht fuer jeden Keyframe-Abschnitt. */
+  animation: login-scanline 3.2s linear 3 both;
 }
 
 @keyframes login-scanline {
@@ -363,6 +370,14 @@
 
 .fieldGroup:focus-within { border-color: var(--accent); }
 
+/* Der Rahmen der beiden Feld-Wrapper wechselt auf Fokus die Farbe. Ohne
+   Übergang schnappt er; 120 ms auf der Standardkurve ist derselbe Takt wie
+   jeder Hover in der App. */
+.control,
+.fieldGroup {
+  transition: border-color var(--duration-hover) var(--ease-standard);
+}
+
 .input {
   flex: 1;
   min-width: 0;
@@ -388,6 +403,7 @@
   font: 650 10px var(--font-mono);
   letter-spacing: .08em;
   text-transform: uppercase;
+  transition: color var(--duration-hover) var(--ease-standard);
 }
 
 .reveal:hover { color: var(--text); }
@@ -414,25 +430,30 @@
    tinted with the theme's danger colour and with a short recoil at the end so
    it reads as "no" rather than as another attempt. The key on the button in
    page.tsx remounts the node per rejection, which is what restarts the
-   animation instead of letting it sit already-finished after the first miss. */
+   animation instead of letting it sit already-finished after the first miss.
+
+   360 ms (`--duration-alert`) statt 480: die Rückweisung erzählt Hinschlagen
+   und Zurückfedern in zwei Schlägen, und 480 ms ließen den nächsten Versuch
+   spürbar warten. `background-color`, nie `background` — die Kurzform würde
+   ein `background-image` löschen, das ein anderes Theme hier später setzt. */
 .rejected {
-  animation: login-reject 480ms ease-out;
+  animation: login-reject var(--duration-alert) var(--ease-standard);
 }
 @keyframes login-reject {
   0% {
-    background: var(--accent);
+    background-color: var(--accent);
     border-color: transparent;
     transform: scale(1);
   }
   35% {
-    background: color-mix(in srgb, var(--danger) 85%, var(--bg));
+    background-color: color-mix(in srgb, var(--danger) 85%, var(--bg));
     transform: scale(.96);
   }
   62% {
     transform: scale(1.02);
   }
   100% {
-    background: var(--accent);
+    background-color: var(--accent);
     transform: scale(1);
   }
 }

@@ -126,13 +126,20 @@
 /* Die Huelle ist nur Ankerpunkt und Transform-Container: `left/top: 50%` plus
  * `translate(-50%, -50%)` haelt das Bild mittig, ohne die Buehne auf Flexbox
  * anzuweisen — sonst kaemen `align-items: center` und der Nutzer-Versatz in
- * denselben Transform. */
+ * denselben Transform.
+ *
+ * Kein `will-change: transform` mehr. Es stand hier, weil der Rahmen beim
+ * Ziehen und Zoomen per Inline-`transform` geschrieben wird — aber ein
+ * erzwungener Layer auf einem Element, das ein beliebig grosses Originalbild
+ * enthaelt, kostet Speicher fuer die volle Bildflaeche, und Chrome befoerdert
+ * das Element beim ersten transformierten Frame ohnehin selbst. Die eine
+ * Ausnahme, die das Haus verbietet, war hier also nicht nur verboten,
+ * sondern teurer als der Nutzen. */
 .imageFrame {
   position: absolute;
   top: 50%;
   left: 50%;
   transform-origin: center center;
-  will-change: transform;
 }
 
 .image {

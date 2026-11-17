@@ -36,6 +36,18 @@ import type {
   ThinkingContent,
 } from "@/lib/types";
 
+/**
+ * Der Takt der Hover-Zustände an den Nachrichten-Aktionen.
+ *
+ * Die Zustände werden per `style` gesetzt, also kann keine Klasse den Übergang
+ * tragen; die Zeiten und die Kurve kommen als CSS-Tokens. Vorher stand hier
+ * sechs Mal `0.12s` und zwei Mal `0.15s` — vier verschiedene Werte für eine
+ * Aktion (Farbe, Deckkraft, Chevron).
+ */
+const HOVER_TRANSITION =
+  "opacity var(--duration-hover) var(--ease-standard), color var(--duration-hover) var(--ease-standard)";
+const CHEVRON_TRANSITION = "transform var(--duration-hover) var(--ease-standard)";
+
 // CJK chars ~1 token each (GLM/DeepSeek/GPT-o200k); other chars ~4 chars/token.
 const CJK_PATTERN = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\u{20000}-\u{2fa1f}\uac00-\ud7af]/u;
 function estimateTokens(text: string): number {
@@ -388,7 +400,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             display: "flex", gap: 3,
             opacity: hovered ? 1 : 0,
             pointerEvents: hovered ? "auto" : "none",
-            transition: "opacity 0.12s",
+            transition: HOVER_TRANSITION,
           }}>
             <button
               onClick={copyContent}
@@ -402,7 +414,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                 cursor: "pointer",
                 fontSize: 11, fontWeight: 400,
                 whiteSpace: "nowrap",
-                transition: "color 0.12s",
+                transition: HOVER_TRANSITION,
               }}
               onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
               onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
@@ -425,7 +437,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               display: "flex", gap: 3,
               opacity: (hovered || forking) ? 1 : 0,
               pointerEvents: (hovered || forking) ? "auto" : "none",
-              transition: "opacity 0.12s",
+              transition: HOVER_TRANSITION,
             }}>
               {canNavigate && (
                 <button
@@ -440,7 +452,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                     cursor: "pointer",
                     fontSize: 11, fontWeight: 400,
                     whiteSpace: "nowrap",
-                    transition: "color 0.12s",
+                    transition: HOVER_TRANSITION,
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
@@ -466,7 +478,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                     cursor: forking ? "not-allowed" : "pointer",
                     fontSize: 11, fontWeight: 400,
                     whiteSpace: "nowrap",
-                    transition: "color 0.12s",
+                    transition: HOVER_TRANSITION,
                   }}
                   onMouseEnter={(e) => { if (!forking) e.currentTarget.style.color = "var(--accent)"; }}
                   onMouseLeave={(e) => { if (!forking) e.currentTarget.style.color = "var(--text-dim)"; }}
@@ -738,7 +750,7 @@ function AssistantMessageView({
               whiteSpace: "nowrap",
               opacity: hovered ? 1 : 0,
               pointerEvents: hovered ? "auto" : "none",
-              transition: "opacity 0.12s, color 0.12s",
+              transition: HOVER_TRANSITION,
             }}
             onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
             onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
@@ -980,7 +992,7 @@ function VibeToolCard({ block, result, duration }: { block: ToolCallContent; res
         {duration !== undefined && (
           <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
         )}
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: CHEVRON_TRANSITION }}>
           <polyline points="2 3.5 5 6.5 8 3.5" />
         </svg>
       </button>
@@ -1179,7 +1191,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         {duration !== undefined && (
           <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
         )}
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: CHEVRON_TRANSITION }}>
           <polyline points="2 3.5 5 6.5 8 3.5" />
         </svg>
       </button>

@@ -2,7 +2,7 @@
 
 import { motion } from "motion/react";
 import { forwardRef } from "react";
-import { EASE_POP } from "./animations";
+import { DURATION_ENTER_PANEL, EASE_EMPHASIZED } from "./animations";
 import { useSweepProps } from "./hooks";
 import type { HTMLMotionProps } from "motion/react";
 
@@ -11,9 +11,11 @@ import type { HTMLMotionProps } from "motion/react";
  * the one-shot light wash. Both halves matter — without the wash a panel just
  * appears, and the wash is what says it arrived.
  *
- * The transition is 240 ms rather than the old 360 ms because the keyframe
- * spent most of its time on the blur and the background cross-fade, neither of
- * which is carried over.
+ * Der Übergang ist 220 ms (`DURATION_ENTER_PANEL`) auf `EASE_EMPHASIZED`:
+ * hier kommt eine große Fläche an. Die alten 240 ms auf der kurzen Kurve
+ * `[0.2, 0.8, 0.3, 1]` wirkten am Anfang gehetzt und standen am Ende still.
+ * Animiert werden ausschließlich `opacity`, `transform` und `filter` —
+ * nichts hier kann ein Layout auslösen.
  *
  * The ref is forwarded because several popovers measure their own box to
  * position themselves; without it they would each have to re-inline these
@@ -32,7 +34,7 @@ export const Reveal = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "r
       {...rest}
       initial={{ opacity: 0, y, filter: "blur(6px)" }}
       animate={{ opacity: 1, y: 0, filter: "blur(0px)", ...sweep.animate }}
-      transition={{ duration: 0.24, ease: EASE_POP, ...sweep.transition }}
+      transition={{ duration: DURATION_ENTER_PANEL, ease: EASE_EMPHASIZED, ...sweep.transition }}
       style={{ ...style, ...sweep.style }}
     >
       {children}

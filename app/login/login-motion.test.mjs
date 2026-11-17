@@ -3,13 +3,15 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 /**
- * Die Scanline auf der Login-Karte gegen den Einblend von `Reveal`.
+ * Die Scanline auf der Login-Karte.
  *
- * `Reveal` schreibt seinen `y: -8` als Inline-`transform: translateY(…)` und
- * erneuert ihn in jedem Frame des 240-ms-Einblendens. Eine CSS-Animation auf
- * demselben Element schlaegt im Kaskadenkontext diesen Inline-Style. Die
- * Scanline sitzt deshalb auf `::after` und nicht auf der Karte — sie hat
- * keinen Inline-`transform`, mit dem sie kollidieren koennte.
+ * Die Karte traegt genau EINE Animation, und sie sitzt auf `::after`. Frueher
+ * lag auf der Karte zusaetzlich ein Auftritt von `Reveal`: der schreibt seinen
+ * `y: -8` als Inline-`transform` und erneuert ihn in jedem Frame. Eine
+ * CSS-Animation auf `transform` schlaegt im Kaskadenkontext diesen
+ * Inline-Style — gemessen war der Translate-Anteil in jedem Sample des
+ * Einblendens 0. Mit dem entfallenen Auftritt ist auch die Kollision weg:
+ * die Karte selbst hat weder Inline-`transform` noch eigene Animation.
  *
  * Die zweite, wichtigere Regel ist eine andere: die Karte darf ihre Groesse
  * nie aendern. Playwright vergleicht den bounding box ueber zwei animation
@@ -102,10 +104,17 @@ test("Die Scanline endet, und `prefers-reduced-motion` schaltet sie ab", () => {
   assert.match(reduced, /\.scanline::after\s*\{\s*animation:\s*none/);
 });
 
-test("Die Karte traegt die Scanline und den Einblend zugleich", () => {
-  // `Reveal` setzt den Inline-`transform`, `.scanline` die Positionierung und
-  // das Clipping. Die Bewegung sitzt auf `::after`.
-  assert.match(page, /<Reveal className=\{`\$\{styles\.card\} \$\{styles\.scanline\}`\}>/);
+test("Die Karte hat genau eine Bewegung, und die sitzt auf ::after", () => {
+  // `Reveal` (und damit ein Inline-`transform` in jedem Frame) ist entfallen:
+  // eine zweite Animation auf derselben Karte war genau der Wettlauf, den
+  // `--ease-standard` und eine einzige Regel nicht brauchen.
+  assert.doesNotMatch(page, /<Reveal\b/, "die Karte holt sich ihren Auftritt zurueck");
+  assert.doesNotMatch(page, /from "@\/components\/motion\/Reveal"/, "toter Reveal-Import");
+  // Die Karte traegt die Positionierung und das Clipping, die Bewegung ihr
+  // Pseudo-Element. Beides wird hier aus der CSS gelesen, nicht aus der
+  // Komponente.
+  assert.match(ruleBody(".scanline"), /position:\s*relative/);
+  assert.match(ruleBody(".scanline::after"), /animation:\s*login-scanline\b/);
 });
 
 test("Die Ruhe ist kuerzer als die Fahrt, und es sind mehr als ein Durchlauf", () => {

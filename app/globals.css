@@ -96,6 +96,30 @@
   --radius-control: 6px;
   --radius-panel: 10px;
   --duration-hover: 120ms;
+
+  /* Die Taktung der Bewegung, gespiegelt aus `components/motion/animations.ts`.
+     Sie steht nur hier und nicht auch im dunklen Block: Bewegung hängt nicht
+     am Theme, und zwei Kopien wären zwei Werte, die auseinanderlaufen können.
+     `html.dark` erbt sie, weil es dasselbe Element ist. Die Werte sind in
+     Millisekunden geschrieben, weil CSS sie so braucht; die TS-Seite führt
+     Sekunden. `components/motion/motion.test.mjs` rechnet beide Seiten
+     gegeneinander und schlägt fehl, sobald sie sich unterscheiden.
+
+     Rollen:
+       --duration-enter        Menü, Popover, Backdrop (180 ms)
+       --duration-enter-panel  Panel, Dialog, Karte (220 ms)
+       --duration-exit         alles, was verschwindet (140 ms)
+       --duration-alert        die Login-Rückweisung (360 ms)
+       --ease-standard         Hover, Zustand, kleine Einblenden
+       --ease-emphasized       große Flächen, weite Wege
+       --ease-exit             Abgänge (beschleunigt weg) */
+  --duration-enter: 180ms;
+  --duration-enter-panel: 220ms;
+  --duration-exit: 140ms;
+  --duration-alert: 360ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 html.dark {
@@ -1003,7 +1027,11 @@ pre, code {
   border-radius: 7px;
   background: var(--bg-panel);
   margin: 0 auto;
-  transition: width 0.15s ease;
+  /* Kein `transition: width` mehr. Die Breite ist hier eine Layout-Eigenschaft:
+     jede Stufe des Zoom-Reglers hätte die SVG neu vermessen und neu gesetzt,
+     also 150 ms Reflow je Klick. Der Zoom ist ein Schritt, kein Weg — er
+     springt jetzt, und zwar ohne Zwischenbilder. Wer ihn fahren will, skaliert
+     das Bild per `transform` und lässt die Box stehen. */
 }
 .mermaid-zoom-canvas svg {
   display: block;
@@ -1309,90 +1337,6 @@ html.dark .chat-session-column::before {
 .chat-session-column > * {
   position: relative;
 }
-.subagent-column {
-  display: flex;
-  flex: 0 0 clamp(280px, 28vw, 360px);
-  width: clamp(280px, 28vw, 360px);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--border);
-  background: var(--bg-panel);
-}
-/* Phone delegation: the column is not merely hidden, it is replaced by a
- * count pill that opens the same panel as a bottom sheet. `SubagentMobileToggle`
- * and this query share the 640px breakpoint from `hooks/useIsMobile.ts`.
- *
- * The `display: none` is load-bearing even though the column is not rendered
- * on mobile: `useIsMobile` answers false on the server and the first client
- * paint, so without it a phone would flash the desktop column. */
-@media (max-width: 640px) {
-  .subagent-column {
-    display: none !important;
-  }
-
-  /* The pill. `position` comes from here, not from the component: the column
-   * already gives every child `position: relative` (`.chat-session-column > *`
-   * above) and this selector is the one that outranks it. The pill floats over
-   * the scroll area, so it takes no height from the chat — the jump-to-bottom
-   * button uses the same layer 40. */
-  .chat-session-column > .subagent-mobile-toggle {
-    position: absolute;
-    /* 80px: clears the 60px notice cards the shelf pins at top 12 on layer 40. */
-    top: 80px;
-    right: 8px;
-    z-index: 40;
-    display: inline-flex;
-    align-items: center;
-    max-width: calc(100% - 16px);
-    /* 44px: the repo's phone touch target (see `.composer-attach-button`). */
-    min-height: 44px;
-    padding: 0 12px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-panel);
-    box-shadow: 0 2px 10px color-mix(in srgb, var(--text) 14%, transparent);
-    color: var(--text-muted);
-    font-family: inherit;
-    font-size: 10.5px;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .chat-session-column > .subagent-mobile-toggle:hover {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
-  .chat-session-column > .subagent-mobile-toggle:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  /* The sheet. Radix renders it through a portal, so the utilities it carries
-   * (`top-1/2 left-1/2 -translate-* max-w-… rounded-xl p-4`) and these rules
-   * cannot meet in the same layer — unlayered CSS wins over Tailwind's
-   * `@layer utilities` whatever the order. Tailwind 4 positions with the
-   * `translate` property, not `transform`; both are cleared. */
-  .subagent-mobile-sheet {
-    inset: auto 0 0 0;
-    width: 100%;
-    max-width: none;
-    height: min(72dvh, 620px);
-    translate: none;
-    transform: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    padding: 0 0 env(safe-area-inset-bottom);
-    border: 1px solid var(--border);
-    border-bottom: none;
-    border-radius: 14px 14px 0 0;
-    background: var(--bg-panel);
-    color: var(--text);
-    overflow: hidden;
-  }
-}
-
 /* Keep the panel border as the idle separator; this element only expands the hit target. */
 .panel-resize-handle {
   position: relative;
@@ -1417,7 +1361,9 @@ html.dark .chat-session-column::before {
   width: 2px;
   pointer-events: none;
   background: transparent;
-  transition: background-color 0.12s ease;
+  /* Zustandswechsel, kein Layout: 120 ms Standardkurve, dieselbe Taktung wie
+     jeder andere Hover. */
+  transition: background-color var(--duration-hover) var(--ease-standard);
 }
 .panel-resize-handle:hover::after,
 .panel-resize-handle:focus-visible::after,
@@ -1483,7 +1429,19 @@ html.dark .chat-session-column::before {
  * which cannot disagree with the panel the way a second, measured number can.
  */
 .app-shell-split [data-panel] {
-  transition: flex-grow 0.2s ease;
+  /* `flex-grow` ist eine Layout-Eigenschaft, und das bleibt hier bewusst so:
+     die geteilte Ansicht gibt dem Panel einen Anteil an der Zeile, und den
+     kennt nur das Layout. Ein `transform`-Fahrweg wäre der richtige, verlangt
+     aber einen eigenen Wrapper um jedes Panel — das ist ein Umbau von
+     `AppShell.tsx` und nicht eine Zeile hier. Bis dahin trägt die Bewegung
+     wenigstens den Takt der anderen Flächen (220 ms, betonte Kurve); sie
+     kostet aber pro Frame ein Reflow von Chat und Panel.
+     Für einen echten *Einklapp*-Weg (Höhe) gibt es zwei erträgliche Muster,
+     beide ohne `height` in der Animation: `grid-template-rows: 0fr -> 1fr` auf
+     einem Grid-Container mit einer Zeile, oder eine feste Höhe plus
+     `transform: scaleY()` — das erste ist das sauberere, weil die Kinder ihre
+     eigene Höhe behalten. */
+  transition: flex-grow var(--duration-enter-panel) var(--ease-emphasized);
 }
 /* Before the starting layout has been measured against the real row, and while
    a separator is held: the panels must be where they are, not slide there —
@@ -1558,9 +1516,9 @@ html.dark .chat-session-column::before {
   text-align: left;
   cursor: pointer;
   transition:
-    background var(--duration-hover),
-    color var(--duration-hover),
-    border-color var(--duration-hover);
+    background var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard),
+    border-color var(--duration-hover) var(--ease-standard);
 }
 .sidebar-nav-button:hover {
   background: var(--bg-selected);
@@ -1682,11 +1640,15 @@ html.dark .chat-session-column::before {
     background: rgba(0, 0, 0, 0.24);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.2s ease;
+    /* Der Abgang ist der Grundzustand: 140 ms, linear, weil eine reine
+       Deckkraftblende ohne Kurve am wenigsten Nachlauf hat. Der Auftritt
+       bekommt in der `is-open`-Regel seine eigene, langsamere Zeit. */
+    transition: opacity var(--duration-exit) linear;
   }
   .right-panel-overlay-backdrop.is-open {
     opacity: 1;
     pointer-events: auto;
+    transition: opacity var(--duration-enter) var(--ease-standard);
   }
   .right-panel-container {
     position: fixed;
@@ -1700,7 +1662,10 @@ html.dark .chat-session-column::before {
     min-width: 300px;
     overflow: hidden;
     box-shadow: -12px 0 32px rgba(0, 0, 0, 0.18);
-    transition: transform 0.2s ease;
+    /* Schließen ist der Grundzustand: 140 ms, beschleunigt weg. Öffnen steht
+       in `.right-panel-open` und darf mit 180 ms ankommen — ein Abgang, der so
+       lange dauert wie der Auftritt, liest sich als Nachhall. */
+    transition: transform var(--duration-exit) var(--ease-exit);
   }
   /* The panel is out of flow here, so its wrapper must not keep a share of the
      row reserved for it — otherwise the library would still shrink the chat by
@@ -1711,6 +1676,7 @@ html.dark .chat-session-column::before {
   }
   .right-panel-container.right-panel-open {
     transform: translateX(0);
+    transition: transform var(--duration-enter) var(--ease-emphasized);
   }
   .right-panel-container.right-panel-closed {
     transform: translateX(100%);
@@ -1745,11 +1711,17 @@ html.dark .chat-session-column::before {
      * grosse Explorer-Fenster (1300) — einschliessen. Siehe die Erklaerung am
      * Aufruf in `AppShell.tsx`. */
     z-index: 200;
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    /* Nur `transform`, und der Schatten fährt nicht mehr mit. `box-shadow`
+       ist keine zusammengesetzte Eigenschaft: 250 ms lang hätte der Browser
+       pro Frame einen 20-px-Weichzeichner über die ganze Schubladenkante
+       neu gezeichnet. Der Schatten springt beim Öffnen mit, hinter der Kante
+       ist das ohnehin nicht zu sehen. */
+    transition: transform var(--duration-exit) var(--ease-exit);
   }
   .sidebar-container.sidebar-open {
     transform: translateX(0);
     box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+    transition: transform var(--duration-enter) var(--ease-emphasized);
   }
   .sidebar-container.sidebar-closed {
     transform: translateX(calc(-100% - env(safe-area-inset-left)));
@@ -1772,7 +1744,12 @@ html.dark .chat-session-column::before {
     height: var(--app-viewport-height, 100dvh);
     z-index: 250;
     overflow: hidden;
-    transition: transform 0.2s ease;
+    /* Hier steht bewusst keine Transition mehr. Der geschlossene Zustand ist
+       `display: none`, also gibt es keinen Frame, aus dem heraus ein Fahrweg
+       beginnen könnte: das Panel erschiene hart, und die alte 200-ms-Regel war
+       toter Code. Ein echter Schub von rechts verlangt, dass das Panel montiert
+       bleibt und nur `transform`/`visibility` wechselt — das ist eine Änderung
+       an `AppShell.tsx`, nicht an dieser Regel. */
   }
   .right-panel-container.right-panel-open {
     width: auto;
@@ -2271,4 +2248,75 @@ html[data-omp-animations="off"] .omp-shimmer {
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ---------------------------------------------------------------------------
+   Die Radix-Flächen (Dialog, Menü, Tooltip)
+   ---------------------------------------------------------------------------
+   Diese Flächen laufen über `tw-animate-css` und nicht über
+   `components/motion/` — die Zustände (`data-open` / `data-closed`) gehören
+   Radix, und ein zweiter Fahrweg daneben wäre genau die Doppelung, die es
+   nicht geben soll. Die Taktung kommt trotzdem aus derselben Tabelle:
+   `tw-animate-css` liest seine Dauer aus `--tw-animation-duration` und seine
+   Kurve aus `--tw-ease`, und beide Variablen lassen sich hier setzen.
+
+   Warum das hier steht und nicht als Klasse an der Komponente: die
+   Tailwind-Klasse (`duration-100`) ist der Auslöser, aber jede Zahl dort wäre
+   eine zweite Quelle neben `animations.ts`. Unlayered CSS schlägt die
+   `@layer utilities` der Klassen, deshalb gewinnt diese Regel gegen
+   `duration-100` — und die Komponente bleibt unverändert.
+
+   100 ms waren für eine Fläche zu kurz: der Dialog war schon fertig, bevor das
+   Auge ihn gefunden hatte, und die Kurve war der Browser-Default `ease` (eine
+   S-Kurve, die langsam anfährt). Jetzt 220 ms für den Dialog, 180 ms für
+   Menü und Schatten, mit derselben betonten Kurve wie `ModalPanel`. Der
+   Abgang bleibt kürzer als der Auftritt — das ist der Zustand, in dem der
+   Nutzer schon weiter ist. */
+[data-slot="dialog-overlay"],
+[data-slot="dropdown-menu-content"] {
+  --tw-animation-duration: var(--duration-enter);
+  --tw-ease: var(--ease-emphasized);
+}
+[data-slot="dialog-content"] {
+  --tw-animation-duration: var(--duration-enter-panel);
+  --tw-ease: var(--ease-emphasized);
+}
+[data-slot="dialog-overlay"][data-state="closed"],
+[data-slot="dialog-content"][data-state="closed"],
+[data-slot="dropdown-menu-content"][data-state="closed"] {
+  --tw-animation-duration: var(--duration-exit);
+  --tw-ease: var(--ease-exit);
+}
+
+/* Ein Betriebssystem, das weniger Bewegung verlangt, bekommt auch von den
+   Radix-Flächen keine. `1ms` und nicht `animation: none`: Radix wartet beim
+   Schließen auf `animationend`, und ein ausgehängter Name würde nie eins
+   auslösen — der Dialog bliebe stehen. Dieselbe Begründung wie im
+   `data-omp-animations="off"`-Block oben. */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="tooltip-content"] {
+    --tw-animation-duration: 1ms;
+  }
+}
+
+/* Die großen Fahrwege sind Bewegung, keine Zustandsfarbe: wer im Betriebssystem
+ * weniger Bewegung verlangt, bekommt Schublade und Datei-Panel ohne Fahrt.
+ * Nur `transform`-Fahrten werden hier abgeschaltet — Hover- und Fokusfarben
+ * bleiben weich, weil sie keine Bewegung sind.
+ *
+ * Die offenen Zustände stehen mit in der Liste, weil ihre Regel eine Klasse
+ * mehr trägt (`.sidebar-open`) und damit gewinnen würde; eine Media-Query
+ * bringt keine Spezifität mit. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-container,
+  .sidebar-container.sidebar-open,
+  .right-panel-container,
+  .right-panel-container.right-panel-open,
+  .right-panel-overlay-backdrop,
+  .right-panel-overlay-backdrop.is-open {
+    transition: none;
+  }
 }

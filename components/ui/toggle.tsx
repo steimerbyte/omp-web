@@ -39,22 +39,28 @@ function Toggle({
         cursor: disabled ? "wait" : "pointer",
         background: checked ? "var(--accent)" : "var(--border)",
         position: "relative",
-        transition: "background 0.18s",
+        transition: "background-color var(--duration-enter) var(--ease-standard)",
         outline: "none",
         opacity: disabled ? 0.65 : 1,
       }}
     >
+      {/* Der Knopf fährt `transform`, nie `left`. Eine linke Kante ist eine
+          Layout-Eigenschaft: jeder Frame hätte das Element neu gesetzt. Die
+          18 px sind die Strecke, die `left: 3 -> 21` vorher zurückgelegt hat
+          (40 - 2 * 3 - 16), damit der Knopf an derselben Stelle sitzt. */}
       <span
         style={{
           position: "absolute",
           top: 3,
-          left: checked ? 21 : 3,
+          left: 3,
           width: 16,
           height: 16,
           borderRadius: "50%",
           background: "var(--bg)",
           boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
-          transition: "left 0.18s cubic-bezier(.4,0,.2,1)",
+          transform: checked ? "translateX(18px)" : "none",
+          transition:
+            "transform var(--duration-enter) var(--ease-standard), background-color var(--duration-enter) var(--ease-standard)",
         }}
       />
     </button>

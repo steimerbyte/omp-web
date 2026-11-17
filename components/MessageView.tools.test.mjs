@@ -339,8 +339,14 @@ test("gives the vibe chevron the same declarations as the generic one", () => {
   const vibe = render(assistantWithToolCall("vibe_spawn", { cli: "good", prompt: "review" }, "v7"));
   const generic = render(assistantWithToolCall("read", { path: "briefs/scout.md" }, "g7"));
 
-  // The rotation is the generic card's inline transition, pinned declaration by
-  // declaration so a later edit cannot quietly drop it from one of the cards.
-  assert.deepEqual(chevronDeclarations(vibe), ["flex-shrink:0", "transform:none", "transition:transform 0.15s"]);
-  assert.deepEqual(chevronDeclarations(vibe), chevronDeclarations(generic));
+  // The rotation must hang on the transform, and it must be the same
+  // declaration on both cards. Which curve and how long belongs to the motion
+  // token, so this test matches the property, not a number.
+  const declarations = chevronDeclarations(vibe);
+  assert.equal(
+    declarations.filter((part) => /^transition:transform\b/.test(part)).length,
+    1,
+    "the chevron transitions its transform",
+  );
+  assert.deepEqual(declarations, chevronDeclarations(generic));
 });

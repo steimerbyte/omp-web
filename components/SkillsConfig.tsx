@@ -634,7 +634,7 @@ function AddSkillPanel({
                       : isInstalling
                         ? "var(--accent)"
                         : "var(--text-muted)",
-                    transition: "color 0.12s",
+                    transition: "color var(--duration-hover) var(--ease-standard)",
                   }}
                 >
                   {isInstalled
@@ -1113,7 +1113,8 @@ export function SkillsConfig({
                               ? "none"
                               : "0 0 4px var(--accent)",
                             transition:
-                              "background 0.15s, box-shadow 0.15s",
+                              "background-color var(--duration-hover) var(--ease-standard), " +
+                              "box-shadow var(--duration-hover) var(--ease-standard)",
                           }}
                         />
                         <span

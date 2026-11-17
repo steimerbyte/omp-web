@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { Plus } from "lucide-react";
 import styles from "./FileImagePreview.module.css";
 import { motion } from "motion/react";
-import { EASE_POP } from "./motion/animations";
+import { DURATION_ENTER_PANEL, EASE_EMPHASIZED } from "./motion/animations";
 import { Pressable } from "./motion/Pressable";
 import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
 import { useI18n } from "@/hooks/useI18n";
@@ -475,7 +475,7 @@ export function FileImagePreview({
                 data-loaded={loadState === "loaded" ? "true" : "false"}
                 initial={{ opacity: 0, filter: "blur(6px)" }}
                 animate={{ opacity: 1, filter: "blur(0px)" }}
-                transition={{ duration: 0.24, ease: EASE_POP }}
+                transition={{ duration: DURATION_ENTER_PANEL, ease: EASE_EMPHASIZED }}
                 style={naturalSize ? {
                   width: naturalSize.width * renderScale,
                   height: naturalSize.height * renderScale,

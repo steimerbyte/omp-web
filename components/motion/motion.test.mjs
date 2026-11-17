@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -12,6 +12,16 @@ import {
   readStoredAnimationMode,
 } from "./animation-mode.ts";
 import { useSweepProps } from "./hooks.ts";
+import {
+  DURATION_ALERT,
+  DURATION_ENTER,
+  DURATION_ENTER_PANEL,
+  DURATION_EXIT,
+  DURATION_HOVER,
+  EASE_EMPHASIZED,
+  EASE_EXIT,
+  EASE_STANDARD,
+} from "./animations.ts";
 
 /**
  * These exercise the store rules, not the class names or the markup. Whether a
@@ -853,4 +863,167 @@ test("Der Sweep ist endlich und braucht keine Pause wie der Endlos-Wash", () => 
     `die Sweep-Dauer (${backgroundPosition.duration}s) ist kuerzer als die Panel-Einblendung`,
   );
   assert.equal(animate.backgroundPosition.length, 2, "der Sweep hat keine Lauf-Ende-Paare");
+});
+/*
+ * Die Tokens sind die eine Quelle, aber CSS kann kein TS importieren — die
+ * Werte stehen deshalb zweimal da, in `animations.ts` in Sekunden und in
+ * `app/globals.css` in Millisekunden. Diese Tests rechnen beide Seiten
+ * gegeneinander, statt die Doppelung zu behaupten. Und sie pruefen, dass keine
+ * der geteilten CSS-Dateien sich ihre eigene Taktung erfindet: jede Zahl, die
+ * dort nicht aus einem `var(--duration-*)` kommt, ist ein zweiter Takt.
+ */
+
+// `--duration-hover` steht in beiden Theme-Bloecken (dort haelt
+// `lib/theme-tokens.test.mjs` sie); die uebrigen Bewegungstokens stehen einmal.
+const MOTION_TOKENS = [
+  ["--duration-enter", DURATION_ENTER],
+  ["--duration-enter-panel", DURATION_ENTER_PANEL],
+  ["--duration-exit", DURATION_EXIT],
+  ["--duration-alert", DURATION_ALERT],
+];
+
+const ALL_DURATIONS = [["--duration-hover", DURATION_HOVER], ...MOTION_TOKENS];
+
+const EASING_TOKENS = [
+  ["--ease-standard", EASE_STANDARD],
+  ["--ease-emphasized", EASE_EMPHASIZED],
+  ["--ease-exit", EASE_EXIT],
+];
+
+const sharedCss = stripComments(readFileSync(new URL("../../app/globals.css", import.meta.url), "utf8"));
+
+test("Jede Dauer in animations.ts hat dieselbe Zahl als CSS-Variable", () => {
+  for (const [name, seconds] of ALL_DURATIONS) {
+    const matches = [...sharedCss.matchAll(new RegExp(`${name}\\s*:\\s*([^;]+);`, "g"))];
+    assert.ok(matches.length >= 1, `${name} fehlt in globals.css`);
+    for (const match of matches) {
+      assert.equal(
+        match[1].trim(),
+        `${Math.round(seconds * 1000)}ms`,
+        `${name} driftet gegen animations.ts (${seconds}s)`,
+      );
+    }
+  }
+  // Die neuen Tokens stehen genau einmal, damit es keine zweite Zahl gibt.
+  for (const [name] of MOTION_TOKENS) {
+    assert.equal(
+      [...sharedCss.matchAll(new RegExp(`${name}\\s*:`, "g"))].length,
+      1,
+      `${name} steht mehrfach in globals.css`,
+    );
+  }
+});
+
+test("Jede Kurve in animations.ts hat dieselbe cubic-bezier-Schreibweise in CSS", () => {
+  for (const [name, curve] of EASING_TOKENS) {
+    const matches = [...sharedCss.matchAll(new RegExp(`${name}\\s*:\\s*([^;]+);`, "g"))];
+    assert.equal(matches.length, 1, `${name} steht ${matches.length}x in globals.css`);
+    assert.equal(
+      matches[0][1].replace(/\s+/g, " ").trim(),
+      `cubic-bezier(${curve.join(", ")})`,
+      `${name} driftet gegen animations.ts`,
+    );
+  }
+});
+
+test("Die Bewegungstokens stehen einmal, nicht je Theme", () => {
+  // Sie haengen nicht am Theme. Zwei Kopien waeren zwei Werte, die
+  // auseinanderlaufen koennen — und `html.dark` erbt sie ohnehin.
+  const dark = sharedCss.slice(sharedCss.indexOf("html.dark {"));
+  for (const [name] of [...MOTION_TOKENS, ...EASING_TOKENS]) {
+    assert.equal(
+      [...dark.matchAll(new RegExp(`${name}\\s*:`, "g"))].length,
+      0,
+      `${name} steht auch im dunklen Block`,
+    );
+  }
+});
+
+test("Keine geteilte CSS-Datei erfindet eine eigene Dauer oder Kurve", () => {
+  const files = [
+    "../../app/globals.css",
+    "../../app/login/login.module.css",
+    "../../app/recover/recover.module.css",
+    "../SettingsConfig.module.css",
+    "../FileBrowserDialog.module.css",
+  ];
+  for (const file of files) {
+    const css = stripComments(readFileSync(new URL(file, import.meta.url), "utf8"));
+    // Eine `transition:`-Deklaration mit einer nackten Zeitangabe ist ein
+    // zweiter Takt neben den Tokens.
+    assert.doesNotMatch(css, /\btransition:[^;{}]*\d\s*m?s\b/, `${file}: feste Dauer in transition`);
+    assert.doesNotMatch(css, /\btransition:[^;{}]*cubic-bezier/, `${file}: eigene Kurve in transition`);
+    // `animation:` darf eine Dauer tragen (die Scanline ist eine Komposition,
+    // kein Uebergang), aber keine selbstgeschriebene Kurve.
+    assert.doesNotMatch(css, /\banimation:[^;{}]*cubic-bezier/, `${file}: eigene Kurve in animation`);
+  }
+});
+
+test("Kein Primitive animiert eine Layout-Eigenschaft", () => {
+  // Ausschliesslich `transform` (x/y/scale/rotate), `opacity` und `filter`.
+  // `height`/`width`/`top`/`left` wuerden pro Frame ein Reflow ausloesen — und
+  // in einem `initial`-Objekt waere das kein Detail, sondern der Fehler.
+  const LAYOUT = /\b(?:height|width|top|left|right|bottom|margin|padding|inset)\s*:/;
+  for (const file of ["Reveal.tsx", "Enter.tsx", "Pressable.tsx"]) {
+    const source = stripComments(readFileSync(new URL(`./${file}`, import.meta.url), "utf8"));
+    for (const marker of ["initial={{", "animate={{"]) {
+      let index = source.indexOf(marker);
+      while (index !== -1) {
+        // Bis zur schliessenden Klammer des Objekts; die Objekte hier sind
+        // flach, ein `}` beendet sie.
+        const object = source.slice(index + marker.length, source.indexOf("}", index + marker.length));
+        assert.doesNotMatch(object, LAYOUT, `${file}: ${marker.slice(0, -3)} animiert Layout`);
+        index = source.indexOf(marker, index + 1);
+      }
+    }
+  }
+});
+
+test("Kein Primitive tippt seine Dauer ab, statt das Token zu importieren", () => {
+  for (const file of ["Reveal.tsx", "Enter.tsx", "Pressable.tsx"]) {
+    const source = stripComments(readFileSync(new URL(`./${file}`, import.meta.url), "utf8"));
+    assert.doesNotMatch(source, /\bduration:\s*0?\.\d+/, `${file}: feste Dauer`);
+    assert.doesNotMatch(source, /\bease:\s*"/, `${file}: Kurve als String statt Token`);
+  }
+  // Der Druck ist eine Feder, kein 120-ms-Tween.
+  const pressable = stripComments(readFileSync(new URL("./Pressable.tsx", import.meta.url), "utf8"));
+  assert.match(pressable, /SPRING_PRESS/);
+  // Und der Dialog-Hintergrund darf sich keine eigene Kurve mehr nehmen.
+  const enter = stripComments(readFileSync(new URL("./Enter.tsx", import.meta.url), "utf8"));
+  assert.equal((enter.match(/EASE_/g) ?? []).length >= 2, true, "Enter: Kurven kommen nicht aus dem Token");
+});
+
+test("Keine Komponente tippt eine Uebergangszeit ab", () => {
+  // Die Tokens sind nur dann die eine Quelle, wenn keine .tsx-Datei daneben
+  // wieder eine eigene Zahl schreibt. Vorher standen 13 Stellen in
+  // `AppShell.tsx`, 8 in `MessageView.tsx` und je eine in sieben weiteren
+  // Dateien — vier davon bei 0.1 s, also unter der 120-ms-Schwelle des
+  // Hover-Tokens. Geprueft wird nur die Dauer im inline `transition:`; Namen
+  // wie `transition: none` und `var(--duration-*)` bleiben erlaubt.
+  const roots = ["../../components", "../../app"];
+  for (const root of roots) {
+    const files = readdirSync(new URL(root, import.meta.url), { recursive: true })
+      .map(String)
+      .filter((name) => name.endsWith(".tsx") || name.endsWith(".ts"));
+    for (const name of files) {
+      const source = stripComments(readFileSync(new URL(`${root}/${name}`, import.meta.url), "utf8"));
+      assert.doesNotMatch(
+        source,
+        /transition:\s*[`"'][^`"']*\d+(?:\.\d+)?m?s\b/,
+        `${name}: feste Dauer in einem inline transition`,
+      );
+      assert.doesNotMatch(
+        source,
+        /transition:\s*[`"'][^`"']*cubic-bezier/,
+        `${name}: eigene Kurve in einem inline transition`,
+      );
+    }
+  }
+});
+
+test("Der Sweep laeuft auf der Standardkurve", () => {
+  // Nicht der Quelltext, sondern die zurueckgegebene Transition: der Hook
+  // rendert wirklich, und was er liefert, ist der Vertrag.
+  const { transition } = renderSweepProps();
+  assert.deepEqual([...transition.backgroundPosition.ease], [...EASE_STANDARD]);
 });

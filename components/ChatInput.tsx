@@ -3465,14 +3465,23 @@ function ContextUsageMeter({
           boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent)",
         }}
       >
+        {/* Der Füllstand fährt `transform: scaleX`, nicht `width`: eine Breite
+            ist eine Layout-Eigenschaft, und jede Änderung hätte die Leiste (und
+            alles daneben) neu gemessen. Die Fläche selbst ist immer 100 % breit
+            und wird nur beschnitten — die Prozentzahl, die auf dem Schirm
+            ankommt, bleibt dieselbe. Kein eigener Radius mehr: der Radius der
+            Spur schneidet die Enden, ein skalierter Radius würde zu einer
+            Ellipse gequetscht. */}
         <span
           style={{
             display: "block",
-            width: `${progress}%`,
+            width: "100%",
             height: "100%",
-            borderRadius: "inherit",
+            transform: `scaleX(${progress / 100})`,
+            transformOrigin: "left center",
             background: color,
-            transition: "width 0.2s ease, background 0.2s ease",
+            transition:
+              "transform var(--duration-hover) var(--ease-standard), background-color var(--duration-hover) var(--ease-standard)",
           }}
         />
       </span>

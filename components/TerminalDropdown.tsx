@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { Enter } from "./motion/Enter";
 import { Pressable } from "./motion/Pressable";
 import { Shimmer } from "./motion/Shimmer";
-import { DURATION_FAST, PULSE_TRANSITION } from "./motion/animations";
+import { PULSE_TRANSITION, SPRING_PRESS } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
 
 interface TerminalSummary {
@@ -133,7 +133,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
           opacity: disabled ? 0.45 : 1,
           fontSize: 11,
           whiteSpace: "nowrap",
-          transition: "color 0.1s, background 0.1s",
+          transition: "color var(--duration-hover) var(--ease-standard), background-color var(--duration-hover) var(--ease-standard)",
         }}
         onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.color = "var(--text)"; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)"; }}
@@ -238,7 +238,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                 whileTap={mode === "off" ? undefined : t.status === "running"
                   ? { scale: 0.96, backgroundColor: "var(--accent-hover, var(--accent))" }
                   : undefined}
-                transition={{ duration: DURATION_FAST }}
+                transition={SPRING_PRESS}
                 style={{
                   display: "flex",
                   alignItems: "center",

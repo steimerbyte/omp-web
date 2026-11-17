@@ -181,7 +181,7 @@ components/
   CollapsibleMessage.tsx one-line fold for an old chat output
   ChatInput.tsx       input bar + model/role/thinking/tools/compact controls
   MessageView.tsx     renders one message; vibe_* results get a screen wall
-  SubagentPanel.tsx   live subagent workers of the current session
+  SubagentPanel.tsx   live subagent workers + the composer-row entry point
   StatsView.tsx       stats page: KPIs, inline SVG, tables, 403/empty/error
   BranchNavigator.tsx in-session branch switcher
   ChatMinimap.tsx     scroll minimap alongside the message list
@@ -646,7 +646,7 @@ knowable from the frame. That rule is pure and lives in
 imports it, its test imports it directly, and it may only reorder, never drop a
 row. Any future tree view needs a depth field on the snapshot first.
 
-### Subagent state belongs to one session, and is reachable on a phone
+### Subagent state belongs to one session, and has one surface
 
 - `mergeSubagentSnapshots` merges by id, so the snapshots survive a session
   switch by default. Today `components/AppShell.tsx` bumps `sessionKey` in its
@@ -662,19 +662,27 @@ row. Any future tree view needs a depth field on the snapshot first.
   only 404 is "Session not found". The guard's live part is the promotion skip:
   a `null` id replaced by the session's first real id is the same scope and
   must not wipe a `/vibe` that was just entered.
-- On a narrow screen the panel is not a column — `showSubagentPanel` in
-  `components/AppShell.tsx` requires `!isMobile` — but `SubagentMobileToggle`
-  (in `components/SubagentPanel.tsx`) shows a count pill above the chat and
-  opens the same panel as a dialog sheet. A width check that only hides the
-  column makes running delegations invisible on a phone; the pill is the only
-  sign there that workers are running, so it names the count, not just "details".
-  The sheet passes `translate-x-0 translate-y-0` to the dialog primitive's
-  `DialogContent`, because the primitive's base classes carry
-  `-translate-x-1/2 -translate-y-1/2`: a sheet that overrides only the anchoring
-  (`left`/`bottom`) keeps the horizontal translate and lands half its width
-  off-screen. Before the fix the 390 px screenshot showed exactly that left
-  strip; after it, a Playwright/Chromium measurement at 96 % of the entrance
-  animation read x=8, width=375 — the centering of the 0.961 zoom, not a shift.
+- **One surface, on every width.** `SubagentAgentButton` (in
+  `components/SubagentPanel.tsx`) sits above the composer on the same row as
+  the `VibeBar`, right-aligned by the flexible placeholder, and appears only
+  while work is running — an active subagent or a vibe worker. Finished rows
+  alone show nothing; a dialog that is already open survives the last worker
+  ending, and closing it hides the button. It
+  opens one centered dialog (`layer={120}`, `min(780px, 92vw)` by
+  `min(72dvh, 640px)`) holding the panel with `collapsible={false}` — the list
+  with running/history groups and a row's live transcript, unchanged. There is
+  no desktop column and no phone pill any more: both are gone from
+  `AppShell.tsx` and `app/globals.css`, and `ChatWindow` no longer forwards
+  `subagents` upward because it owns the button. The button turns accent and
+  pulses while work runs; the pulse is a separate opacity-animated ring, and it
+  stands still with animations off (`useAnimationMode`, like `Spin`).
+- **Vibe workers are counted, not listed.** `/vibe` workers are whole sessions
+  driven through the `vibe_*` tools, not `SubagentSnapshot`s: the SDK's
+  `RpcSubagentRegistry` subscribes to the session's subagent event bus, and
+  `VibeSessionRegistry.spawn` never emits on it — it registers a worker and
+  starts an async turn job. The dialog therefore states their count above the
+  list (`subagents.vibeWorkers`) and never invents a row, because
+  `get_subagent_messages` would refuse an id the registry does not know.
 
 ### `enabledModels` scoping
 The `enabledModels` setting uses omp's `--models` syntax: globs against
@@ -1334,6 +1342,41 @@ TypeScript half type-checks against — keep the two in sync.
   open, and a primitive that cannot hand back a ref gets reimplemented inline,
   which is how the duplicated `session-info-pop` keyframes appeared in the
   first place. If a primitive does not fit a callsite, widen the primitive.
+- **The motion language is roles, not numbers.** `animations.ts` owns three
+  curves — `EASE_STANDARD` `(0.2, 0, 0, 1)` for hover, state changes and small
+  surfaces; `EASE_EMPHASIZED` `(0.16, 1, 0.3, 1)` for panels, dialogs and
+  drawers, which must move from the first frame and land softly; `EASE_EXIT`
+  `(0.4, 0, 1, 1)` for everything leaving — four durations (`DURATION_HOVER`
+  120 ms, `DURATION_ENTER` 180 ms, `DURATION_ENTER_PANEL` 220 ms,
+  `DURATION_EXIT` 140 ms), `DURATION_ALERT` 360 ms for the login rejection, and
+  `SPRING_PRESS` (`visualDuration` 160 ms, `bounce` 0.22) for `whileTap`.
+  A press springs and a colour tweens: a spring on a colour value visibly
+  double-flashes. Enter and exit are separate — an exit as slow as the entrance
+  reads as lag.
+- **The stylesheets read the same vocabulary through CSS variables.**
+  `app/globals.css` mirrors the tokens as `--duration-enter`,
+  `--duration-enter-panel`, `--duration-exit`, `--duration-alert`,
+  `--ease-standard`, `--ease-emphasized` and `--ease-exit`, declared once in
+  `:root` because motion does not vary with the theme (`--duration-hover` keeps
+  its two theme-block copies). `components/motion/motion.test.mjs` parses both
+  files and fails when a value drifts; it also rejects a bare duration or a
+  `cubic-bezier()` inside a `transition:`, in the shared CSS and in every
+  `.tsx`/`.ts` under `components/` and `app/`. Radix surfaces
+  (dialog, menu) get the same tokens through `--tw-animation-duration` /
+  `--tw-ease` in `globals.css`, never through a second Tailwind number.
+- **Only `transform`, `opacity` and `filter` animate — no layout property
+  does.** A `width`/`height`/`top`/`left`/`flex-grow` transition reflows every
+  frame; the mermaid zoom and the two progress bars moved to
+  `transform: scaleX()`, the toggle knob to `translateX`, and the drawer and
+  switch shadows stopped animating. The desktop split's `flex-grow` is the one
+  documented exception — `globals.css` says why and names
+  `grid-template-rows: 0fr -> 1fr` for a genuine height collapse.
+- **The login card carries exactly one animation.** The scanline on `::after`
+  (3.2 s, three passes, `linear`) is the page's only motion; the `Reveal`
+  entrance is gone, so the card has no inline `transform` for a keyframe to
+  fight with and the collision recorded under "Comments that state a number"
+  is structurally impossible. `app/login/login-motion.test.mjs` asserts both
+  halves: no `Reveal` in the page, no `animation:` on the card.
 - **The mode lives in `localStorage` as `omp-animations`**, not in
   `/api/settings`. That route projects a schema out of the pinned
   `@oh-my-pi/pi-coding-agent`, so a new path there means patching a foreign
@@ -1353,7 +1396,10 @@ TypeScript half type-checks against — keep the two in sync.
 - **Never set `will-change` by hand and never write a colour literal.** Motion
   manages `will-change`; pinning it on a permanently animated element holds a
   compositing layer for the life of the page. Colour literals break imported
-  themes, because `applyOmpPalette` rewrites the variables at runtime.
+  themes, because `applyOmpPalette` rewrites the variables at runtime. The one
+  hand-set case left in the tree was the image preview's pan frame
+  (`FileImagePreview.module.css`); it is gone, because the forced layer on a
+  full-size photo cost more than the promotion Chrome does on its own.
 
 ### The gradient border on the chat input
 - **The ring is a band around the bar, and it never eats the content's
@@ -1444,7 +1490,9 @@ TypeScript half type-checks against — keep the two in sync.
     axis than `Reveal`, so the two would not collide. Measured in Chromium: the
     inline `transform: translateY(-7.8px)` was overwritten by keyframes on
     `transform`, and the translate component was `0` in every sample of the
-    entrance.
+    entrance. The fix is one animation rather than a shared axis: `Reveal` was
+    removed from `/login`, and the test asserts the page mounts no `Reveal` and
+    that the card itself carries no keyframe.
   - `app/api/web-access/route.ts` claimed an authorization that was not
     performed. A comment asserting a *vulnerable* state is read as a safety
     guarantee by the next person.

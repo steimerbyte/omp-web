@@ -15,7 +15,6 @@ import {
 } from "react-resizable-panels";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
-import { SubagentMobileToggle, SubagentPanel } from "./SubagentPanel";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 import { CalendarView } from "./CalendarView";
 import { ScheduledTasksView } from "./ScheduledTasksView";
@@ -68,7 +67,7 @@ import {
   SIDEBAR_PANEL_ID,
   type PanelLayout,
 } from "@/lib/panel-layout";
-import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode, SubagentSnapshot } from "@/lib/types";
+import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/omp-types";
@@ -83,6 +82,26 @@ type AutoNameStatus =
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
+
+/**
+ * Der Takt der Hover- und Zustandswechsel an den inline gestylten Knöpfen.
+ *
+ * Die Zustände dieser Knöpfe werden per `style` gesetzt (`onMouseEnter` schreibt
+ * direkt in `style`), also kann keine Klasse den Übergang tragen. Die Zeiten
+ * und die Kurve kommen deshalb als CSS-Tokens — genau die, die auch die
+ * Stylesheets lesen. Vorher standen hier dreizehn eigene Zahlen, vier davon
+ * bei 0.1 s statt der 120 ms des Hover-Tokens.
+ *
+ * `background-color`/`border-color`, nicht `background`/`border`: die Kurzform
+ * deckt auch `background-image` ab, und ein Knopf, der beim Hover sein Bild
+ * verliert, wäre ein anderer Fehler. `opacity` steht mit in der Liste, weil
+ * die Zeilen der Seitenleiste ihre Deckkraft im selben Zustandswechsel ändern.
+ */
+const HOVER_TRANSITION =
+  "background-color var(--duration-hover) var(--ease-standard), " +
+  "color var(--duration-hover) var(--ease-standard), " +
+  "border-color var(--duration-hover) var(--ease-standard), " +
+  "opacity var(--duration-hover) var(--ease-standard)";
 
 /**
  * Breakpoint at which the file panel joins the split layout. Below it the panel
@@ -481,7 +500,6 @@ export function AppShell() {
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
-  const [subagents, setSubagents] = useState<SubagentSnapshot[]>([]);
   const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
   const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
@@ -1104,10 +1122,6 @@ export function AppShell() {
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
-  const hasSubagents = selectedSession !== null && subagents.length > 0;
-  // The column needs width beside the chat; a phone opens the same panel from
-  // the count pill instead (before this, running delegation was invisible there).
-  const showSubagentPanel = hasSubagents && !isMobile;
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
@@ -1276,7 +1290,7 @@ export function AppShell() {
               borderRadius: 9,
               color: activeView === "stats" ? "var(--text)" : "var(--text-muted)",
               cursor: "pointer", fontSize: 12,
-              fontFamily: "var(--font-mono)", transition: "background 0.12s, color 0.12s, border-color 0.12s",
+              fontFamily: "var(--font-mono)", transition: HOVER_TRANSITION,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; e.currentTarget.style.borderColor = "var(--text-dim)"; }}
             onMouseLeave={(e) => {
@@ -1301,7 +1315,7 @@ export function AppShell() {
             width: "100%", height: 34, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
             background: "none", border: "1px solid var(--border)", borderRadius: 9,
             color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
-            fontFamily: "var(--font-mono)", transition: "background 0.12s, color 0.12s, border-color 0.12s",
+            fontFamily: "var(--font-mono)", transition: HOVER_TRANSITION,
           }}
           onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; e.currentTarget.style.borderColor = "var(--text-dim)"; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.borderColor = "var(--border)"; }}
@@ -1350,7 +1364,12 @@ export function AppShell() {
           background: "rgba(0,0,0,0.4)",
           opacity: sidebarOpen ? 1 : 0,
           pointerEvents: sidebarOpen ? "auto" : "none",
-          transition: "opacity 0.25s ease",
+          /* Ein- und Abgang getrennt wie beim Datei-Panel-Backdrop in
+             `globals.css`: 180 ms herein, 140 ms hinaus. 250 ms für eine
+             reine Deckkraftblende standen da wie ein Hänger. */
+          transition: sidebarOpen
+            ? "opacity var(--duration-enter) var(--ease-standard)"
+            : "opacity var(--duration-exit) linear",
         }}
       />
 
@@ -1460,7 +1479,7 @@ export function AppShell() {
               display: "flex", alignItems: "center", justifyContent: "center",
               width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
               background: "none", border: "none", borderRight: "1px solid var(--border)",
-              color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+              color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: HOVER_TRANSITION,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
@@ -1486,7 +1505,7 @@ export function AppShell() {
               display: "flex", alignItems: "center", justifyContent: "center",
               width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
               background: "none", border: "none", borderRight: "1px solid var(--border)",
-              color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+              color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: HOVER_TRANSITION,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
@@ -1526,7 +1545,7 @@ export function AppShell() {
                background: activeTopPanel === "language" ? "var(--bg-selected)" : "none",
                border: "none", borderRight: "1px solid var(--border)",
                color: activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)",
-               cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+               cursor: "pointer", flexShrink: 0, transition: HOVER_TRANSITION,
              }}
              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
              onMouseLeave={(e) => {
@@ -1618,7 +1637,7 @@ export function AppShell() {
                   flexShrink: 0,
                   fontSize: 11,
                   whiteSpace: "nowrap",
-                  transition: "color 0.1s, background 0.1s, opacity 0.1s",
+                  transition: HOVER_TRANSITION,
                 }}
                 onMouseEnter={(e) => {
                   if (!selectedSession) return;
@@ -1696,7 +1715,7 @@ export function AppShell() {
                       cursor: disabled ? "not-allowed" : "pointer",
                       opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
                       flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-                      transition: "color 0.1s, background 0.1s, opacity 0.1s",
+                      transition: HOVER_TRANSITION,
                     }}
                     onMouseEnter={(e) => {
                       if (disabled) return;
@@ -1759,7 +1778,7 @@ export function AppShell() {
                   borderRight: "1px solid var(--border)",
                   cursor: "pointer",
                   color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-                  fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+                  fontSize: 11, whiteSpace: "nowrap", transition: HOVER_TRANSITION,
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)"; }}
@@ -1827,7 +1846,7 @@ export function AppShell() {
                   fontSize: 11, color: "var(--text-muted)",
                   whiteSpace: "nowrap", cursor: "pointer",
                   fontVariantNumeric: "tabular-nums",
-                  transition: "color 0.1s, background 0.1s",
+                  transition: HOVER_TRANSITION,
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
@@ -1917,7 +1936,7 @@ export function AppShell() {
                         border: "none", borderRadius: 4,
                         background: locale === plugin.id ? "var(--bg-selected)" : "transparent",
                         color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
-                        transition: "background 0.1s",
+                        transition: HOVER_TRANSITION,
                       }}
                       onMouseEnter={(e) => {
                         if (locale !== plugin.id) e.currentTarget.style.background = "var(--bg-hover)";
@@ -2060,7 +2079,7 @@ export function AppShell() {
                             borderRadius: 4,
                             cursor: "pointer",
                             flex: "0 0 auto",
-                            transition: "color 0.12s, border-color 0.12s, background 0.12s",
+                            transition: HOVER_TRANSITION,
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.color = "var(--accent)";
@@ -2162,13 +2181,6 @@ export function AppShell() {
             />
           ) : showChat ? (
             <>
-              {isMobile && hasSubagents && (
-                <SubagentMobileToggle
-                  sessionId={selectedSession?.id ?? null}
-                  cwd={selectedSession?.cwd ?? effectiveNewSessionCwd ?? undefined}
-                  subagents={subagents}
-                />
-              )}
               <ChatWindow
                 key={sessionKey}
                 session={selectedSession}
@@ -2184,7 +2196,6 @@ export function AppShell() {
                 onSessionStatsChange={handleSessionStatsChange}
                 onSessionStatsPanelOpen={openSessionStatsPanel}
                 onContextUsageChange={handleContextUsageChange}
-                onSubagentsChange={setSubagents}
                 onOpenFile={handleOpenLinkedFile}
                 soundEnabled={soundEnabled}
                 onSoundToggle={onSoundToggle}
@@ -2236,15 +2247,6 @@ export function AppShell() {
             )
           ) : null}
           </div>
-          {showSubagentPanel && (
-            <div className="subagent-column">
-              <SubagentPanel
-                sessionId={selectedSession?.id ?? null}
-                cwd={selectedSession?.cwd ?? effectiveNewSessionCwd ?? undefined}
-                subagents={subagents}
-              />
-            </div>
-          )}
         </div>
         </Panel>
 
@@ -2363,7 +2365,7 @@ export function AppShell() {
         width: 36, height: 36, padding: 0,
         background: "var(--bg-panel)", border: "none", borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
         color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
-        cursor: "pointer", transition: "color 0.12s",
+        cursor: "pointer", transition: HOVER_TRANSITION,
       }}
       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}

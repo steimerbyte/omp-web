@@ -187,7 +187,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
           background: isActive ? "var(--accent)" : isOnPath ? "var(--text-muted)" : "var(--border)",
           border: isActive ? "none" : "1px solid var(--text-dim)",
           marginRight: 6,
-          transition: "background 0.12s",
+          transition: "background-color var(--duration-hover) var(--ease-standard)",
         }} />
 
         {/* Role badge */}
@@ -290,7 +290,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
   );
 
   const chevron = (
-    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 2, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 2, transform: open ? "rotate(180deg)" : "none", transition: "transform var(--duration-hover) var(--ease-standard)" }}>
       <polyline points="2 3.5 5 6.5 8 3.5" />
     </svg>
   );
@@ -316,7 +316,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             color: open ? "var(--text)" : "var(--text-muted)",
             fontSize: 11,
             whiteSpace: "nowrap",
-            transition: "color 0.1s, background 0.1s",
+            transition: "color var(--duration-hover) var(--ease-standard), background-color var(--duration-hover) var(--ease-standard)",
           }}
           onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
           onMouseLeave={(e) => { e.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)"; }}

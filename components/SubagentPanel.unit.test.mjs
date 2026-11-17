@@ -7,7 +7,7 @@ import { createRoot } from "react-dom/client";
 import { createJiti } from "jiti";
 
 /**
- * `SubagentPanel` und `SubagentMobileToggle` in einem gemounteten DOM.
+ * `SubagentPanel` und `SubagentAgentButton` in einem gemounteten DOM.
  *
  * Der Panel-Teil ist reine Liste plus ein Detail, das sein Transkript per
  * `sendAgentCommand` (POST /api/agent/<id>) nachlaedt. `fetch` wird deshalb
@@ -62,7 +62,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { SubagentPanel, SubagentMobileToggle } = await jiti.import("./SubagentPanel.tsx");
+const { SubagentPanel, SubagentAgentButton } = await jiti.import("./SubagentPanel.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
 const calls = [];
@@ -240,44 +240,139 @@ test("the panel is absent without a session or without subagents", () => {
   assert.equal(renderToStaticMarkup(React.createElement(I18nProvider, null, ReactWithNoRows)), "");
 });
 
-test("the phone pill counts live work and opens the same panel as a sheet", async () => {
-  const { container, root } = await mount(React.createElement(SubagentMobileToggle, {
+test("without running work there is no button — finished rows alone are history", async () => {
+  win.document.body.replaceChildren();
+  const root = createRoot(win.document.createElement("div"));
+  await act(async () => {
+    root.render(React.createElement(I18nProvider, null,
+      React.createElement(SubagentAgentButton, { sessionId: "s", subagents: [finished, finishedTwo] })));
+  });
+  assert.equal(win.document.querySelector('[aria-haspopup="dialog"]'), null);
+  await act(async () => { root.unmount(); });
+
+  assert.equal(
+    renderToStaticMarkup(React.createElement(I18nProvider, null,
+      React.createElement(SubagentAgentButton, { sessionId: "s", subagents: [] }))),
+    "",
+    "ohne Sitzung oder ohne Arbeit entsteht kein Knopf",
+  );
+  assert.equal(
+    renderToStaticMarkup(React.createElement(I18nProvider, null,
+      React.createElement(SubagentAgentButton, { sessionId: "s", subagents: [finished] }))),
+    "",
+    "abgeschlossene Zeilen allein zeigen keinen Knopf",
+  );
+});
+
+test("the button counts live work and opens one dialog with the list", async () => {
+  const { container, root } = await mount(React.createElement(SubagentAgentButton, {
     sessionId: "sess-4",
     subagents: [running, finished],
   }));
 
-  const toggle = container.querySelector(".subagent-mobile-toggle");
-  assert.ok(toggle);
-  assert.equal(toggle.getAttribute("aria-expanded"), "false");
-  assert.match(toggle.textContent, /1 running/);
-  assert.match(toggle.getAttribute("aria-label"), /Subagents: 1 running/);
+  const button = container.querySelector('button[aria-haspopup="dialog"]');
+  assert.ok(button, "der Einstieg in die Hintergrundarbeit fehlt");
+  assert.match(button.getAttribute("aria-label"), /Subagents: 1 running/);
+  assert.equal(button.getAttribute("title"), button.getAttribute("aria-label"));
+  // 40x40 mit eigener Form: ein Knopf, keine Pille.
+  assert.equal(button.style.width, "40px");
+  assert.equal(button.style.height, "40px");
+  assert.equal(button.style.borderRadius, "10px");
 
-  await act(async () => { reactProps(toggle).onClick(); });
+  await act(async () => { reactProps(button).onClick(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-  assert.equal(toggle.getAttribute("aria-expanded"), "true");
   const dialog = win.document.querySelector('[role="dialog"]');
-  assert.ok(dialog, "das Sheet ist ein Dialog");
+  assert.ok(dialog, "der Dialog ist nicht aufgegangen");
+  assert.match(dialog.textContent, /SUBAGENTS|Subagents/i);
   assert.match(dialog.textContent, /sub-1/);
   assert.match(dialog.textContent, /sub-2/);
-  // collapsible={false}: no folding control inside the sheet.
+  // collapsible={false}: der Listenkopf ist kein Klapp-Knopf.
   assert.equal(dialog.querySelector('[aria-expanded]'), null);
 
   const close = dialog.querySelector('[aria-label="Close"]');
-  assert.ok(close);
+  assert.ok(close, "der Schliessen-Knopf fehlt");
   await act(async () => { reactProps(close).onClick(); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(win.document.querySelector('[role="dialog"]'), null);
   await act(async () => { root.unmount(); });
 });
 
-test("the pill falls back to the finished count when nothing runs", async () => {
-  const { container, root } = await mount(React.createElement(SubagentMobileToggle, {
+test("vibe workers alone open the dialog with an honest note, not a dead row", async () => {
+  const { container, root } = await mount(React.createElement(SubagentAgentButton, {
     sessionId: "sess-5",
-    subagents: [finished, finishedTwo],
+    subagents: [],
+    vibeWorkers: 2,
   }));
-  const toggle = container.querySelector(".subagent-mobile-toggle");
-  assert.match(toggle.textContent, /2 finished/);
-  assert.match(toggle.getAttribute("aria-label"), /Subagents: 2 finished/);
+
+  const button = container.querySelector('button[aria-haspopup="dialog"]');
+  assert.ok(button, "ohne Subagenten, aber mit Vibe-Arbeitern fehlt der Knopf");
+  assert.match(button.getAttribute("aria-label"), /Subagents: 2 running/);
+
+  await act(async () => { reactProps(button).onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  const dialog = win.document.querySelector('[role="dialog"]');
+  assert.ok(dialog);
+  assert.match(dialog.textContent, /Vibe mode is driving 2 worker sessions/);
+  assert.equal(dialog.querySelectorAll('[role="listitem"]').length, 0, "keine Zeile ohne Session");
+  await act(async () => { root.unmount(); });
+});
+
+test("the button follows the work, and an open dialog survives the last worker ending", async () => {
+  const component = (subagents) => React.createElement(I18nProvider, null,
+    React.createElement(SubagentAgentButton, { sessionId: "sess-7", subagents }));
+  const { container, root } = await mount(component([finished]));
+  const findButton = () => container.querySelector('button[aria-haspopup="dialog"]');
+  assert.equal(findButton(), null, "fertige Zeilen allein zeigen keinen Knopf");
+
+  await act(async () => { root.render(component([running])); });
+  assert.ok(findButton(), "ein laufender Subagent fehlt");
+
+  await act(async () => { reactProps(findButton()).onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  assert.ok(win.document.querySelector('[role="dialog"]'), "der Dialog ist nicht aufgegangen");
+
+  // Der letzte Lauf endet, waehrend das Transkript gelesen wird.
+  await act(async () => { root.render(component([finished])); });
+  assert.ok(findButton(), "der Knopf verschwand unter dem offenen Dialog");
+  assert.ok(win.document.querySelector('[role="dialog"]'), "der offene Dialog wurde geschlossen");
+
+  const close = win.document.querySelector('[role="dialog"] [aria-label="Close"]');
+  await act(async () => { reactProps(close).onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(findButton(), null, "nach dem Schliessen bleibt kein Knopf ohne Arbeit");
+  await act(async () => { root.unmount(); });
+});
+
+test("a row opens the live transcript and closing hands focus back to the button", async () => {
+  calls.length = 0;
+  const { container, root } = await mount(React.createElement(SubagentAgentButton, {
+    sessionId: "sess-6",
+    cwd: "/work",
+    // Ein fertiger Lauf reicht fuer den Knopf nicht mehr; der offene Lauf
+    // traegt ihn, und die Transkript-Zeile ist die abgeschlossene.
+    subagents: [running, finished],
+  }));
+
+  const button = container.querySelector('button[aria-haspopup="dialog"]');
+  await act(async () => { reactProps(button).onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+
+  const dialog = win.document.querySelector('[role="dialog"]');
+  const row = [...dialog.querySelectorAll('[role="listitem"]')].find((node) => (node.textContent ?? "").includes("sub-2"));
+  assert.ok(row, "die abgeschlossene Zeile fehlt");
+  await act(async () => { reactProps(row).onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].body, { type: "get_subagent_messages", subagentId: "sub-2", fromByte: 0 });
+  assert.match(win.document.body.textContent, /Found three errors/);
+
+  let focused = 0;
+  button.focus = () => { focused += 1; };
+  const close = dialog.querySelector('[aria-label="Close"]');
+  await act(async () => { reactProps(close).onClick(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(focused, 1, "der Fokus blieb nicht am Einstieg");
   await act(async () => { root.unmount(); });
 });
 

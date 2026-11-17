@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import type { HTMLMotionProps } from "motion/react";
 import { forwardRef } from "react";
-import { DURATION_FAST } from "./animations";
+import { DURATION_HOVER, EASE_STANDARD, SPRING_PRESS } from "./animations";
 import { useAnimationPreference } from "./AnimationProvider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ReactNode } from "react";
@@ -51,7 +51,14 @@ export const Pressable = forwardRef<HTMLButtonElement, HTMLMotionProps<"button">
     <motion.button
       ref={ref}
       whileTap={mode === "off" ? undefined : tint ? TAP_TINT : TAP_SCALE}
-      transition={{ duration: DURATION_FAST }}
+      // `scale` läuft auf der Druckfeder, die Farbe auf der Hover-Zeit. Eine
+      // Feder auf einem Farbwert schwingt sichtbar nach — der Knopf würde
+      // zweimal „aufleuchten".
+      transition={
+        tint
+          ? { scale: SPRING_PRESS, backgroundColor: { duration: DURATION_HOVER, ease: EASE_STANDARD } }
+          : SPRING_PRESS
+      }
       style={style}
       {...rest}
     >

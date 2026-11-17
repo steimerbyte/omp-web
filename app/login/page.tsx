@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OmpWordmark } from "@/components/OmpWordmark";
 import { AnimationProvider } from "@/components/motion/AnimationProvider";
-import { Reveal } from "@/components/motion/Reveal";
 import styles from "./login.module.css";
 
 /**
@@ -64,13 +63,12 @@ export default function LoginPage() {
   /**
    * Focus after the mount, not through `autoFocus`.
    *
-   * `autoFocus` fires during React's commit, and at that moment `Reveal` has
-   * already written `initial` — `opacity: 0`, a Y offset and a 6 px blur — onto
-   * the card that contains this input. An element the browser cannot see is an
-   * element it will not focus: the call is accepted, the caret simply ends up
-   * on `<body>`, and the visitor has to click the field before typing. The
-   * effect runs after the commit, and by then Motion has handed the card to its
-   * 240 ms entrance, so the field is a real, focusable target.
+   * `autoFocus` fires once, during React's commit. This effect has to run again
+   * on every rejection (see below), so the mount is just its first run — one
+   * path for both moments instead of two mechanisms. Focus still lands after
+   * the commit, which is where a focusable target exists; the card itself has
+   * no entrance any more (the scanline on `::after` is the page's only motion),
+   * so there is no opacity/blur window to survive either.
    *
    * The same effect re-runs whenever `rejected` changes, which is what puts
    * the caret back after a failed attempt. It used to stay on the submit
@@ -115,7 +113,10 @@ export default function LoginPage() {
   return (
     <AnimationProvider>
       <main className={styles.page}>
-        <Reveal className={`${styles.card} ${styles.scanline}`}>
+        {/* Kein `Reveal`: die Karte betritt nichts, sie ist da. Die eine Bewegung
+            der Seite ist die Scanline auf `::after` — eine Animation, ein Element,
+            und nichts, womit ein Inline-`transform` kollidieren könnte. */}
+        <div className={`${styles.card} ${styles.scanline}`}>
         <div className={styles.brand}>
           <OmpWordmark markSize={20} />
         </div>
@@ -196,7 +197,7 @@ export default function LoginPage() {
         <p className={styles.aside}>
           <Link href="/recover">Forgot password?</Link>
         </p>
-        </Reveal>
+        </div>
       </main>
     </AnimationProvider>
   );

@@ -175,6 +175,8 @@ export const enLocale: LocalePlugin = {
     "sidebar.refresh": "Refresh",
     "sidebar.projects": "Projects",
     "subagents.title": "Subagents",
+    "subagents.open": "Subagents: {count} running",
+    "subagents.vibeWorkers": "Vibe mode is driving {count} worker sessions. They are steered from the chat and are not listed as subagents.",
     "subagents.running": "Running",
     "subagents.finished": "Finished",
     "subagents.history": "History",

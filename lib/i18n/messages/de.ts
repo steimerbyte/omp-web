@@ -175,6 +175,8 @@ export const deLocale: LocalePlugin = {
     "sidebar.refresh": "Aktualisieren",
     "sidebar.projects": "Projekte",
     "subagents.title": "Subagenten",
+    "subagents.open": "Subagents: {count} laufend",
+    "subagents.vibeWorkers": "Der Vibe-Modus steuert {count} Arbeitssitzungen. Sie werden aus dem Chat heraus angewiesen und erscheinen nicht als Subagenten.",
     "subagents.running": "Läuft",
     "subagents.finished": "Abgeschlossen",
     "subagents.history": "Verlauf",

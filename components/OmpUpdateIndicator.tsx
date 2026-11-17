@@ -172,7 +172,7 @@ export function OmpUpdateIndicator() {
           cursor: "pointer",
           fontSize: 11,
           fontFamily: "var(--font-mono)",
-          transition: "background 0.12s, border-color 0.12s, color 0.12s",
+          transition: "background-color var(--duration-hover) var(--ease-standard), border-color var(--duration-hover) var(--ease-standard), color var(--duration-hover) var(--ease-standard)",
         }}
         onMouseEnter={(event) => {
           event.currentTarget.style.background = "color-mix(in srgb, var(--warning) 14%, var(--bg-hover))";

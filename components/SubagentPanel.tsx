@@ -9,7 +9,7 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { MessageView } from "./MessageView";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { motion } from "motion/react";
-import { SPIN_TRANSITION } from "./motion/animations";
+import { PULSE_TRANSITION, SPIN_TRANSITION } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
 
 type SubagentTranscriptEntry = {
@@ -308,7 +308,7 @@ export function SubagentPanel({ sessionId, cwd, subagents, collapsible = true }:
   const headerContent = (
     <>
       {collapsible && (
-        <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: isCollapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s" }}><polyline points="3 2 7 5 3 8" /></svg>
+        <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: isCollapsed ? "none" : "rotate(90deg)", transition: "transform var(--duration-hover) var(--ease-standard)" }}><polyline points="3 2 7 5 3 8" /></svg>
       )}
       <span style={{ fontSize: 10, fontWeight: 750, letterSpacing: "0.08em", textTransform: "uppercase" }}>{t("subagents.title")}</span>
       <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 7, fontSize: 9.5, fontVariantNumeric: "tabular-nums" }}>
@@ -370,50 +370,122 @@ export function SubagentPanel({ sessionId, cwd, subagents, collapsible = true }:
 }
 
 /**
- * The phone counterpart of the sibling column: a count pill in the chat column
- * that opens the same panel as a bottom sheet. `useIsMobile` and the media
- * query in `app/globals.css` share the 640px breakpoint, so the pill and the
- * hidden column never disagree.
+ * Der eine Einstieg in laufende Hintergrundarbeit: ein Roboter-Knopf in der
+ * Zeile ueber dem Composer.
+ *
+ * ### Warum ein Knopf und keine Spalte mehr
+ *
+ * Die Spalte neben dem Chat kostete auf jedem Desktop dauerhaft Breite fuer
+ * eine Flaeche, die meistens leer ist; auf dem Telefon gab es dafuer eine
+ * Pille ueber der Liste. Beides ist derselbe Gedanke an zwei Orten. Der Knopf
+ * erscheint nur, solange es Arbeit gibt, und oeffnet einen Dialog — der Chat
+ * behaelt seine Breite, und die Delegation ist auf jedem Geraet am selben Ort.
+ *
+ * ### Was der Dialog ehrlich sagen muss
+ *
+ * Subagenten sind adressierbar: jede Zeile oeffnet ihr Live-Transkript.
+ * Vibe-Arbeitssitzungen sind es nicht (sie laufen als eigene Sessions hinter
+ * den `vibe_*`-Werkzeugen, nicht als `SubagentSnapshot`), deshalb bekommt der
+ * Dialog fuer sie eine Zeile Text und keine tote Zeile in der Liste.
  */
-export function SubagentMobileToggle({ sessionId, cwd, subagents }: { sessionId: string | null; cwd?: string; subagents: SubagentSnapshot[] }) {
+export function SubagentAgentButton({ sessionId, cwd, subagents, vibeWorkers = 0 }: {
+  sessionId: string | null;
+  cwd?: string;
+  subagents: SubagentSnapshot[];
+  /** Arbeitssitzungen des Vibe-Modus; sie erscheinen nicht als Subagenten. */
+  vibeWorkers?: number;
+}) {
   const { t } = useI18n();
+  const mode = useAnimationMode();
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const toggleRef = useRef<HTMLButtonElement>(null);
-  const running = subagents.filter(isSubagentActive);
-  const finished = subagents.length - running.length;
-  const label = running.length > 0
-    ? t("subagents.runningCount", { count: running.length })
-    : t("subagents.finishedCount", { count: finished });
+  const running = subagents.filter(isSubagentActive).length;
+  const active = running > 0 || vibeWorkers > 0;
+  // Der Knopf zaehlt, was er oeffnen kann: laufende Subagenten und Vibe-Arbeiter.
+  const count = running + vibeWorkers;
 
-  if (!sessionId || subagents.length === 0) return null;
+  // Sichtbar nur waehrend Arbeit — fertige Zeilen sind Historie, kein Grund fuer
+  // einen Knopf. Ein offener Dialog bleibt stehen: wer gerade ein Transkript
+  // liest, wird nicht unter den Fingern ausgeblendet, wenn der letzte Lauf endet.
+  if (!sessionId || (!active && !open)) return null;
 
   return (
     <>
       <button
-        ref={toggleRef}
+        ref={buttonRef}
         type="button"
-        className="subagent-mobile-toggle"
-        aria-expanded={open}
         aria-haspopup="dialog"
-        // The visible text is only a count; the panel's name makes it a target.
-        aria-label={`${t("subagents.title")}: ${label}`}
+        aria-label={t("subagents.open", { count })}
+        title={t("subagents.open", { count })}
         onClick={() => setOpen(true)}
+        style={{
+          position: "relative",
+          display: "grid",
+          placeItems: "center",
+          width: 40,
+          height: 40,
+          padding: 0,
+          flexShrink: 0,
+          border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+          borderRadius: 10,
+          background: "var(--bg-hover)",
+          color: active ? "var(--accent)" : "var(--text-muted)",
+          cursor: "pointer",
+        }}
       >
-        {label}
+        {/* Der Puls liegt auf einer eigenen Ebene und aendert nur die
+            Deckkraft: die Farbe kaeme sonst als `color-mix()`-String in die
+            Animation, den kein Animations-Backend interpolieren kann. */}
+        <motion.span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: -3,
+            borderRadius: 13,
+            boxShadow: "0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent)",
+            pointerEvents: "none",
+          }}
+          animate={active && mode !== "off" ? { opacity: [0.25, 1, 0.25] } : { opacity: 0 }}
+          transition={PULSE_TRANSITION}
+        />
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="4" y="7" width="16" height="12" rx="3.5" />
+          <path d="M12 7V4" />
+          <circle cx="12" cy="3" r="1.2" />
+          <circle cx="9" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+          <path d="M9 16h6" />
+        </svg>
       </button>
+
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
+          bare
+          layer={120}
           showCloseButton={false}
-          className="subagent-mobile-sheet translate-x-0 translate-y-0"
-          // role=dialog, aria-labelledby and aria-hidden on the rest of the page, plus Escape, backdrop and focus trap: the primitive's.
+          // Kein Trigger am Primitiv (der Dialog wird von hier geoeffnet), also
+          // nimmt der Aufrufer den Fokus selbst mit zurueck.
           onCloseAutoFocus={(event) => {
-            if (!toggleRef.current) return;
             event.preventDefault();
-            toggleRef.current.focus();
+            buttonRef.current?.focus();
+          }}
+          style={{
+            width: "min(780px, 92vw)",
+            height: "min(72dvh, 640px)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 0,
+            padding: 0,
+            overflow: "hidden",
+            outline: "none",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            background: "var(--bg-panel)",
+            color: "var(--text)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, padding: "2px 6px 2px 14px", borderBottom: "1px solid var(--border)" }}>
-            <DialogTitle style={{ flex: 1, minWidth: 0, fontSize: 10, fontWeight: 750, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, padding: "4px 6px 4px 14px", borderBottom: "1px solid var(--border)" }}>
+            <DialogTitle style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 750, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
               {t("subagents.title")}
             </DialogTitle>
             <button
@@ -428,7 +500,16 @@ export function SubagentMobileToggle({ sessionId, cwd, subagents }: { sessionId:
               </svg>
             </button>
           </div>
-          <SubagentPanel sessionId={sessionId} cwd={cwd} subagents={subagents} collapsible={false} />
+
+          {vibeWorkers > 0 ? (
+            <p style={{ margin: 0, padding: "7px 14px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)", fontSize: 10.5, lineHeight: 1.5 }}>
+              {t("subagents.vibeWorkers", { count: vibeWorkers })}
+            </p>
+          ) : null}
+
+          <div style={{ display: "flex", flex: "1 1 auto", minHeight: 0 }}>
+            <SubagentPanel sessionId={sessionId} cwd={cwd} subagents={subagents} collapsible={false} />
+          </div>
         </DialogContent>
       </Dialog>
     </>

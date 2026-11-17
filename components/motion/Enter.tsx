@@ -2,7 +2,13 @@
 
 import { motion } from "motion/react";
 import { forwardRef } from "react";
-import { DURATION_BASE, EASE_POP, SPIN_TRANSITION } from "./animations";
+import {
+  DURATION_ENTER,
+  DURATION_ENTER_PANEL,
+  EASE_EMPHASIZED,
+  EASE_STANDARD,
+  SPIN_TRANSITION,
+} from "./animations";
 import { useAnimationPreference } from "./AnimationProvider";
 import { useSweepProps } from "./hooks";
 import type { HTMLMotionProps } from "motion/react";
@@ -17,6 +23,11 @@ import type { HTMLMotionProps } from "motion/react";
  * Every one of these forwards its ref: menus and popovers measure their own
  * box to decide which side to open on, and a component that cannot hand back a
  * ref gets reimplemented inline instead of reused.
+ *
+ * Die Taktung: `Enter` 180 ms, `ModalPanel` 220 ms, `ModalBackdrop` 180 ms —
+ * alle auf `EASE_EMPHASIZED` außer dem Backdrop, der nur seine Deckkraft
+ * ändert und dafür die Standardkurve nimmt. Keine der drei bewegt eine
+ * Layout-Eigenschaft: `x`, `y`, `scale`, `opacity`.
  */
 
 export type EnterDirection = "down" | "up" | "left" | "right";
@@ -47,7 +58,7 @@ export const Enter = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "re
       {...rest}
       initial={initialFor(direction)}
       animate={{ opacity: 1, x: 0, y: 0, scale: 1, ...sweep.animate }}
-      transition={{ duration: DURATION_BASE, ease: EASE_POP, ...sweep.transition }}
+      transition={{ duration: DURATION_ENTER, ease: EASE_EMPHASIZED, ...sweep.transition }}
       style={{ ...style, ...sweep.style }}
     >
       {children}
@@ -55,7 +66,11 @@ export const Enter = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "re
   );
 });
 
-/** The modal pair. They animate different properties, so they stay separate. */
+/**
+ * Der Dialog-Hintergrund. Nur Deckkraft, damit sich beim Öffnen keine Fläche
+ * bewegt — die Bewegung gehört dem Panel. 180 ms auf `EASE_STANDARD`: der
+ * Schatten kommt vor der Fläche an, nicht mit ihr.
+ */
 export const ModalBackdrop = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "ref">>(function ModalBackdrop({ children, className, style, ...rest }, ref) {
   return (
     <motion.div
@@ -65,13 +80,18 @@ export const ModalBackdrop = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"di
       {...rest}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.16, ease: "easeOut" }}
+      transition={{ duration: DURATION_ENTER, ease: EASE_STANDARD }}
     >
       {children}
     </motion.div>
   );
 });
 
+/**
+ * Die Dialogfläche selbst: 6 px Aufstieg und 4 % Skalierung auf 220 ms
+ * `EASE_EMPHASIZED`. `scale` und `y`, nie `width`/`height` — das Panel wächst
+ * nicht, es kommt an.
+ */
 export const ModalPanel = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">, "ref">>(function ModalPanel({ children, className, style, ...rest }, ref) {
   const sweep = useSweepProps();
 
@@ -82,7 +102,7 @@ export const ModalPanel = forwardRef<HTMLDivElement, Omit<HTMLMotionProps<"div">
       {...rest}
       initial={{ opacity: 0, scale: 0.96, y: 6 }}
       animate={{ opacity: 1, scale: 1, y: 0, ...sweep.animate }}
-      transition={{ duration: 0.2, ease: EASE_POP, ...sweep.transition }}
+      transition={{ duration: DURATION_ENTER_PANEL, ease: EASE_EMPHASIZED, ...sweep.transition }}
       style={{ ...style, ...sweep.style }}
     >
       {children}

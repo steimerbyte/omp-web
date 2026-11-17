@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useAnimationPreference } from "./AnimationProvider";
-import { SHIMMER_DURATION, SWEEP_DURATION } from "./animations";
+import { EASE_STANDARD, SHIMMER_DURATION, SWEEP_DURATION } from "./animations";
 import type { AnimationMode } from "./animation-mode";
 
 /**
@@ -49,7 +49,7 @@ export type ShimmerProps = {
  */
 export type SweepKeys = {
   animate: { backgroundPosition?: string[] };
-  transition: { backgroundPosition?: { duration: number; repeat: number; ease: "easeOut" } };
+  transition: { backgroundPosition?: { duration: number; repeat: number; ease: typeof EASE_STANDARD } };
 };
 
 /**
@@ -219,11 +219,14 @@ export function useSweepProps(): SweepKeys & { style: WashStyle } {
   // 220% -> -220% therefore spent 209 of its 440 percentage points — 47% of the
   // run — travelling across nothing, once the repeat stopped papering over it.
   // Measured against `easeOut` over the full 0.72s that left the band visible
-  // for 280ms of the 720ms, which is not enough to outlast a 240ms panel
+  // for 280ms of the 720ms, which is not enough to outlast a 220ms panel
   // entrance: the wash was gone almost as early as the panel finished settling,
   // and the remainder was motion on an already-empty element rather than a
   // pause. 190% -> -90% keeps both endpoints empty with ~25pp of margin and
-  // raises the visible pass to 505ms of 720ms, still 2.1x the entrance.
+  // raises the visible pass to 505ms of 720ms, still 2.3x the entrance.
+  // (Gemessen unter `easeOut`; die Kurve ist inzwischen `EASE_STANDARD`, was
+  // die Strecke unberührt lässt und nur ihre Verteilung über die Zeit
+  // verschiebt — der sichtbare Anteil bleibt in derselben Größenordnung.)
   //
   // It is also the range `@keyframes omp-shimmer-wash` already travels, so the
   // one-shot and the endless wash now run the same arc.
@@ -233,7 +236,7 @@ export function useSweepProps(): SweepKeys & { style: WashStyle } {
         ? { animate: {}, transition: {}, style: { ...SWEEP_STYLE, backgroundImage: "none" } }
         : {
             animate: { backgroundPosition: ["190% 0%", "-90% 0%"] },
-            transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: "easeOut" as const } },
+            transition: { backgroundPosition: { duration: SWEEP_DURATION, repeat: 0, ease: EASE_STANDARD } },
             style: SWEEP_STYLE,
           },
     [mode],

@@ -157,7 +157,9 @@
    * drawn in exactly the colour it asks for. */
   font: 600 12px/1 var(--font-mono);
   text-align: left;
-  transition: background .12s ease, color .12s ease;
+  transition:
+    background-color var(--duration-hover) var(--ease-standard),
+    color var(--duration-hover) var(--ease-standard);
 }
 
 .navButton:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
@@ -292,7 +294,9 @@
   border-radius: 999px;
   background: var(--bg-hover);
   cursor: pointer;
-  transition: background .16s, border-color .16s;
+  transition:
+    background-color var(--duration-enter) var(--ease-standard),
+    border-color var(--duration-enter) var(--ease-standard);
 }
 .switch::after {
   content: "";
@@ -303,7 +307,11 @@
   height: 14px;
   border-radius: 50%;
   background: var(--text-muted);
-  transition: transform .16s, background .16s;
+  /* Der Knopf fährt `transform`, nie `left`: 16 px auf der Standardkurve, in
+     derselben Zeit wie die Fläche, damit Schalter und Knopf ein Ding bleiben. */
+  transition:
+    transform var(--duration-enter) var(--ease-standard),
+    background-color var(--duration-enter) var(--ease-standard);
 }
 .switch[data-on="true"] { border-color: var(--accent); background: var(--accent); }
 .switch[data-on="true"]::after { transform: translateX(16px); background: var(--bg); }

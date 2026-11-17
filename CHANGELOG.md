@@ -7,6 +7,23 @@ upstream line — see the Provenance section in the README.
 
 ### Neu
 
+- **Die Bewegung der Oberfläche folgt einer benannten Taktung statt verstreuter
+  Zahlen.** `components/motion/animations.ts` führt drei Kurven (Standard für
+  Hover und Zustandswechsel, betont für Panels und Dialoge, Abgang für alles,
+  was verschwindet), vier Dauern (120 / 180 / 220 / 140 ms), die 360-ms-Rückweisung
+  der Anmeldung und `SPRING_PRESS` als Feder für den Tastendruck; die
+  Stylesheets lesen dieselben Werte als `--duration-*`/`--ease-*`, und ein Test
+  rechnet beide Dateien gegeneinander. Panels, Dialoge, Menüs, Schubladen und
+  das Datei-Panel fahren mit getrennten Zeiten herein und hinaus (180 / 220 ms
+  hinein, 140 ms hinaus), die Radix-Flächen laufen nicht mehr in 100 ms mit der
+  Browser-Kurve. Animationen auf Layout-Eigenschaften sind ersetzt: der
+  Mermaid-Zoom und die beiden Fortschrittsbalken fahren `transform: scaleX()`,
+  der Schalter-Knopf `translateX`, und der Schatten der Telefon-Schublade wird
+  nicht mehr mitanimiert. Die Login-Karte hat genau noch eine Animation (die
+  Scanline, linear); ihr Einblend ist entfallen, damit keine zweite Bewegung um
+  dieselbe Achse konkurriert. Der Zieh-Hinweis über dem Composer ist ein Ring
+  statt drei gestaffelter 720-px-Ringe.
+
 - **Automatisch erzeugte Chat-Titel tragen genau ein Emoji.**
   `withSingleEmoji` in `lib/session-title.ts` setzt vor jeden generierten
   Titel genau ein Emoji: das erste, das das Modell selbst geschrieben hat
@@ -31,6 +48,18 @@ upstream line — see the Provenance section in the README.
   der geplante Agent erst Minuten nach dem Start, ein SSE-Strom wäre eine
   dauerhafte Verbindung für eine langsame Anzeige. Quellen werden nur als
   `http(s)` verlinkt und in einem neuen Tab geöffnet.
+
+- **Laufende Hintergrundarbeit hat einen einzigen Einstieg: den Roboter-Knopf über dem Composer.**
+  Die Spalte neben dem Chat und die Zähler-Pille auf dem Telefon sind weg.
+  Rechts in derselben Zeile wie die Vibe-Leiste sitzt ein 40×40-Knopf, der nur
+  erscheint, solange Agenten laufen (fertige Einträge sind Historie); er öffnet einen zentrierten Dialog mit der
+  Liste laufender und abgeschlossener Subagenten (Zeile anklicken öffnet das
+  Live-Transkript) und nennt die Zahl der Vibe-Arbeitssitzungen, die als eigene
+  Sessions laufen und deshalb nicht als Subagenten-Zeile erscheinen. Während
+  etwas läuft, ist der Knopf in der Akzentfarbe und pulsiert dezent — mit
+  abgeschalteten Animationen steht er still. Endet der letzte Lauf, während
+  der Dialog offen ist, bleibt er stehen und verschwindet erst mit seinem
+  Schließen.
 
 - **Die Suche der Seitenleiste findet Sitzungen auch nach ihrem Inhalt.**
   Der Filter oben durchsucht weiterhin sofort die geladenen Projektnamen und

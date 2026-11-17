@@ -17,6 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Spin } from "./motion/Enter";
 import { Skeleton } from "./motion/Skeleton";
 import { useAnimationPreference } from "./motion/AnimationProvider";
+import { DURATION_EXIT } from "./motion/animations";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 
@@ -324,7 +325,16 @@ function PathLabel({ text, style }: { text: string; style?: CSSProperties }) {
   );
 }
 
-const DROPDOWN_ANIMATION_MS = 140;
+/**
+ * Der Abgang des Menüs in Millisekunden, aus dem Token statt aus einer Zahl.
+ *
+ * Der Wert ist doppelt belastet: er ist die Transition des Ausblendens UND der
+ * Unmount-Timer. Stünde dort eine eigene Zahl, könnte sie kürzer sein als der
+ * Abgang, und das Menü würde mitten im Ausfahren verschwinden — genau der
+ * Fehler, den eine Animation nicht verzeiht. `DURATION_EXIT` ist die eine
+ * Quelle für beide.
+ */
+const DROPDOWN_ANIMATION_MS = DURATION_EXIT * 1000;
 
 function AnimatedDropdown({ open, children, style }: { open: boolean; children: ReactNode; style: CSSProperties }) {
   const [mounted, setMounted] = useState(open);
@@ -363,7 +373,12 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
         opacity: visible ? 1 : 0,
         transform: visible ? "translateY(0) scale(1)" : "translateY(-8px) scale(0.96)",
         transformOrigin: "top center",
-        transition: `opacity ${DROPDOWN_ANIMATION_MS}ms ease, transform ${DROPDOWN_ANIMATION_MS}ms ease`,
+        /* Ein- und Abgang getrennt: herein 180 ms auf der Standardkurve,
+           hinaus 140 ms beschleunigt. `visible` ist im selben Commit schon der
+           neue Zustand, deshalb greift beim Schließen sofort die Abgangsregel. */
+        transition: visible
+          ? `opacity var(--duration-enter) var(--ease-standard), transform var(--duration-enter) var(--ease-standard)`
+          : `opacity var(--duration-exit) var(--ease-exit), transform var(--duration-exit) var(--ease-exit)`,
         pointerEvents: open ? "auto" : "none",
       }}
     >

@@ -11,7 +11,6 @@ import type {
   ExtensionUiRequest,
   SessionInfo,
   SessionTreeNode,
-  SubagentSnapshot,
   ToolResultMessage,
   UserMessage,
 } from "@/lib/types";
@@ -23,11 +22,20 @@ import { MessageView } from "./MessageView";
 import { CollapsibleMessage } from "./CollapsibleMessage";
 import { isCollapsibleOutput, shouldCollapseOutput, summarizeCollapsedOutput, createOutputClock } from "@/lib/chat-collapse";
 import { AnimatePresence, motion } from "motion/react";
+import {
+  DURATION_ENTER,
+  DURATION_EXIT,
+  EASE_EMPHASIZED,
+  EASE_EXIT,
+  EASE_STANDARD,
+  PULSE_TRANSITION,
+} from "./motion/animations";
 import { Shimmer } from "./motion/Shimmer";
 import { Skeleton } from "./motion/Skeleton";
 import { useAnimationMode } from "./motion/hooks";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
+import { SubagentAgentButton } from "./SubagentPanel";
 import { OmpWordmark } from "./OmpWordmark";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -61,7 +69,6 @@ interface Props {
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
-  onSubagentsChange?: (subagents: SubagentSnapshot[]) => void;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
   soundEnabled?: boolean;
@@ -189,7 +196,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
         }}
         title={expanded ? t("chat.collapseProcess") : t("chat.expandProcess")}
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform var(--duration-hover) var(--ease-standard)" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
         </svg>
         <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -205,7 +212,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onSubagentsChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const animationMode = useAnimationMode();
 
@@ -381,10 +388,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     onContextUsageChange?.(contextUsageRef.current);
   }, [ctxKey, onContextUsageChange]);
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
-  useEffect(() => {
-    onSubagentsChange?.(subagents);
-  }, [onSubagentsChange, subagents]);
-  useEffect(() => () => { onSubagentsChange?.([]); }, [onSubagentsChange]);
 
 
   const onDrop = useCallback((files: File[]) => {
@@ -523,20 +526,26 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
           className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]"
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.15, ease: "easeOut" }}
+          transition={{ duration: DURATION_ENTER, ease: EASE_STANDARD }}
         >
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            {[0, 0.8, 1.6].map((delay) => (
-              <motion.div
-                key={delay}
-                className="absolute h-[720px] w-[720px] rounded-full border-[1.5px] border-solid border-[rgba(37,99,235,0.5)]"
-                style={{ transformOrigin: "center" }}
-                initial={{ scale: 0, opacity: 0.6 }}
-                // An endless ring must not survive the stand-still setting.
-                animate={animationMode === "off" ? { opacity: 0.35 } : { scale: [0, 1], opacity: [0.6, 0] }}
-                transition={{ duration: 2.4, ease: "easeOut", repeat: animationMode === "off" ? 0 : Infinity, delay }}
-              />
-            ))}
+            {/* Ein Ring, nicht drei. Drei gestaffelte 720-px-Ringe mit 1.5-px-
+                Rand waren das Teuerste an dieser Fläche: drei große Ebenen, die
+                dauerhaft neu skaliert werden, für ein Bild, das „hier kannst du
+                fallen lassen" sagt. Ein Ring im selben Takt wie jeder andere
+                Wartezustand (`PULSE_TRANSITION`, 1.5 s) sagt dasselbe. */}
+            <motion.div
+              className="absolute h-[720px] w-[720px] rounded-full border-[1.5px] border-solid border-[rgba(37,99,235,0.5)]"
+              style={{ transformOrigin: "center" }}
+              initial={{ scale: 0, opacity: 0.6 }}
+              // An endless ring must not survive the stand-still setting.
+              animate={animationMode === "off" ? { opacity: 0.35 } : { scale: [0, 1], opacity: [0.6, 0] }}
+              transition={{
+                duration: PULSE_TRANSITION.duration,
+                ease: EASE_EMPHASIZED,
+                repeat: animationMode === "off" ? 0 : Infinity,
+              }}
+            />
           </div>
           <svg
             width="280" height="280" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg"
@@ -924,7 +933,23 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
             <GoalBar goal={goalStatus} t={t} />
-            <VibeBar vibe={vibeStatus} t={t} />
+            {/* Die Zeile ueber dem Composer: Vibe-Leiste links, der eine
+                Einstieg in laufende Hintergrundarbeit rechts. Der Platzhalter
+                haelt den Knopf auch dann am rechten Rand, wenn es keine
+                Vibe-Leiste gibt. */}
+            {vibeStatus?.enabled || subagents.length > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <VibeBar vibe={vibeStatus} t={t} />
+                </div>
+                <SubagentAgentButton
+                  sessionId={session?.id ?? null}
+                  cwd={session?.cwd}
+                  subagents={subagents}
+                  vibeWorkers={vibeStatus?.enabled ? vibeStatus.workers : 0}
+                />
+              </div>
+            ) : null}
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>
@@ -989,7 +1014,6 @@ function VibeBar({ vibe, t }: { vibe: VibeStatusInfo | null; t: (key: string, pa
         display: "flex",
         alignItems: "center",
         gap: 8,
-        marginBottom: 8,
         padding: "5px 10px",
         border: "1px solid var(--border)",
         borderRadius: 7,
@@ -1076,7 +1100,11 @@ function NoticeShelf({ notices, floating = false, align = "left" }: { notices: N
               initial={{ opacity: 0, y: -8 }}
               animate={notice.exiting ? { opacity: 0, y: -8 } : { opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18, ease: notice.exiting ? "easeIn" : "easeOut" }}
+              transition={
+                notice.exiting
+                  ? { duration: DURATION_EXIT, ease: EASE_EXIT }
+                  : { duration: DURATION_ENTER, ease: EASE_EMPHASIZED }
+              }
               style={{
                 display: "flex",
                 alignItems: "center",

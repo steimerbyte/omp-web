@@ -5,7 +5,13 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { motion } from "motion/react";
 import { Pressable } from "./motion/Pressable";
 import { Skeleton } from "./motion/Skeleton";
-import { DURATION_FAST, EASE_POP } from "./motion/animations";
+import {
+  DURATION_ENTER,
+  DURATION_ENTER_PANEL,
+  EASE_EMPHASIZED,
+  EASE_STANDARD,
+  SPRING_PRESS,
+} from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
 import { ModelRolesPanel } from "./ModelRolesPanel";
 import { SearchableSelect } from "./SearchableSelect";
@@ -632,7 +638,7 @@ function ThinkingLevelMapEditor({
           border: "none",
           cursor: "pointer",
           fontWeight: 400,
-          transition: "background 0.1s, color 0.1s",
+          transition: "background-color var(--duration-hover) var(--ease-standard), color var(--duration-hover) var(--ease-standard)",
           whiteSpace: "nowrap",
           background: "var(--bg-panel)",
           color: "var(--text-dim)",
@@ -691,7 +697,7 @@ function ThinkingLevelMapEditor({
             </div>
 
             {/* Custom button + input fused */}
-            <div style={{ display: "flex", borderRadius: 5, border: `1px solid ${state === "string" ? "var(--accent)" : "var(--border)"}`, overflow: "hidden", transition: "border-color 0.1s" }}>
+            <div style={{ display: "flex", borderRadius: 5, border: `1px solid ${state === "string" ? "var(--accent)" : "var(--border)"}`, overflow: "hidden", transition: "border-color var(--duration-hover) var(--ease-standard)" }}>
               <button
                 onClick={() => setLevel(level, strVal || level)}
                 style={{ ...btnBase, ...(state === "string" ? btnActive : {}), borderRight: "1px solid var(--border)", flexShrink: 0 }}
@@ -713,7 +719,7 @@ function ThinkingLevelMapEditor({
                   fontFamily: "var(--font-mono)",
                   fontSize: 11,
                   padding: "4px 7px",
-                  transition: "background 0.1s, color 0.1s",
+                  transition: "background-color var(--duration-hover) var(--ease-standard), color var(--duration-hover) var(--ease-standard)",
                 }}
               />
             </div>
@@ -1666,7 +1672,7 @@ function AddProviderPicker({
     cursor: "pointer",
     minWidth: 0,
     textAlign: "left",
-    transition: "border-color 0.12s, background 0.12s",
+    transition: "border-color var(--duration-hover) var(--ease-standard), background-color var(--duration-hover) var(--ease-standard)",
     width: "100%",
   };
 
@@ -1676,14 +1682,14 @@ function AddProviderPicker({
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.16, ease: "easeOut" }}
+      transition={{ duration: DURATION_ENTER, ease: EASE_STANDARD }}
       style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 6 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.2, ease: EASE_POP }}
+        transition={{ duration: DURATION_ENTER_PANEL, ease: EASE_EMPHASIZED }}
         style={{ width: 820, maxWidth: "calc(100vw - 32px)", maxHeight: "min(72vh, calc(100vh - 32px))", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.22)", overflow: "hidden" }}>
         {/* Search */}
         <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
@@ -2173,7 +2179,7 @@ export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }
             // only for `positionalKeys`) and line ~8997 (layout animations),
             // so `MotionConfig reducedMotion` leaves this tap scaling.
             whileTap={animationMode === "off" ? undefined : { scale: 0.96 }}
-            transition={{ duration: DURATION_FAST }}
+            transition={SPRING_PRESS}
             style={{
             position: "relative",
             padding: "6px 16px",
@@ -2183,7 +2189,7 @@ export function ModelsConfig({ cwd, onClose, embedded = false, onModelsChanged }
             color: savedOk ? "#fff" : saving ? "var(--text-muted)" : "#fff",
             cursor: (saving || savedOk) ? "default" : "pointer", fontSize: 13, fontWeight: 600,
             display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-            transition: "background-color 0.2s ease, color 0.2s ease",
+            transition: "background-color var(--duration-hover) var(--ease-standard), color var(--duration-hover) var(--ease-standard)",
           }}>
             {savedOk && (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
