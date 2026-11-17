@@ -7,15 +7,28 @@ const css = readFileSync(new URL("./SearchableSelect.module.css", import.meta.ur
 const chatInputSource = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
 
 test("opens the option list on whichever side of the trigger has room", () => {
-  assert.match(source, /usePopupPlacement\(rootRef, open, \{[\s\S]*?prefer: "below"/);
-  assert.match(source, /side === "above"\s*\?\s*\{ bottom: `calc\(100% \+ \$\{POPOVER_GAP_PX\}px\)`, maxHeight \}/);
-  assert.match(source, /\{ top: `calc\(100% \+ \$\{POPOVER_GAP_PX\}px\)`, maxHeight \}/);
+  // Gemessen wird der Ausloeser; die Seite kommt aus der gemeinsamen
+  // Platzierungsrechnung, nicht aus einer zweiten Kopie davon.
+  assert.match(source, /computePopupPlacement\(\s*rect\.top - visibleTop,\s*rect\.bottom - visibleTop,/);
+  assert.match(source, /prefer: "below", minHeight: clip \? 0 : 160/);
+  assert.match(source, /placement\.side === "above" \? "down" : "up"/);
   // The side is chosen per open, so the stylesheet must not pin one.
   assert.doesNotMatch(css, /^\s*top: calc\(100% \+ 5px\);/m);
 });
 
+test("fits the list into the clipping ancestor instead of the viewport", () => {
+  // Der scrollende Einstellungsbereich schneidet ab; gemessen wird deshalb
+  // der erste Vorfahr mit `overflow` und dessen Sichtfenster.
+  assert.match(source, /function clipRectFor\(/);
+  assert.match(source, /style\.overflowX\} \$\{style\.overflowY/);
+  assert.match(source, /const clip = clipRectFor\(root\);/);
+  assert.match(source, /const visibleBottom = Math\.min\(viewportHeight, clip\?\.bottom \?\? viewportHeight\);/);
+  assert.match(source, /preferredPopupHeight\(visibleHeight,/);
+  assert.match(source, /const right = Math\.max\(0, rect\.right - \(visibleRight - POPOVER_EDGE_PX\)\);/);
+});
+
 test("bounds the option list to the measured popover height", () => {
-  assert.match(source, /className=\{styles\.options\}[\s\S]*?maxHeight: Math\.max\(0, maxHeight - POPOVER_CHROME_PX\)/);
+  assert.match(source, /className=\{styles\.options\}[\s\S]*?maxHeight: Math\.max\(0, placement\.maxHeight - POPOVER_CHROME_PX\)/);
 });
 
 test("scrolls the keyboard-active option into view", () => {

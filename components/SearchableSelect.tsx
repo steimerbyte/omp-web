@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import styles from "./SearchableSelect.module.css";
-import { usePopupPlacement } from "@/hooks/usePopupPlacement";
+import { computePopupPlacement, preferredPopupHeight } from "@/lib/popup-placement";
 import { Enter } from "./motion/Enter";
 import { Pressable } from "./motion/Pressable";
 
@@ -39,6 +39,39 @@ const POPOVER_GAP_PX = 5;
 const POPOVER_MAX_HEIGHT_PX = 296;
 /** Height of the search row above the option list. */
 const POPOVER_CHROME_PX = 46;
+/** Schmalster Popover: das Suchfeld braucht Platz fuer ein paar Zeichen. */
+const POPOVER_MIN_WIDTH_PX = 240;
+const POPOVER_EDGE_PX = 8;
+
+/**
+ * Der naechste Vorfahr, der seine Kinder abschneidet, mit seinem Sichtfenster
+ * in Viewport-Koordinaten.
+ *
+ * Beide Aufrufer stellen das Feld in einen scrollenden Bereich
+ * (`SettingsConfig` `.scrollContent`, `ModelsConfig`-Liste). Ein absolut
+ * positioniertes Popover wird dort abgeschnitten, sobald der Ausloeser nah am
+ * Rand dieses Bereichs steht — die Platzierung am *Viewport* misst dann den
+ * falschen Platz. Ein Portal waere hier keine Loesung: es verlaesst den
+ * modalen Dialog (Radix schliesst bei Klick daneben, `pointer-events` am Body
+ * steht auf `none`).
+ */
+function clipRectFor(element: HTMLElement | null): { top: number; bottom: number; left: number; right: number } | null {
+  for (let node = element?.parentElement ?? null; node && node !== document.body; node = node.parentElement) {
+    const style = window.getComputedStyle(node);
+    if (/(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)) {
+      return node.getBoundingClientRect();
+    }
+  }
+  return null;
+}
+
+interface PopoverPlacement {
+  side: "above" | "below";
+  maxHeight: number;
+  /** Breite und Abstand zum rechten Rand des Ausloesers (rechtsbuendig). */
+  width: number;
+  right: number;
+}
 
 function normalize(value: string): string {
   return value
@@ -67,6 +100,12 @@ export function SearchableSelect({
   const [activeIndex, setActiveIndex] = useState(0);
   const listboxId = useId();
   const selected = options.find((option) => option.value === value);
+  const [placement, setPlacement] = useState<PopoverPlacement>({
+    side: "below",
+    maxHeight: POPOVER_MAX_HEIGHT_PX,
+    width: POPOVER_MIN_WIDTH_PX,
+    right: 0,
+  });
   const filtered = useMemo(() => {
     const needle = normalize(query.trim());
     if (!needle) return options;
@@ -110,14 +149,60 @@ export function SearchableSelect({
   }, [activeIndex, open]);
 
   // The trigger can sit near the bottom of a scrollable settings panel, where
-  // a list opening downwards runs past the dialog and the viewport.
-  const { side, maxHeight } = usePopupPlacement(rootRef, open, {
-    viewportFraction: 0.6,
-    cap: POPOVER_MAX_HEIGHT_PX,
-    gap: POPOVER_GAP_PX,
-    prefer: "below",
-    minHeight: 160,
-  });
+  // a list opening downwards runs past the dialog and the viewport. Gemessen
+  // wird deshalb am Ausloeser und *innerhalb* des abschneidenden Vorfahren,
+  // nicht am Viewport; neu bei Fenster- und Ansichtswechsel sowie bei jedem
+  // Scroll (auch in inneren Bereichen).
+  useEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      const rect = root.getBoundingClientRect();
+      const viewportWidth = window.visualViewport?.width || window.innerWidth || document.documentElement?.clientWidth || 1024;
+      const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement?.clientHeight || 768;
+      const clip = clipRectFor(root);
+      const visibleTop = Math.max(0, clip?.top ?? 0);
+      const visibleBottom = Math.min(viewportHeight, clip?.bottom ?? viewportHeight);
+      const visibleLeft = Math.max(0, clip?.left ?? 0);
+      const visibleRight = Math.min(viewportWidth, clip?.right ?? viewportWidth);
+      const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+      const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+      const { side, maxHeight } = computePopupPlacement(
+        rect.top - visibleTop,
+        rect.bottom - visibleTop,
+        visibleHeight,
+        preferredPopupHeight(visibleHeight, 0.6, POPOVER_MAX_HEIGHT_PX),
+        // Innerhalb eines abschneidenden Bereichs zaehlt nur dessen Platz:
+        // die Mindesthoehe der gemeinsamen Rechnung wuerde den Rand sonst
+        // ueberlaufen und genau wieder abgeschnitten.
+        { gap: POPOVER_GAP_PX, prefer: "below", minHeight: clip ? 0 : 160 },
+      );
+      // Rechtsbuendig am Feld; weicht nach links aus, wenn der Bereich dort
+      // endet. `right` ist der Abstand zum rechten Rand des Ausloesers.
+      const width = Math.min(Math.max(rect.width, POPOVER_MIN_WIDTH_PX), Math.max(0, visibleWidth - POPOVER_EDGE_PX * 2));
+      const right = Math.max(0, rect.right - (visibleRight - POPOVER_EDGE_PX));
+      setPlacement((current) => (
+        current.side === side && current.maxHeight === maxHeight && current.width === width && current.right === right
+          ? current
+          : { side, maxHeight, width, right }
+      ));
+    };
+    measure();
+    const observer = rootRef.current ? new ResizeObserver(measure) : null;
+    if (rootRef.current && observer) observer.observe(rootRef.current);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    window.visualViewport?.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("scroll", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+      window.visualViewport?.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("scroll", measure);
+    };
+  }, [open]);
 
   const choose = (option: SearchableSelectOption) => {
     if (option.disabled) return;
@@ -183,11 +268,16 @@ export function SearchableSelect({
 
       {open && (
         <Enter
-          direction={side === "above" ? "down" : "up"}
+          direction={placement.side === "above" ? "down" : "up"}
           className={styles.popover}
-          style={side === "above"
-            ? { bottom: `calc(100% + ${POPOVER_GAP_PX}px)`, maxHeight }
-            : { top: `calc(100% + ${POPOVER_GAP_PX}px)`, maxHeight }}
+          style={{
+            right: placement.right,
+            width: placement.width,
+            maxHeight: placement.maxHeight,
+            ...(placement.side === "above"
+              ? { bottom: `calc(100% + ${POPOVER_GAP_PX}px)` }
+              : { top: `calc(100% + ${POPOVER_GAP_PX}px)` }),
+          }}
         >
           <div className={styles.searchWrap}>
             <svg className={styles.searchIcon} viewBox="0 0 16 16" aria-hidden="true">
@@ -218,7 +308,7 @@ export function SearchableSelect({
             className={styles.options}
             role="listbox"
             aria-label={ariaLabel}
-            style={{ maxHeight: Math.max(0, maxHeight - POPOVER_CHROME_PX) }}
+            style={{ maxHeight: Math.max(0, placement.maxHeight - POPOVER_CHROME_PX) }}
           >
             {filtered.length ? filtered.map((option, index) => (
               <Pressable

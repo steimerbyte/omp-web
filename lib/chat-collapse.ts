@@ -12,6 +12,10 @@ import { toolDisplayName } from "./tool-names";
  * gemountet, sondern erst beim Aufklappen: das ist der Grund fuer die Regel,
  * ein Transkript mit hundert Werkzeug-Ergebnissen kostet sonst beim Scrollen
  * fuer jede Zeile Layout und Markdown-Rendering.
+ *
+ * Die neueste zuklappbare Zeile des Transkripts bleibt in jedem Fall offen —
+ * unabhaengig von Anzahl und Alter, als Ausgabe (`outputsAfter === 0`) wie als
+ * Prozess-Gruppe (`shouldCollapseProcessGroup`).
  */
 export const COLLAPSE_AFTER_OUTPUTS = 3;
 export const COLLAPSE_AFTER_MS = 5 * 60_000;
@@ -43,6 +47,17 @@ export function shouldCollapseOutput(signal: CollapseSignal): boolean {
   if (signal.outputsAfter <= 0) return false;
   if (signal.outputsAfter >= COLLAPSE_AFTER_OUTPUTS) return true;
   return typeof signal.ageMs === "number" && Number.isFinite(signal.ageMs) && signal.ageMs >= COLLAPSE_AFTER_MS;
+}
+
+/**
+ * Eine Prozess-Gruppe startet zugeklappt, sobald ihr eine zuklappbare Zeile
+ * folgt. `foldableAfter` zaehlt Ausgaben und Gruppen; 0 heisst, die Gruppe ist
+ * die neueste zuklappbare Zeile, und die bleibt offen. Endet ein Turn ohne
+ * Antwort, steht er naemlich nur in seiner Gruppe — zugeklappt sieht der Leser
+ * dort eine Zeile ohne Inhalt, im schwaechsten Fall ein leeres Transkript.
+ */
+export function shouldCollapseProcessGroup(signal: { foldableAfter: number }): boolean {
+  return signal.foldableAfter > 0;
 }
 
 /**

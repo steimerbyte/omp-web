@@ -224,6 +224,41 @@ test("Pfeiltasten ueberspringen deaktivierte Optionen, Enter waehlt", async () =
   container.remove();
 });
 
+test("begrenzt die Liste auf den Platz im abschneidenden Bereich", async () => {
+  // Feld in einem scrollenden Kasten, dessen Sichtfenster bei 0..120 px liegt.
+  // Im Viewport waere unter dem Feld viel Platz, im Kasten nur 53 px.
+  const clip = win.document.createElement("div");
+  win.document.body.appendChild(clip);
+  const originalComputed = win.getComputedStyle;
+  win.getComputedStyle = (element) => (element === clip
+    ? { overflowX: "hidden", overflowY: "auto" }
+    : originalComputed(element));
+  clip.getBoundingClientRect = () => ({ top: 0, left: 0, right: 300, bottom: 120, width: 300, height: 120, x: 0, y: 0 });
+  const container = win.document.createElement("div");
+  clip.appendChild(container);
+  const root = createRoot(container);
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  try {
+    await act(async () => {
+      root.render(React.createElement(SearchableSelect, {
+        value: "de", options: OPTIONS, onChange: () => {}, ariaLabel: "Sprache",
+      }));
+    });
+    await act(async () => {
+      fire(container.querySelector('button[aria-haspopup="listbox"]'), "click");
+    });
+    const panel = listbox(container)?.parentElement;
+    assert.ok(panel, "die Listbox fehlt");
+    // 120 - 54 (Feldunterkante) - 5 (Abstand) - 8 (Rand) = 53
+    assert.ok(parseFloat(panel.style.maxHeight) <= 53, `maxHeight ${panel.style.maxHeight} ragt aus dem Kasten`);
+    assert.ok(parseFloat(panel.style.maxHeight) > 0, "die Liste muss sichtbar bleiben");
+  } finally {
+    await act(async () => root.unmount());
+    win.getComputedStyle = originalComputed;
+    clip.remove();
+  }
+});
+
 test("Escape, Tab und Klick daneben schliessen die Liste", async () => {
   const { root, container } = await mount();
   const open = async () => {

@@ -75,6 +75,9 @@ export function ConfirmDialog({
         </div>
 
         <div
+          // Der Pfad ist der einzige Unterschied zwischen zwei aehnlich
+          // benannten Projekten — gekuerzt bleibt er sonst nicht pruefbar.
+          title={project.root}
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: 11,

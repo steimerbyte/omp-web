@@ -65,11 +65,10 @@
 .popover {
   position: absolute;
   z-index: 120;
-  /* Side and height are set inline from the space around the trigger. */
-  right: 0;
+  /* Seite, Breite, rechter Abstand und Hoehe setzt die Komponente inline aus
+     dem Platz, den der abschneidende Vorfahr wirklich frei laesst. */
   display: flex;
   flex-direction: column;
-  width: max(100%, 240px);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 82%, var(--accent));
   border-radius: 8px;

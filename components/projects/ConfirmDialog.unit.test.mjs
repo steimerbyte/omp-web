@@ -156,6 +156,11 @@ test("nennt Titel, Chatzahl und den Ordner und bestaetigt per Klick", async () =
   // Die Zahl der Chats steht im Satz, nicht nur im Objekt.
   assert.match(panel.textContent, new RegExp(de["projects.delete.body"].replace("{n}", "3")));
   assert.match(panel.textContent, /\/home\/alice\/workspace\/demo/);
+  // Der Pfad kuerzt sich bei langen Namen; der volle Wert steht im Tooltip.
+  const pathLine = [...panel.querySelectorAll("div")]
+    .find((node) => node.textContent.trim() === PROJECT.root);
+  assert.ok(pathLine, "die Pfadzeile fehlt");
+  assert.equal(pathLine.getAttribute("title"), PROJECT.root);
 
   const confirm = buttonWith(de["projects.delete.confirm"]);
   assert.ok(confirm, "der Bestaetigen-Knopf fehlt");

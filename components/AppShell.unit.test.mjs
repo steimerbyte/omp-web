@@ -99,7 +99,7 @@ class FakeNotification {
 }
 
 let focused = 0;
-function installDom() {
+function installDom({ mobile = false } = {}) {
   const { window } = parseHTML('<!doctype html><html><head></head><body><div id="root"></div></body></html>');
   restorePrototypes = captureLinkedomPrototypes(window);
   const navigator = {
@@ -154,7 +154,17 @@ function installDom() {
   globalThis.getComputedStyle = window.getComputedStyle ?? (() => ({}));
   globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
   globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
-  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  const matchMedia = (query) => ({
+    matches: mobile && String(query).includes("max-width"),
+    media: String(query),
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    onchange: null,
+  });
+  globalThis.matchMedia = matchMedia;
+  windowProxy.matchMedia = matchMedia;
   globalThis.DOMRect ??= class DOMRect {
     constructor(x = 0, y = 0, width = 0, height = 0) {
       Object.assign(this, { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height });
@@ -182,12 +192,29 @@ function installDom() {
     status: 200,
     headers: { "content-type": "application/json" },
   });
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : String(input?.url ?? input);
     if (/^\/api\/sessions\/[^/?]+/.test(url)) return json(sessionDetail());
     if (url.startsWith("/api/sessions")) return json({ sessions: [SESSION] });
     if (url.startsWith("/api/projects/sizes")) return json({ sizes: [], pending: false });
     if (url.startsWith("/api/projects")) return json({ projects: [], priorities: [], home: "/home/alice" });
+    if (url.startsWith("/api/terminal")) {
+      if ((init?.method ?? "GET") === "POST") {
+        return json({ terminal: { id: "t-phone", cwd: "/home/alice", pid: 77, status: "running", shell: "bash", createdAt: 1, sandboxed: false } });
+      }
+      return json({ terminals: [] });
+    }
+    if (url.startsWith("/api/system-stats")) {
+      return json({
+        cpuPercent: 42,
+        cpuCores: 8,
+        loadAvg: { "1m": 0.5, "5m": 0.4, "15m": 0.3 },
+        memory: { totalBytes: 2 ** 34, usedBytes: 2 ** 33, usedPercent: 50 },
+        gpu: { present: true, vendor: "nvidia", utilizationPercent: 73, memoryUsedBytes: 2 ** 31, memoryTotalBytes: 2 ** 32, source: "nvidia-smi" },
+        process: { pid: 1234, rssBytes: 1024, heapBytes: 512, uptimeSec: 5 },
+        sampledAt: Date.now(),
+      });
+    }
     if (url.startsWith("/api/agent/")) {
       if (url.includes("/events")) {
         return new Response(new ReadableStream({ start() {} }), { headers: { "content-type": "text/event-stream" } });
@@ -209,9 +236,9 @@ test.after(() => {
 
 const settle = (ms = 60) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
 
-async function mountShell(search) {
+async function mountShell(search, options = {}) {
   currentSearch = search;
-  const document = installDom();
+  const document = installDom(options);
   const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
   const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
   const { AppShell } = await jiti.import("./AppShell.tsx");
@@ -238,6 +265,10 @@ test("Session-Statistik zeigt Dauer und kopiert Felder", async () => {
 
   const statsButton = container.querySelector('[aria-label="Session info"]');
   assert.ok(statsButton, "der Session-Statistik-Knopf fehlt");
+  const badgeSlot = container.querySelector('[data-testid="topbar-system-badge"]');
+  assert.ok(badgeSlot, "der System-Badge fehlt");
+  assert.equal(badgeSlot.style.order, "0", "auf dem Desktop bleibt der Badge an seinem Platz");
+  assert.ok(container.querySelector('button[aria-label="Terminal"]'), "auf dem Desktop bleibt das Terminal in der Leiste");
   await act(async () => { statsButton.click(); });
   await settle();
 
@@ -248,6 +279,96 @@ test("Session-Statistik zeigt Dauer und kopiert Felder", async () => {
   await act(async () => { copyFile.click(); });
   await settle();
   assert.ok(container.querySelector('[title="Copied"]'), "der Kopier-Knopf hat seinen Bestaetigungszustand nicht gezeigt");
+
+  await act(async () => root.unmount());
+});
+
+test("auf dem Telefon steht der System-Badge vor den Werkzeugen", async () => {
+  FakeEventSource.instances = [];
+  FakeNotification.instances = [];
+  const { root, container } = await mountShell("?session=s1", { mobile: true });
+  await settle(150);
+
+  const badgeSlot = container.querySelector('[data-testid="topbar-system-badge"]');
+  assert.ok(badgeSlot, "der System-Badge fehlt");
+  // `order: -1` setzt den Badge in der Flex-Zeile an scrollLeft 0; die Leiste
+  // selbst bleibt in DOM-Reihenfolge und Desktop-Layout unberuehrt.
+  assert.equal(badgeSlot.style.order, "-1", "der Badge steht auf dem Telefon nicht vorn");
+  // Das Terminal ist auch auf dem Telefon erreichbar: der Knopf ist gerendert
+  // (teilweise sichtbar, der Rest liegt im Rollweg) und oeffnet das
+  // Vollbild-Overlay des rechten Panels.
+  const terminal = container.querySelector('button[aria-label="Terminal"]');
+  assert.ok(terminal, "das Terminal fehlt auf dem Telefon");
+  assert.equal(terminal.hasAttribute("disabled"), false, "das Terminal ist auf dem Telefon nicht gesperrt");
+
+  const button = badgeSlot.querySelector("button");
+  assert.match(button.textContent, /CPU42%RAM50%/, "Punkt + Prozent passen als Erstes in die 390 px");
+  assert.doesNotMatch(button.textContent, /8c/);
+  assert.doesNotMatch(button.textContent, /16\.0 GB/);
+  assert.doesNotMatch(button.textContent, /GPU/);
+  assert.match(button.getAttribute("title"), /across 8 cores/, "der Tooltip behaelt alle Zahlen");
+
+  await act(async () => { button.click(); });
+  await settle(50);
+  const dialog = container.querySelector('[role="dialog"]');
+  assert.ok(dialog, "das Popover bleibt auf dem Telefon erreichbar");
+  assert.match(dialog.textContent, /mem: 8\.0 GB \/ 16\.0 GB/);
+
+  // Der Knopf ist erreichbar und oeffnet sein Menue; das Menue selbst ist
+  // fest im Viewport verankert. (Der xterm-Viewer laesst sich in linkedom
+  // nicht mounten, deshalb endet der Test vor dem Spawn.)
+  await act(async () => { terminal.click(); });
+  await settle(50);
+  const terminalMenu = container.querySelector('[role="menu"]');
+  assert.ok(terminalMenu, "das Terminal-Menue oeffnet auf dem Telefon nicht");
+  assert.match(terminalMenu.textContent, /New terminal/);
+  assert.equal(terminalMenu.style.position, "fixed", "das Menue liegt nicht fest im Viewport");
+
+  await act(async () => root.unmount());
+});
+
+test("die Kopfleiste endet mit Freiraum und blendet verborgene Seiten ab", async () => {
+  FakeEventSource.instances = [];
+  FakeNotification.instances = [];
+  const { root, container } = await mountShell("?session=s1");
+
+  const bar = container.querySelector('[data-testid="topbar-scroll"]');
+  assert.ok(bar, "die Kopfleiste fehlt");
+  const clearance = container.querySelector('[data-testid="topbar-clearance"]');
+  assert.ok(clearance, "der Freiraum am Ende fehlt");
+  assert.equal(clearance.getAttribute("aria-hidden"), "true");
+  assert.equal(clearance.style.width, "36px");
+  assert.equal(bar.lastElementChild, clearance, "der Freiraum steht nicht zuletzt");
+
+  const shell = bar.parentElement;
+  // linkedom hat kein Layout: 694 px Inhalt auf 390 px Sicht werden gesetzt und
+  // das Scroll-Ereignis ausgeloest, statt einen Browser zu brauchen.
+  assert.equal(shell.getAttribute("data-topbar-fade"), "none", "ohne Ueberlauf darf nichts abgedunkelt sein");
+  Object.defineProperty(bar, "scrollWidth", { configurable: true, value: 694 });
+  Object.defineProperty(bar, "clientWidth", { configurable: true, value: 390 });
+  Object.defineProperty(bar, "scrollLeft", { configurable: true, value: 0, writable: true });
+
+  await act(async () => { bar.dispatchEvent(new globalThis.Event("scroll")); });
+  assert.equal(shell.getAttribute("data-topbar-fade"), "right", "rechts liegt Inhalt, die Kante bleibt hell");
+
+  bar.scrollLeft = 304;
+  await act(async () => { bar.dispatchEvent(new globalThis.Event("scroll")); });
+  assert.equal(shell.getAttribute("data-topbar-fade"), "left", "am Ende ist nur noch links etwas verborgen");
+
+  await act(async () => root.unmount());
+});
+
+test("die Tab-Leiste des Datei-Panels endet vor dem festen Knopf", async () => {
+  FakeEventSource.instances = [];
+  FakeNotification.instances = [];
+  const { root, container } = await mountShell("?session=s1");
+
+  const tabbar = container.querySelector('[data-testid="file-panel-tabbar"]');
+  assert.ok(tabbar, "die Tab-Leiste des Datei-Panels fehlt");
+  // Der Knopf liegt fest am Fensterrand ueber der rechten oberen Ecke des
+  // Panels; 36 px muessen frei bleiben, sonst ist der letzte Tab beim
+  // Scrollen nicht mehr tippbar.
+  assert.equal(tabbar.parentElement.style.paddingRight, "36px");
 
   await act(async () => root.unmount());
 });

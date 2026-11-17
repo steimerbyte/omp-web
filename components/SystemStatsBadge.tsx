@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Reveal } from "./motion/Reveal";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { useFixedPopover } from "@/hooks/useFixedPopover";
 
 interface Stats {
   cpuPercent: number | null;
@@ -25,6 +27,10 @@ interface Stats {
 }
 
 const MAX_HISTORY_SECONDS = 10;
+// Breite der History: Sparkline 220 + Spalte 32 + Wert 36 + Abstaende 16 +
+// Innenabstand 24 + zwei Rahmen. Gemessen 330 px; ein fester Wert macht das
+// Klemmen im Viewport berechenbar.
+const STATS_POPOVER_WIDTH = 330;
 const POLL_INTERVAL_MS = 5000;
 const POLL_INTERVAL_MS_LIVE = 1000;
 
@@ -134,8 +140,10 @@ export function SystemStatsBadge() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [history, setHistory] = useState<Sample[]>([]);
   const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   // One poll at a time. A slow /api/system-stats (the same HTTP/1.1 connection
   // pool the whole app shares) must not queue further samples behind itself.
   const tickPendingRef = useRef(false);
@@ -205,6 +213,8 @@ export function SystemStatsBadge() {
       : `GPU: ${gpuPct === null ? "—" : gpuPct.toFixed(1)}%` +
         (stats.gpu.memoryTotalBytes ? ` · ${formatBytes(stats.gpu.memoryUsedBytes ?? 0)} of ${formatBytes(stats.gpu.memoryTotalBytes)}` : "");
 
+  const popoverPos = useFixedPopover(triggerRef, open, { width: STATS_POPOVER_WIDTH, align: "right" });
+
   const last = history.length > 0 ? history[history.length - 1] : null;
   const tooltip = stats
     ? `CPU: ${cpuPct === null ? "—" : cpuPct.toFixed(1)}% across ${stats.cpuCores} cores · ` +
@@ -217,6 +227,7 @@ export function SystemStatsBadge() {
   return (
     <div ref={rootRef} style={{ position: "relative", display: "flex", height: "100%" }}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
@@ -226,8 +237,8 @@ export function SystemStatsBadge() {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 12,
-          padding: "0 12px",
+          gap: isMobile ? 8 : 12,
+          padding: isMobile ? "0 8px" : "0 12px",
           height: "100%",
           background: open ? "var(--bg-selected)" : "none",
           border: "none",
@@ -248,11 +259,15 @@ export function SystemStatsBadge() {
           <span style={{ color: "var(--text)", fontWeight: 500 }}>
             {cpuPct === null ? "—" : `${cpuPct.toFixed(0)}%`}
           </span>
-          {/* The absolute figure is the one people check against `nproc`, so it
-              belongs next to the percentage rather than only in the popover. */}
-          <span style={{ color: "var(--text-dim)" }}>
-            {stats ? `${stats.cpuCores}c` : ""}
-          </span>
+          {/* Die absolute Zahl ist der Wert, den man gegen `nproc` haelt, also
+              gehoert sie neben den Prozentsatz statt nur ins Popover — ausser
+              auf dem Telefon: dort bleibt der Badge bei Punkt + Prozent, weil
+              jede zusaetzliche Spalte die Kopfleiste weiter aufrollt. */}
+          {!isMobile && (
+            <span style={{ color: "var(--text-dim)" }}>
+              {stats ? `${stats.cpuCores}c` : ""}
+            </span>
+          )}
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={stats ? `Memory: ${formatBytes(stats.memory.usedBytes)} of ${formatBytes(stats.memory.totalBytes)}` : undefined}>
           <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: colorFor(memPct), flexShrink: 0 }} />
@@ -260,35 +275,46 @@ export function SystemStatsBadge() {
           <span style={{ color: "var(--text)", fontWeight: 500 }}>
             {memPct === null ? "—" : `${memPct.toFixed(0)}%`}
           </span>
-          <span style={{ color: "var(--text-dim)" }}>
-            {stats ? formatBytes(stats.memory.totalBytes) : ""}
-          </span>
+          {!isMobile && (
+            <span style={{ color: "var(--text-dim)" }}>
+              {stats ? formatBytes(stats.memory.totalBytes) : ""}
+            </span>
+          )}
         </span>
-        {/* Always rendered, so an em dash reads as "not measurable here" rather
-            than "there is no GPU at all" — otherwise the entry silently
-            disappears on exactly the machines a person is wondering about. */}
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={stats ? gpuLabel : undefined}>
-          <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: colorFor(gpuPct), flexShrink: 0 }} />
-          <span style={{ color: "var(--text-dim)" }}>GPU</span>
-          <span style={{ color: "var(--text)", fontWeight: 500 }}>
-            {gpuPct === null ? "—" : `${gpuPct.toFixed(0)}%`}
+        {/* On desktop always rendered, so an em dash reads as "not measurable
+            here" rather than "there is no GPU at all" — otherwise the entry
+            silently disappears on exactly the machines a person is wondering
+            about. Auf dem Telefon entfaellt die GPU-Zeile ganz; ihre Zahlen
+            stehen weiter im Popover. */}
+        {!isMobile && (
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={stats ? gpuLabel : undefined}>
+            <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: "50%", background: colorFor(gpuPct), flexShrink: 0 }} />
+            <span style={{ color: "var(--text-dim)" }}>GPU</span>
+            <span style={{ color: "var(--text)", fontWeight: 500 }}>
+              {gpuPct === null ? "—" : `${gpuPct.toFixed(0)}%`}
+            </span>
+            <span style={{ color: "var(--text-dim)" }}>
+              {stats?.gpu?.present ? (stats.gpu.vendor ?? "") : ""}
+            </span>
           </span>
-          <span style={{ color: "var(--text-dim)" }}>
-            {stats?.gpu?.present ? (stats.gpu.vendor ?? "") : ""}
-          </span>
-        </span>
+        )}
       </button>
-      {open && (
+      {open && popoverPos && (
         <Reveal
           ref={popoverRef}
           role="dialog"
           aria-label="System resource history"
           style={{
-            position: "absolute",
-            top: "calc(100% - 1px)",
-            right: 0,
-            marginTop: 2,
-            minWidth: 280,
+            // `fixed`: die Kopfleiste schneidet ihre Kinder ab (`overflow-y:
+            // hidden`), ein absolut positioniertes Popover liegt dort hinter
+            // dem Rand. Position und Breite kommen aus dem gemessenen Auslöser.
+            position: "fixed",
+            top: popoverPos.top,
+            left: popoverPos.left,
+            width: popoverPos.width,
+            maxHeight: popoverPos.maxHeight,
+            overflowY: "auto",
+            marginTop: 0,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 8,

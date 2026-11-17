@@ -20,6 +20,7 @@ process.env.OMP_WEB_HOME_ROOT = "/home";
 
 const agentRoute = await jiti.import("./[id]/route.ts");
 const { MAX_AGENT_REQUEST_BODY_BYTES } = await jiti.import("@/lib/request-body");
+const { MAX_ATTACHED_IMAGE_BYTES } = await jiti.import("@/lib/image-attachments");
 
 const ALICE = { host: "localhost", "x-omp-user": "alice", "content-type": "application/json" };
 const idParams = (id) => ({ params: Promise.resolve({ id }) });
@@ -118,4 +119,26 @@ test("a declared oversized body keeps its 413 without being read", async (t) => 
   assert.equal(response.status, 413, `erwartet 413, bekam ${response.status}`);
   assert.equal((await response.json()).code, "prompt_rejected");
   assert.deepEqual(sent, []);
+});
+
+test("an image over the per-image limit is a 400 and never reaches the session", async (t) => {
+  const sent = installLiveSession(t);
+  // One byte over the decoded limit; base64 keeps the whole body under the
+  // 30-MB request cap, so this is the image rule answering, not the body rule.
+  const data = Buffer.alloc(MAX_ATTACHED_IMAGE_BYTES + 1).toString("base64");
+  const body = JSON.stringify({
+    type: "prompt",
+    text: "sieh dir das an",
+    images: [{ type: "image", data, mimeType: "image/png" }],
+  });
+  assert.ok(Buffer.byteLength(body) < MAX_AGENT_REQUEST_BODY_BYTES, "the body itself fits the request cap");
+
+  const response = await agentRoute.POST(post("alice-live", ALICE, body), idParams("alice-live"));
+
+  assert.equal(response.status, 400, `erwartet 400, bekam ${response.status}`);
+  const payload = await response.json();
+  assert.equal(payload.code, "prompt_rejected");
+  assert.equal(payload.accepted, false);
+  assert.match(payload.error, /10MB or smaller/);
+  assert.deepEqual(sent, [], "the oversized image never reached the session");
 });

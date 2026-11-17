@@ -90,7 +90,99 @@ upstream line — see the Provenance section in the README.
   Sitzungen und schreibt weiter `"user"` (409, wenn die Session inzwischen
   umbenannt wurde).
 
+- **Der Composer zeigt den Modellnamen immer und hat größere Ziele.**
+  Der Modell-Auslöser zeigt den Namen des aktuellen Modells — oder „Modell
+  wählen“/„Keine Modelle“ aus dem Katalog — statt eines bloßen Symbols und
+  ist 40 px hoch (höchstens 240 px breit, auf dem Telefon volle Breite).
+  Bild- und Dateianhang sind je 40×40 mit 18-px-Symbol und `aria-label`, auf
+  Berührungsgeräten 44 px. „Weitere Steuerungen“ zeigt auf dem Telefon ein
+  Symbol statt des deutschen Textes, der den Modellnamen bei 390 px zu
+  „DeepSeek…“ quetschte, und der Kontextzähler steht als letztes Element
+  rechts in der Werkzeugleiste statt in einer eigenen zentrierten Zeile; auf
+  dem Telefon behält er seine rechte Zeile. Unter etwa 760 px nehmen die
+  festen Teile (gemessen ≈652–682 px) die volle Breite ein und der Zähler
+  stößt an die rechte Gruppe; eine zweite Umbruchstufe gibt es noch nicht.
+
+- **Eingefügte Bilder werden Dateien in der Sitzung, andere eingefügte
+  Dateien gehen den Upload-Weg.** Ein eingefügtes Bild schreibt der Server
+  als inhaltsgehashte Datei `<Artefakte>/local/pasted-image-<hash>.<ext>`
+  (`wx`, 0600, Endung aus der Whitelist des SDK) und hängt den versteckten
+  Quellhinweis mit `local://`-Pfad an den Prompt — wie die TUI, sodass das
+  Modell das Bild später erneut lesen kann. Eine Worker-Sitzung eines Kontos
+  löst ausgelagerte `blob:sha256:`-Bilder beim Laden gegen ihr eigenes
+  Blob-Verzeichnis auf (`resolveSessionBlobRefs` in
+  `GET /api/sessions/[id]` und `/[id]/context`); ein Bild ohne nutzbare Daten
+  erscheint als beschrifteter Platzhalter statt als kaputtes Bild. Eingefügte
+  oder abgelegte PDFs und andere Dateien werden hochgeladen und als `@pfad`
+  in die Nachricht übernommen, statt stillschweigend verworfen zu werden;
+  Zwischenablage und Ablegen teilen sich dieselbe Trennung (Bild = Anhang,
+  alles andere = Upload).
+
+- **Die Oberfläche hat eine Browser-Abnahme vor jedem Release.**
+  `bun run ui:audit` startet einen eigenen Dev-Server auf einem freien Port
+  (ab 30142) mit einer Wegwerf-Identität — eigenes `HOME`, eigener Agent-Dir,
+  eigene Auth- und Session-Dateien, eigenes Home-Root, alles in
+  `/tmp/omp-ui-audit-<Zeitstempel>` und nur in der Umgebung des Kindprozesses —
+  meldet sich über
+  `POST /api/web-access/login` im Browser an und misst bei 390×844 (mit
+  Berührung) und 1280×900 in drei Kopfleisten-Zuständen (ohne Sitzung, mit
+  Sitzung, mit Trust-Streifen): ob jedes bedienbare Element der Kopfleiste,
+  der Composer-Werkzeugleiste und der Seitenleisten-Aktionen an seinem eigenen
+  Mittelpunkt getroffen wird (Anfang, Zielmitte und Maximalposition der
+  Rollachse), ob an der Maximalposition ein anderes bedienbares Element
+  darüberliegt, welcher Vorfahr mit `overflow` das Ziel abschneidet, ob jedes
+  `aria-haspopup`-Popover vollständig im Viewport liegt und an seiner Mitte
+  getroffen wird, ob die Dokumentbreite die Fensterbreite überschreitet, ob
+  jede waagerecht rollende Fläche eine Andeutung trägt (`data-*fade` oder eine
+  sichtbare Scrollleiste) und wie viele Ziele unter 44×44 px liegen (Hinweis,
+  kein Fehler). Jeder `pageerror` und jeder `console.error` lässt den Lauf
+  scheitern; er endet bei jedem Befund mit Exit 1 und schreibt
+  `report.json`. Die Regeln selbst stehen in `lib/ui-audit.ts` und laufen in
+  `bun run test` mit; Playwright ist `playwright-core` ohne
+  Browser-Download und startet das System-Chromium
+  (`PLAYWRIGHT_CHROMIUM_PATH`). Der Lauf gehört zum Release, nicht zu
+  `bun run verify` — er braucht einen Browser und einen eigenen Dev-Server.
+
 ### Behoben
+
+- **Die Terminal-Geometrie passte nicht zum Panel, und ein erneut geöffnetes
+  Terminal zeigte nur den Cursor.** Der Spawn setzt die PTY-Größe jetzt selbst
+  (`stty cols/rows` im `script`-Kind; vorher meldete die PTY `0 0`, gemessen),
+  und das Menü startet mit den gemessenen 62 Spalten des Panels statt mit 100 —
+  die 100 spalteten jede lange Zeile doppelt, weil `script(1)` die PTY-Master-
+  Seite hält und eine laufende Shell aus dem Serverprozess nicht umgebricht.
+  Der Banner nennt den aufgelösten Shell-Namen und keine Größe mehr (unter
+  `script -qfc … /dev/null` ist `$0` leer, die Größe war die Spawn-Größe).
+  `TerminalManager.attach` schreibt bis zu 256 KiB Verlauf als gewöhnliche
+  `output`-Frames vor die Live-Ausgabe — kein neuer Ereignistyp, und weder
+  doppelt noch lückenhaft, weil Verlauf und Zustellung im selben synchronen
+  Schritt passieren; der Viewer setzt dafür seinen Bildschirm beim `connected`
+  zurück. Der Viewer fitted auf den Container und schickt `/resize` nur noch
+  bei echter Größenänderung (150 ms entprellt) statt bei jedem
+  ResizeObserver-Tick — zehn POSTs pro Mount waren es vorher.
+
+- **Die Popover der Kopfleiste waren nicht erreichbar, und auf dem Telefon lag
+  der System-Badge ausserhalb des Bildes.** Die Leiste schneidet ihre Kinder
+  ab (`overflowY: hidden`) und rollt waagerecht; die CPU/RAM-History und das
+  Terminal-Menü lagen als absolute Elemente hinter dem 36-px-Streifen, ein
+  Klick in ihre Mitte traf die Chat-Spalte. Beide sitzen jetzt fest im
+  Viewport, am gemessenen Auslöser verankert und auf beiden Achsen geklemmt
+  (`hooks/useFixedPopover.ts`), und werden beim Rollen der Leiste neu
+  gemessen. Der System-Badge zeigt unter 640 px nur noch Punkt, Name und
+  Prozent (Kerne, RAM-Summe und GPU stehen weiter im Tooltip und im Popover)
+  und steht per `order: -1` vor den Werkzeugen: gemessen war die Leiste bei
+  390 px 656 px breit, der Badge begann bei 342,66 px; kompakt (≈140 px) und
+  vorn sind CPU und RAM im ersten Bild sichtbar, der Rest der Werkzeuge liegt
+  weiter im waagerechten Rollweg. Das gesperrte Terminal nennt auf dem Telefon
+  den wahren Grund („Terminal gibt es nur auf dem Desktop“) statt eines
+  fehlenden Projekts.
+
+- **Ein Transkript konnte vollständig zugeklappt enden.** Die neueste
+  zuklappbare Zeile bleibt jetzt immer offen: `outputsAfter === 0` schützt die
+  letzte Ausgabe, und `shouldCollapseProcessGroup` in `lib/chat-collapse.ts`
+  öffnet die Prozess-Gruppe, sobald ihr keine zuklappbare Zeile mehr folgt.
+  Bisher startete jede Gruppe zugeklappt — endete der letzte Turn ohne Antwort
+  (Abort, Absturz), bestand die ganze Sitzung aus Zeilen ohne Inhalt.
 
 - **MCP-Aufrufe tragen das Werkzeugsymbol, nicht das Schreibsymbol.** Ein
   MCP-Tool heißt `mcp__<server>_<tool>`; mit `tools.xdev` erreicht das Modell

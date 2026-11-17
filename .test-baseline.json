@@ -90,6 +90,11 @@
       "file": "scripts/verify-tenant-isolation.mjs",
       "reason": "Abnahme-Harness gegen einen laufenden Server: sein Test ist der Lauf selbst (node scripts/verify-tenant-isolation.mjs). Ein Modulimport wuerde nur die Argument-Parser-Funktionen laden und die Grenze nicht messen.",
       "since": "2026-11-08"
+    },
+    {
+      "file": "scripts/ui-audit.mjs",
+      "reason": "Browser-Abnahme: startet einen eigenen Dev-Server und Chromium, ihr Test ist der Lauf selbst (bun run ui:audit). Die Regeln ohne Browser stehen in lib/ui-audit.ts und sind dort getestet; ein Modulimport hier wuerde nur die Messfunktionen laden und nichts messen.",
+      "since": "2026-11-17"
     }
   ],
   "coverage": {

@@ -7,6 +7,7 @@ import { Pressable } from "./motion/Pressable";
 import { Shimmer } from "./motion/Shimmer";
 import { PULSE_TRANSITION, SPRING_PRESS } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
+import { useFixedPopover } from "@/hooks/useFixedPopover";
 
 interface TerminalSummary {
   id: string;
@@ -19,13 +20,60 @@ interface TerminalSummary {
   sandboxed: boolean;
 }
 
+// Breite des Menues: eine Zeile "Neues Terminal" plus gekuerzter Pfad passen
+// in 280 px. Ein fester Wert haelt die Klemme im Viewport berechenbar.
+const MENU_WIDTH = 280;
+
+// Ein Zeichen der Terminal-Schrift (JetBrains Mono, 14 px im Viewer) ist
+// 8,4 px breit — 0,6 em, im FitAddon-Panel gemessen. `script(1)` besitzt die
+// PTY-Master-Seite, also bleibt die beim Spawn gesetzte Geometrie: breiter
+// gespawnt heisst auf dem Telefon (390 px) umgebrochene Zeilen.
+const TERMINAL_CELL_PX = 8.4;
+// Dieselbe Messgrenze wie `isMeasuredTerminal` in `TerminalViewer.tsx`: darunter
+// ist das Panel nicht gemessen, sondern FitAddons Kleinstwert.
+const MIN_READY_COLS = 20;
+// Obergrenze fuer den Spawn; die Route selbst erlaubt bis 500.
+const MAX_SPAWN_COLS = 200;
+// Das Vollbild-Overlay auf dem Telefon laesst je Seite 16 px Rand, die Leiste
+// liefert keine eigene Breite.
+const MOBILE_GUTTER_PX = 32;
+
+/**
+ * Spalten fuer die neue Shell: gemessene Panelbreite, sonst die
+ * Viewport-Schaetzung (Telefon-Overlay: volle Breite minus 2×16 px).
+ */
+export function terminalSpawnCols(measuredPanelWidth: number | null, viewportWidth: number): number {
+  const width = measuredPanelWidth !== null && measuredPanelWidth > 0
+    ? measuredPanelWidth
+    : Math.max(0, Math.min(viewportWidth, 1200) - MOBILE_GUTTER_PX);
+  return Math.max(MIN_READY_COLS, Math.min(MAX_SPAWN_COLS, Math.floor(width / TERMINAL_CELL_PX)));
+}
+
+/**
+ * Breite des Panels, in dem das neue Terminal landen wird — `null`, wenn es
+ * gerade nicht messbar ist (Telefon, geschlossen: `display: none`).
+ *
+ * Bei geschlossenem Desktop-Panel ist der Container 0 px breit, sein erstes
+ * Kind traegt aber die gemerkte Breite (`--right-panel-width` bzw. der
+ * CSS-Standard `clamp(360px, 42vw, 640px)`), weil es unter `overflow: hidden`
+ * weiter layoutet wird. Diese Breite ist die, in die das Panel beim Oeffnen
+ * zurueckkehrt.
+ */
+function measureTerminalPanelWidth(): number | null {
+  if (typeof document === "undefined") return null;
+  const panel = document.querySelector<HTMLElement>(".right-panel-container");
+  if (!panel) return null;
+  if (panel.clientWidth > 0) return panel.clientWidth;
+  const inner = panel.firstElementChild?.getBoundingClientRect().width ?? 0;
+  return inner > 0 ? inner : null;
+}
+
 interface Props {
   cwd?: string | null;
   onOpenTerminal: (terminalId: string) => void;
-  disabled?: boolean;
 }
 
-export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
+export function TerminalDropdown({ cwd, onOpenTerminal }: Props) {
   // Both raw `motion.*` elements below (the row's whileTap and the status
   // dot's pulse) skip the mode check `Pressable` does, and `MotionConfig`
   // does not cover either: in node_modules/motion-dom/dist/cjs/index.js
@@ -41,6 +89,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const refreshPendingRef = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -82,10 +131,16 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
     setBusy(true);
     setError(null);
     try {
+      // Die Startgeometrie kommt aus dem Panel, in das die Shell kommt, nicht
+      // aus einer Konstante: 390 px ergeben 42 Spalten, das 522-px-Panel 62.
+      // `script(1)` besitzt die PTY, ein laufender Shell laesst sich aus diesem
+      // Prozess nicht umbrechen — die Spawn-Breite gilt fuer die ganze Sitzung,
+      // deshalb wird sie vorher gemessen statt geraten.
+      const cols = terminalSpawnCols(measureTerminalPanelWidth(), window.innerWidth);
       const res = await fetch("/api/terminal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: cwd ?? undefined, cols: 100, rows: 30 }),
+        body: JSON.stringify({ cwd: cwd ?? undefined, cols, rows: 30 }),
       });
       const data = await res.json().catch(() => ({})) as { terminal?: TerminalSummary; error?: string };
       if (!res.ok || !data.terminal) {
@@ -105,16 +160,18 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
     void refresh();
   }, [refresh]);
 
-  const runningCount = terminals.filter((t) => t.status === "running").length;
+  const menuPos = useFixedPopover(triggerRef, open, { width: MENU_WIDTH });
+
+  const runningCount = terminals.filter((terminal) => terminal.status === "running").length;
 
   return (
     <div ref={rootRef} style={{ position: "relative", display: "flex", height: "100%" }}>
       <Pressable
+        ref={triggerRef}
         tint
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
-        title={disabled ? "Select a project to open a terminal" : "Terminal"}
+        title="Terminal"
         aria-label="Terminal"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -129,13 +186,12 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
           borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
           borderRight: "1px solid var(--border)",
           color: open ? "var(--text)" : "var(--text-muted)",
-          cursor: disabled ? "not-allowed" : "pointer",
-          opacity: disabled ? 0.45 : 1,
+          cursor: "pointer",
           fontSize: 11,
           whiteSpace: "nowrap",
           transition: "color var(--duration-hover) var(--ease-standard), background-color var(--duration-hover) var(--ease-standard)",
         }}
-        onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.color = "var(--text)"; }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)"; }}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
@@ -164,27 +220,31 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
           </span>
         )}
       </Pressable>
-      {open && (
+      {open && menuPos && (
         <Enter direction="down" role="menu" style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            minWidth: 280,
-            maxWidth: 420,
-            marginTop: 2,
+            // Die Kopfleiste schneidet ihre Kinder ab; das Menue liegt deshalb
+            // fest im Viewport, verankert am gemessenen Ausloeser. Ohne die
+            // Messung waere es hinter dem 36-px-Streifen unsichtbar.
+            position: "fixed",
+            top: menuPos.top,
+            left: menuPos.left,
+            width: menuPos.width,
+            maxHeight: menuPos.maxHeight,
+            // Nur senkrecht rollen; waagerecht bleibt der Radius scharf.
+            overflow: "hidden auto",
+            marginTop: 0,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 6,
             boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
             zIndex: 250,
-            overflow: "hidden",
           }}
         >
           <Pressable
             type="button"
             role="menuitem"
             onClick={() => void handleNew()}
-            disabled={busy || disabled}
+            disabled={busy}
             aria-busy={busy || undefined}
             style={{
               display: "flex",
@@ -196,12 +256,12 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
               border: "none",
               borderBottom: "1px solid var(--border)",
               color: busy ? "var(--text-dim)" : "var(--text)",
-              cursor: busy || disabled ? "not-allowed" : "pointer",
+              cursor: busy ? "not-allowed" : "pointer",
               fontSize: 12,
               textAlign: "left",
             }}
           >
-            <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+            <span style={{ fontSize: 14, lineHeight: 1, flexShrink: 0 }}>+</span>
             {/* The spawn is a server round trip that takes seconds — measured
                 5.8s warm and 55s on a cold dev server — and until it answers
                 there is no terminal id, no tab and no open panel. Dimming the
@@ -210,12 +270,15 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                 doing, in the same wash every other loading surface in the app
                 uses. */}
             {busy ? (
-              <Shimmer radius={4} style={{ flex: 1, padding: "1px 0" }}>Starting…</Shimmer>
+              <Shimmer radius={4} style={{ flex: 1, padding: "1px 0", whiteSpace: "nowrap" }}>Starting…</Shimmer>
             ) : (
-              <span style={{ flex: 1 }}>New terminal</span>
+              // Eine Zeile pro Eintrag: der Name bleibt ganz, der Pfad daneben
+              // gibt nach und kuerzt sich. Mit `flex: 1` am Namen bekam er nur
+              // den Rest nach dem 160-px-Pfad und brach bei 280 px um.
+              <span style={{ flexShrink: 0, whiteSpace: "nowrap" }}>New terminal</span>
             )}
             {cwd && (
-              <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span title={cwd} style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", flex: "0 1 auto", minWidth: 0, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {cwd}
               </span>
             )}
@@ -272,7 +335,10 @@ export function TerminalDropdown({ cwd, onOpenTerminal, disabled }: Props) {
                   }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {/* Der Pfad wird gekuerzt, ist aber der einzige Unterschied
+                      zwischen zwei Terminals im selben Projekt: der volle Pfad
+                      steht deshalb im Tooltip. */}
+                  <div title={t.cwd} style={{ fontSize: 12, color: "var(--text)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {t.cwd}
                   </div>
                   <div style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>

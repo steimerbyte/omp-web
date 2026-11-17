@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent";
-import { resolveSessionPath, buildSessionContext, getHistoricalContextUsage } from "@/lib/session-reader";
+import {
+  resolveSessionPath,
+  buildSessionContext,
+  getHistoricalContextUsage,
+  resolveSessionBlobRefs,
+} from "@/lib/session-reader";
+import { getRequestIdentity } from "@/lib/request-identity";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { requireSessionAccess } from "../../session-guard";
 
@@ -27,6 +33,8 @@ export async function GET(
 
     const sm = liveRpc?.inner.sessionManager ?? await SessionManager.open(filePath!);
     const entries = sm.getEntries() as never;
+    // Siehe `/api/sessions/[id]`: Mandanten-Blobs liegen im Konto-Store.
+    await resolveSessionBlobRefs(entries, getRequestIdentity(req.headers));
     const context = buildSessionContext(entries, leafId, {
       deferThinking,
       deferToolResultImages,

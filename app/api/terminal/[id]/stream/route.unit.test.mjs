@@ -15,7 +15,7 @@ import { installFakeTerminalManager, makeTerminalInfo } from "../../../../../tes
 // Eigener Modulgraph pro Datei: der Manager-Singleton liegt sonst
 // prozessweit und die Attrappe einer anderen Datei wuerde hier gelten.
 const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() }, interopDefault: true });
-const { getTerminalManager, TerminalUnavailableError } = await jiti.import("@/lib/terminal-manager.ts");
+const { getTerminalManager } = await jiti.import("@/lib/terminal-manager.ts");
 const { GET } = await jiti.import("./route.ts");
 
 const ALICE = { host: "localhost", "x-omp-user": "alice" };
@@ -205,5 +205,86 @@ test("ein schon beendeter Prozess bekommt sofort einen exit-Frame", async () => 
   const reader = res.body.getReader();
   await reader.read(); // connected
   assert.equal(decoder.decode((await reader.read()).value), `event: exit\ndata: {"exitCode":0}\n\n`);
+  assert.equal((await reader.read()).done, true);
+});
+
+// ---------------------------------------------------------------------------
+// Verlauf vor live: der Manager schreibt beim `attach` zuerst die History in
+// den Strom (siehe `TerminalManager.attach`), die Route formt jeden Chunk zu
+// einem `output`-Frame. Ein eigenes Ereignis fuer den Verlauf gibt es nicht.
+// ---------------------------------------------------------------------------
+
+function withReplay(t, bytes) {
+  const attach = terminal.manager.attach;
+  terminal.manager.attach = (id, writer) => {
+    writer.write(new Uint8Array(bytes));
+    return attach.call(terminal.manager, id, writer);
+  };
+  // Der Manager-Singleton ist das Attrappen-Objekt selbst; ohne Zuruecksetzen
+  // wuerde die naechste Testdatei die Verlaufs-Bytes dieses Tests mitschicken.
+  t.after(() => {
+    terminal.manager.attach = attach;
+  });
+}
+
+/**
+ * Schneidet Frames aus dem Strom, auch wenn mehrere in einem Chunk ankommen.
+ * Unter Parallellast liefert `read()` nicht mehr einen Frame pro Aufruf
+ * (gemessen: `connected` und der Verlauf kamen gemeinsam).
+ */
+function frameReader(reader) {
+  const frames = [];
+  let pending = "";
+  return {
+    frames,
+    async readUntil(count) {
+      while (frames.length < count) {
+        const { value, done } = await reader.read();
+        if (done) return frames;
+        pending += decoder.decode(value, { stream: true });
+        let index;
+        while ((index = pending.indexOf("\n\n")) !== -1) {
+          frames.push(pending.slice(0, index + 2));
+          pending = pending.slice(index + 2);
+        }
+      }
+      return frames;
+    },
+  };
+}
+
+test("der Verlauf kommt als output-Frame vor dem Live-Strom", async (t) => {
+  ownedTerminal();
+  terminal.calls.attached.length = 0;
+  withReplay(t, [82, 69, 80]); // "REP"
+  const abort = new AbortController();
+
+  const res = await GET(request("term-1", { signal: abort.signal }), params("term-1"));
+  const reader = res.body.getReader();
+  const frames = frameReader(reader);
+  assert.match((await frames.readUntil(2))[0], /^event: connected\n/);
+  assert.equal(frames.frames[1], "event: output\ndata: [82,69,80]\n\n");
+
+  // Live-Ausgabe danach: derselbe Frame-Typ, kein zweites Ereignis.
+  const { writer } = terminal.calls.attached.at(-1);
+  await writer.write(new Uint8Array([76]));
+  await frames.readUntil(3);
+  assert.equal(frames.frames[2], "event: output\ndata: [76]\n\n");
+
+  abort.abort();
+  await reader.read();
+});
+
+test("ein beendeter Prozess schickt erst den Verlauf, dann exit", async (t) => {
+  ownedTerminal({ status: "exited", exitCode: 0 });
+  withReplay(t, [72]); // "H"
+
+  const res = await GET(request("term-1"), params("term-1"));
+  const reader = res.body.getReader();
+  const frames = frameReader(reader);
+  await frames.readUntil(3);
+  assert.match(frames.frames[0], /^event: connected\n/);
+  assert.equal(frames.frames[1], "event: output\ndata: [72]\n\n");
+  assert.equal(frames.frames[2], `event: exit\ndata: {"exitCode":0}\n\n`);
   assert.equal((await reader.read()).done, true);
 });

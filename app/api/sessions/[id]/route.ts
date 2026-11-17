@@ -10,7 +10,9 @@ import {
   buildSessionContext,
   getHistoricalContextUsage,
   readSessionRecord,
+  resolveSessionBlobRefs,
 } from "@/lib/session-reader";
+import { getRequestIdentity } from "@/lib/request-identity";
 import { sessionPathKey } from "@/lib/session-path";
 import { setSessionArchived } from "@/lib/session-archive";
 import { getRpcSession } from "@/lib/rpc-manager";
@@ -41,6 +43,10 @@ export async function GET(
     const sm = liveRpc?.inner.sessionManager ?? await SessionManager.open(resolvedPath!);
     const filePath = liveRpc?.sessionFile || sm.getSessionFile() || resolvedPath || "";
     const entries = sm.getEntries() as never;
+    // Blob-Refs einer Mandanten-Session liegen im Store des Kontos, nicht in
+    // dem des Web-Prozesses; ohne diese Zeile liefert der Browser
+    // `base64,blob:sha256:…`. `deferMedia` bleibt unangetastet.
+    await resolveSessionBlobRefs(entries, getRequestIdentity(req.headers));
     const leafId = sm.getLeafId();
     const tree = projectTreeForResponse(sm.getTree());
     const searchParams = new URL(req.url).searchParams;

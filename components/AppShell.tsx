@@ -474,6 +474,45 @@ export function AppShell() {
   }, [filePanelRef, groupElementRef, isSplitViewport, rightPanelOpen, sidebarPanelRef]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
+  // Die Leiste rollt waagerecht und zeigt keinerlei Rollbalken
+  // (`scrollbar-width: none`); ohne Randabdunklung sieht man nicht, dass
+  // rechts noch Werkzeuge liegen. `left`/`right` sind die Kanten, an denen
+  // wirklich etwas verborgen ist.
+  const [barFade, setBarFade] = useState({ left: false, right: false, insetRight: 0 });
+  const syncBarFade = useCallback(() => {
+    const bar = topBarRef.current;
+    if (!bar) return;
+    const max = bar.scrollWidth - bar.clientWidth;
+    const left = bar.scrollLeft > 0;
+    const right = max > 1 && bar.scrollLeft < max - 1;
+    // Der feste Panel-Knopf (36 px) liegt nur ueber der Leiste, wenn die Leiste
+    // bis an den Fensterrand reicht; mit offenem Datei-Panel endet sie davor.
+    const insetRight = bar.getBoundingClientRect().right > window.innerWidth - 36 ? 36 : 0;
+    setBarFade((current) => (
+      current.left === left && current.right === right && current.insetRight === insetRight
+        ? current
+        : { left, right, insetRight }
+    ));
+  }, []);
+  // Bei jedem Render nachmessen: die Inhaltsbreite aendert sich mit der
+  // Session (History/Auto-Name/Branches tauchen auf), nicht nur beim Rollen.
+  // Im naechsten Frame, nicht waehrend des Commits: `scrollWidth`/`clientWidth`
+  // erzwingen Layout, und AppShell rendert waehrend eines Streams oft.
+  useIsoLayoutEffect(() => {
+    const frame = requestAnimationFrame(syncBarFade);
+    return () => cancelAnimationFrame(frame);
+  });
+  useEffect(() => {
+    const bar = topBarRef.current;
+    if (!bar) return;
+    const onChange = () => syncBarFade();
+    bar.addEventListener("scroll", onChange, { passive: true });
+    window.addEventListener("resize", onChange);
+    return () => {
+      bar.removeEventListener("scroll", onChange);
+      window.removeEventListener("resize", onChange);
+    };
+  }, [syncBarFade]);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
@@ -1469,7 +1508,11 @@ export function AppShell() {
             oder Text abzuschneiden, rollt die Zeile waagerecht — jedes Ziel
             bleibt erreichbar, nichts wird abgeschnitten. `overflowY: hidden`
             haelt den 36px hohen Streifen flach. */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "none", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
+        <div
+          data-topbar-fade={barFade.left && barFade.right ? "both" : barFade.left ? "left" : barFade.right ? "right" : "none"}
+          style={{ position: "relative", flexShrink: 0 }}
+        >
+        <div data-testid="topbar-scroll" ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "none", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
           <Pressable
              tint
              onClick={handleSidebarToggle}
@@ -1761,7 +1804,6 @@ export function AppShell() {
               <TerminalDropdown
                 cwd={activeCwd}
                 onOpenTerminal={handleOpenTerminalTab}
-                disabled={isMobile}
               />
               <button
                 ref={systemBtnRef}
@@ -1793,7 +1835,16 @@ export function AppShell() {
               </button>
             </div>
           )}
-          <SystemStatsBadge />
+          {/* Auf dem Telefon steht der Live-Messwert vorn: `order: -1` setzt
+              ihn an scrollLeft 0, ohne die DOM-Reihenfolge oder das
+              Desktop-Layout anzufassen (die Leiste ist eine Flex-Zeile mit
+              `overflowX: auto`). */}
+          <div
+            data-testid="topbar-system-badge"
+            style={{ order: isMobile ? -1 : 0, display: "flex", height: "100%" }}
+          >
+            <SystemStatsBadge />
+          </div>
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
@@ -1838,7 +1889,10 @@ export function AppShell() {
                   marginLeft: "auto",
                   display: "flex", alignItems: "center", gap: 10,
                   paddingLeft: 12,
-                  paddingRight: rightPanelOpen ? 12 : 48,
+                  // Der feste Panel-Knopf liegt jetzt hinter dem Freiraum am
+                  // Ende der Leiste (data-testid="topbar-clearance"); ein
+                  // eigener Zuschlag hier waere doppelt.
+                  paddingRight: 12,
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   border: "none",
@@ -1896,6 +1950,12 @@ export function AppShell() {
               </button>
             );
           })()}
+          {/* 36 px Freiraum am Ende: der feste Panel-Knopf (36×36, z-index 300)
+              liegt ueber dem rechten Rand der Leiste. Ohne diesen Platz bleibt
+              das letzte Werkzeug bei maxScroll halb unter ihm (gemessen: 1,1 px
+              tappbar). Ein echtes Element, keine Padding-Regel, damit die
+              Abdunklung und die Rollgeometrie dieselbe Breite sehen. */}
+          <div aria-hidden="true" data-testid="topbar-clearance" style={{ width: 36, flexShrink: 0 }} />
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
             <div style={{
@@ -2153,6 +2213,36 @@ export function AppShell() {
           )}
 
         </div>
+        {/* Die Abdunklung liegt ueber der Leiste, nicht als `mask-image` auf
+            ihr: die Leiste traegt fest positionierte Popover als Kinder, und
+            ob eine Maske die schneidet, haengt an Browser-Details (im
+            Chromium-Test blieb eine feste Sonde unangetastet, das ist keine
+            Zusage). Verlaeufe koennen nichts schneiden: sie malen die
+            Panel-Farbe ueber den rollenden Inhalt und blenden zum Rand hin
+            aus; `pointer-events: none` laesst jeden Klick durch. */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute", top: 0, bottom: 0, left: 0, width: 18,
+            pointerEvents: "none", zIndex: 1,
+            background: "linear-gradient(to right, var(--bg-panel), transparent)",
+            opacity: barFade.left ? 1 : 0,
+            transition: "opacity var(--duration-exit) linear",
+          }}
+        />
+        <div
+          aria-hidden="true"
+          style={{
+            // 36 px Abstand: dort beginnt der feste Panel-Knopf, die Abdunklung
+            // endet an seiner Kante statt unter ihm.
+            position: "absolute", top: 0, bottom: 0, right: barFade.insetRight, width: 18,
+            pointerEvents: "none", zIndex: 1,
+            background: "linear-gradient(to left, var(--bg-panel), transparent)",
+            opacity: barFade.right ? 1 : 0,
+            transition: "opacity var(--duration-exit) linear",
+          }}
+        />
+        </div>
 
         {/* Chat content */}
         <div className="chat-content-layout">
@@ -2299,10 +2389,17 @@ export function AppShell() {
           flexShrink: 0,
           height: "calc(36px + env(safe-area-inset-top))",
           paddingTop: "env(safe-area-inset-top)",
+          // Der feste Datei-Panel-Knopf (36×36, z-index 300) sitzt am
+          // Fensterrand, und das Panel endet dort ebenfalls: ohne diesen Rand
+          // rollt der letzte Tab samt Schliessen-Knopf unter den Knopf
+          // (gemessen: Leiste endet bei 390, Knopf beginnt bei 354). Der Rand
+          // liegt am Header, nicht im Scroller, damit kein Tab je darunter
+          // rollen kann.
+          paddingRight: 36,
           background: "var(--bg-panel)",
           borderBottom: "1px solid var(--border)",
         }}>
-          <div style={{ flex: 1, overflow: "hidden" }}>
+          <div data-testid="file-panel-tabbar" style={{ flex: 1, overflow: "hidden" }}>
             <TabBar
               tabs={fileTabs}
               activeTabId={activeFileTabId ?? ""}

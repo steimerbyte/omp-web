@@ -388,14 +388,22 @@ diff and no tool card in the DOM. The rule lives in `lib/chat-collapse.ts`
 (`COLLAPSE_AFTER_OUTPUTS = 3`, `COLLAPSE_AFTER_MS = 5 * 60_000`): the three
 newest outputs of the whole rendered list stay open — live tail included, so a
 long run shows the current step and the two before it — while the streaming
-bubble and user messages never collapse. A click wins in both directions for
-the session (`outputOverrides` in `ChatWindow.tsx`). `outputsAfter` is counted
-over collapsible cards only, so a turn full of tool calls inside a
-`ProcessDetailsGroup` takes no slot. `ProcessDetailsGroup` itself always starts
-collapsed, a turn that ended without a final answer included: its children are
-the expensive part (in a measured 7.5 MB session, 8 expanded groups were 88 %
-of the first view's DOM nodes), and a historical turn is one click away. The
-running turn is unaffected because the live tail renders ungrouped.
+bubble and user messages never collapse. The newest **foldable row of the
+transcript** is never closed, whichever kind it is: the last output card stays
+open by `outputsAfter === 0`, the last `ProcessDetailsGroup` by
+`shouldCollapseProcessGroup`, independently of count and age, so no session can
+end as a wall of closed rows. A click wins in both directions for the session
+(`outputOverrides` in `ChatWindow.tsx`). `outputsAfter` is counted over
+collapsible cards only, so a turn full of tool calls inside a
+`ProcessDetailsGroup` takes no slot; `foldableAfter` counts both kinds and only
+names the newest row. `ProcessDetailsGroup` starts collapsed as soon as a newer
+foldable row exists, a turn that ended without a final answer included: its
+children are the expensive part (in a measured 7.5 MB session, 8 expanded groups
+were 88 % of the first view's DOM nodes), and a historical turn is one click
+away. That also means the group of a turn without a final answer must open once
+nothing newer follows — collapsed, it was the only trace of the turn, and a
+session whose last run aborted showed nothing at all. The running turn is
+unaffected because the live tail renders ungrouped.
 `isCollapsibleOutput` excludes `toolResult` because `MessageView` renders those
 inline and returns `null` standalone. The age rule reads a 60 s clock that
 stands still while auto-follow is paused, so no card collapses above the
@@ -872,6 +880,13 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - **`git` runs with hooks and repo-defined drivers disabled, and without the service env** (`lib/git-safe.ts`: `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `diff.external=`, `--no-optional-locks`). The driver names come from `git config --list --name-only --includes` on **every** call, run with `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`: only what the repository can write — repo config, legacy and dotted sections, files it includes via `include.path`/`includeIf`, and `config.worktree` — and each `filter.*.clean/smudge/process` and `diff.*.command/textconv` found there is disabled; a name that cannot be a `-c` key goes into a quoted include file (`0600`, per-process `mkdtemp`). Global and system drivers stay **active on purpose**: disabling a globally installed git-lfs filter made every LFS file look modified (measured). If the enumeration fails, the git call is **refused** — a caller may fall back to a non-git answer, but no git process runs without the overrides. Known limit: this spawns one `git config` per git call and can block up to its 5 s timeout. A tenant-writable repository is otherwise a shell: a `core.fsmonitor` hook received `BRAVE_API_KEY`, `OMP_WEB_PASSWORD` and `OPENROUTER_API_KEY` on the first `git status` (`SHELL-ISOLATION-SCAN.md` §4b, measured).
 - **The agent's `bash` tool has no sandbox and cannot get one from this SDK** (18.14.0 has no `sandbox`/`allowedPaths`/`noNewPrivs`, and the shell is embedded, so there is no `bash` binary to wrap). What it does get is a per-session `tool_call` guard (`lib/session-shell-guard.ts`, registered through `CreateAgentSessionOptions.extensions`): `bash` is refused when the session cwd is outside the account's home and the roots explicitly granted to it. **That is the whole gate, measured:** the bash tool's LLM-facing schema in 18.14.0 is `{command, timeout}` — `BashToolOptions` has a `spawnHook`, but the tool input carries no working directory, so the hook resolves one value per call (the session cwd; a `cwd` key only appears if the model invents one) and a `cd /` inside the command text is invisible to it. The shell also runs as the service user with whatever the uid can read, and the guard therefore narrows nothing beyond "this session was opened in a directory the account may use". Only per-account OS users (unavailable, see `lib/sandbox.ts`) or an SDK spawn hook would change that; `docs/inventory-tools.md` states the residual plainly.
 - None of the others are containment. Every one is an assignment decided from data the service process can write, so they stop an account from seeing another's work by accident and through the routes that exist, not against someone who edits the underlying files. `docs/authentication.md` says so in the place a reader of this file is pointed at.
+
+### Terminal geometry and replay
+- The shell's size is set **inside the PTY**: `TerminalManager.spawn` prefixes the inner `script` command with `stty cols <cols> rows <rows> 2>/dev/null`. Without it the PTY reports `0 0` (measured) and only `COLUMNS`/`LINES` carry the size — bash honours those, `vim`/`htop` read the ioctl and do not. The unit test reads `stty size` in a spawned shell and expects `24 80`.
+- The banner names `path.basename($SHELL)` (sanitised to `[A-Za-z0-9._-]` so it cannot break the `sh -c`) and carries **no size**: `$0` is empty under `script -qfc … /dev/null` (measured `0=`), and a spawn-time size is wrong the moment the client fits the panel.
+- `TerminalManager.attach` replays a bounded history to the new client — `MAX_REPLAY_BYTES = 256 KiB`, bytes not lines, oldest dropped first — as ordinary `output` frames before live output. There is **no new wire type** and no duplicate or gap: `pipeOutput` appends to the history and writes to the attached streams in one synchronous step, and `attach` replays and adds the writer in one. The client resets its screen on `connected`, so a reconnect cannot paint the replay twice.
+- `components/TerminalViewer.tsx` fits to the container on mount and on `connected`, then sends `/resize` only when the fitted `cols x rows` actually changed, debounced by 150 ms; the old unconditional POST per ResizeObserver tick was a storm (measured: ten per mount).
+- **Named limit:** `script(1)` owns the PTY master, so this process has no handle to issue `TIOCSWINSZ` and a client resize cannot deliver SIGWINCH. A running shell keeps its spawn geometry; `TerminalManager.resize` stores the requested size for the UI only. A fresh terminal is sized for the panel (`TerminalDropdown` sends 62×30, the measured 522 px at 8.4 px/column); resizing the panel does not re-lay-out the shell.
 
 ### The sidebar search covers titles locally and content through the route
 - The filter above the session list matches project names and session titles
@@ -1436,7 +1451,96 @@ TypeScript half type-checks against — keep the two in sync.
   (`gradientBorderGlowSpread()`); a halo inside the ring is not a halo but a
   smear.
 
+### A pasted image is a file in the session's `local://` root
+
+- **The browser sends base64; `persistPromptImages` turns it into a file
+  before the prompt leaves the server.** `lib/chat-attachments.ts` writes
+  `<Session-Artefakte>/local/pasted-image-<Bun.hash>.<ext>`: the stem is
+  `Bun.hash` over the bytes, so the same screenshot twice is the same file and
+  the second write is an `EEXIST` no-op (`flag: "wx"`, `mode: 0o600`); the
+  extension comes from the SDK's whitelist (`blobExtensionForImageMimeType`,
+  fallback `png`), never from the client's `mimeType`, and
+  `resolveLocalUrlToPath` checks the root as well. The block is tagged with
+  `tagImageAttachmentSource(image, url, "image")`, and the SDK then emits the
+  same hidden `image-attachment` notice with the `local://` path that the TUI
+  produces — the model can reopen the file and keeps the reference across a
+  compaction. A failed write degrades to the untagged image, never to a
+  rejected prompt.
+- **Named gap: the tag is a symbol, and a JSON frame drops it.** `RpcClient`
+  serialises every command with `JSON.stringify`, so a worker-hosted tenant
+  session writes the file and still sends images without the source symbol —
+  the worker never emits the notice. An in-process session keeps the symbol and
+  does. Closing this needs the path in the wire format, not another tag.
+- **Every real image is a `blob:sha256:` ref on disk.** The SDK's
+  `BLOB_EXTERNALIZE_THRESHOLD = 1024` base64 characters
+  (`session-persistence.ts`) means every image payload of 1024 characters or
+  more is externalised, and the ref is re-inlined from the blob store of
+  whichever process opens the file. A worker-written tenant session therefore
+  needs `resolveSessionBlobRefs(entries, identity)`
+  (`lib/session-reader.ts`) against the account's own agent dir; it runs in
+  `GET /api/sessions/[id]` and `GET /api/sessions/[id]/context`. Without it the
+  browser builds `data:image/png;base64,blob:sha256:…`; `MessageView`'s
+  `renderableImageSource`/`UnavailableImage` render a labelled placeholder for
+  exactly that, for empty data and for inline base64 beyond
+  `MAX_ATTACHED_IMAGE_BYTES`, never a broken `<img>`.
+- **Tool-result images are not shown.** The client always asks with
+  `deferMedia` (`hooks/useAgentSession.ts`), the route drops base64 images from
+  tool results (`omitToolResultBase64Images`), and `ToolCallBlock` renders text
+  only. Agent-produced images in the transcript need a media route — the next
+  lever, not a renderer fix.
+
+### The composer toolbar has fixed widths and a fixed order
+
+- **The model trigger always shows the name, never an icon alone.** The slot
+  is `height: 40`, `maxWidth: 240` desktop / `100%` mobile, padding
+  `8px 14px` / `8px 10px`, `fontSize: 13`, label colour `var(--text)`; the
+  label is the current model name or the catalogue's `chat.selectModel` /
+  `chat.noModels`, while `title` stays `<name> — <action>`. Its skeleton is
+  160×40 (full width on mobile), so the bar keeps its height when the list
+  arrives.
+- **Image and file attach are 40×40 buttons with an 18 px glyph and an
+  `aria-label`.** The left cluster is `1 1 auto` on mobile and `0 1 auto` on
+  desktop; the 44 px touch rule lives in `app/globals.css`.
+- **The mobile "More controls" button is an icon because its text label was
+  the width problem.** It keeps `title`, `aria-label` and `aria-expanded` but
+  renders an 18 px sliders glyph in a 40×40 hit area — the German label
+  squeezed the model name to "DeepSeek…" at 390 px.
+- **The context meter is the last child of the desktop toolbar row**, after
+  the right-hand group that pushes itself right with `marginLeft: "auto"`; its
+  former centred row is gone. Mobile keeps its own right-aligned meter row.
+- **Known limit: below roughly 760 px the fixed controls meet.** They add up
+  to a measured ≈652–682 px (model slot up to 240, two 40/44 px attach
+  buttons, the remaining controls and gaps), so under that width the meter
+  touches the right cluster instead of standing clear. There is no second
+  breakpoint yet; a narrow layout needs a different row, not smaller padding.
+
+### Paste and drop are one file partition
+
+- **`image/*` goes the image path, everything else the upload path — in two
+  entry points that share the rule.** `handlePaste` takes every clipboard item
+  with `kind === "file"` (a copied PDF used to be dropped silently),
+  `ChatWindow`'s drop hands its files to `ChatInput`'s imperative `addFiles`,
+  and both split the same way: images through downscale + the prompt path, the
+  rest through `uploadFileToCwd` and `appendUploadReferences` as `@path`. The
+  upload input carries no `accept` filter: the limit is the size, not the
+  extension. `addFiles` is the handle name (`ChatInputHandle`), not
+  `addImages`.
+
 ### Dialogs and row menus
+- **A popover anchored to the top bar must be `position: fixed` and measured
+  from its trigger.** The bar clips its children (`overflowY: hidden`) and
+  scrolls horizontally, so an absolutely positioned menu inside the 36 px strip
+  is unreachable — hit-testing at its centre returned the chat column. Both
+  current cases (CPU/RAM history, terminal menu) go through
+  `hooks/useFixedPopover.ts`: the trigger's `getBoundingClientRect()` gives
+  `top`/`left`, the box is clamped into the viewport on both axes, its height
+  is capped by the space left below, and it is re-measured on `scroll` in the
+  capture phase because the bar slides under it. At ≤640 px the system badge
+  gets `order: -1` in the flex row, before the tools: measured, the bar was
+  656 px wide at 390 px and the badge sat at x 342.66; compact (dot + name +
+  percentage, ≈140 px) and first, CPU and RAM are both in the first paint.
+  Ordering the badge is the one mobile-only exception; desktop keeps the DOM
+  order and every other top-bar control stays put.
 - **One dialog size, one layer, one row menu.** `.window` in
   `components/SettingsConfig.module.css` is the single full-screen size: 95 %
   of each axis, so 2.5 % margin per side — a window at 100 % puts its controls

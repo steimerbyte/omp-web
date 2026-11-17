@@ -75,7 +75,16 @@ test.after(async () => {
 
 const jiti = createJiti(`${ROOT}/package.json`, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { I18nProvider } = await jiti.import(`${ROOT}/hooks/useI18n.tsx`);
-const { TerminalDropdown } = await jiti.import(`${ROOT}/components/TerminalDropdown.tsx`);
+const { TerminalDropdown, terminalSpawnCols } = await jiti.import(`${ROOT}/components/TerminalDropdown.tsx`);
+
+/** Ein geschlossenes Desktop-Panel: der Container ist 0 px, das Kind traegt die Breite. */
+function stubRightPanel(clientWidth) {
+  const panel = win.document.createElement("div");
+  panel.className = "right-panel-container";
+  Object.defineProperty(panel, "clientWidth", { configurable: true, value: clientWidth });
+  win.document.body.appendChild(panel);
+  return () => panel.remove();
+}
 
 const TERMINALS = [
   { id: "t1", cwd: "/work/running", shell: "bash", status: "running", pid: 11, createdAt: 1 },
@@ -91,7 +100,7 @@ function fire(target, type, props = {}) {
   return event;
 }
 
-async function mount({ fetchImpl, disabled = false, cwd = "/work", onOpenTerminal = () => {} } = {}) {
+async function mount({ fetchImpl, cwd = "/work", onOpenTerminal = () => {} } = {}) {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url: String(url), options });
@@ -103,7 +112,7 @@ async function mount({ fetchImpl, disabled = false, cwd = "/work", onOpenTermina
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   await act(async () => {
     root.render(React.createElement(I18nProvider, null,
-      React.createElement(TerminalDropdown, { cwd, disabled, onOpenTerminal })));
+      React.createElement(TerminalDropdown, { cwd, onOpenTerminal })));
   });
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -144,13 +153,36 @@ test("zeigt laufende und beendete Terminals und oeffnet ein laufendes", async ()
   assert.equal(trigger.getAttribute("aria-expanded"), "true");
   const menu = container.querySelector('[role="menu"]');
   assert.ok(menu);
+  // Die Kopfleiste schneidet Kinder ab (`overflow-y: hidden`); ein
+  // absolut positioniertes Menue waere unsichtbar. Es liegt fest im Viewport,
+  // an einer gemessenen Zahl und nicht an `100%` des 36-px-Streifens.
+  assert.equal(menu.style.position, "fixed");
+  assert.equal(Number.isFinite(Number.parseFloat(menu.style.top)), true, `top fehlt: ${menu.style.top}`);
+  assert.equal(Number.isFinite(Number.parseFloat(menu.style.left)), true, `left fehlt: ${menu.style.left}`);
   assert.match(menu.textContent, /New terminal/);
   assert.match(menu.textContent, /\/work\/running/);
   assert.match(menu.textContent, /bash · pid 11/);
   assert.match(menu.textContent, /zsh · pid 12/);
   assert.equal(menu.querySelectorAll('[role="menuitem"]').length, 3, "Neu + zwei Terminals");
 
+  // Eine Zeile pro Eintrag: der Name bleibt ganz, der Pfad daneben kuerzt sich.
+  // Mit `flex: 1` am Namen brach "New terminal" bei 280 px um.
+  const createRow = [...menu.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent.includes("New terminal"));
+  const label = [...createRow.querySelectorAll("span")].find((node) => node.textContent.trim() === "New terminal");
+  assert.ok(label, "der Name der Neu-Zeile fehlt");
+  assert.equal(label.style.whiteSpace, "nowrap");
+  assert.equal(label.style.flexShrink, "0");
+  const path = [...createRow.querySelectorAll("span")].find((node) => node.textContent.trim() === "/work");
+  assert.ok(path, "der Pfad der Neu-Zeile fehlt");
+  assert.equal(path.style.whiteSpace, "nowrap");
+  assert.equal(path.style.textOverflow, "ellipsis");
+  assert.equal(path.getAttribute("title"), "/work", "der gekuerzte Pfad braucht den vollen Wert");
+
   const running = [...menu.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent.includes("/work/running"));
+  const runningPath = [...running.querySelectorAll("div")]
+    .find((node) => node.textContent.trim() === "/work/running");
+  assert.ok(runningPath, "der Pfad der laufenden Zeile fehlt");
+  assert.equal(runningPath.getAttribute("title"), "/work/running", "der gekuerzte Pfad braucht den vollen Wert");
   await act(async () => {
     fire(running, "mouseover", { relatedTarget: win.document.body });
     running.click();
@@ -186,6 +218,8 @@ test("spawnt ein Terminal und nennt den Fehler, wenn der Server ablehnt", async 
     },
     onOpenTerminal: (id) => opened.push(id),
   });
+  // Desktop: das Panel misst 522 px (der gemessene rechte Dateibereich).
+  const removePanel = stubRightPanel(522);
   const trigger = container.querySelector('button[aria-haspopup="menu"]');
   await act(async () => {
     trigger.click();
@@ -202,13 +236,52 @@ test("spawnt ein Terminal und nennt den Fehler, wenn der Server ablehnt", async 
   const post = calls.find((call) => call.options.method === "POST");
   assert.equal(post.url, "/api/terminal");
   assert.equal(post.options.headers["Content-Type"], "application/json");
-  assert.deepEqual(JSON.parse(post.options.body), { cwd: "/work", cols: 100, rows: 30 });
+  assert.deepEqual(JSON.parse(post.options.body), { cwd: "/work", cols: 62, rows: 30 });
+  removePanel();
   assert.match(container.textContent, /spawn failed/);
   assert.deepEqual(opened, [], "bei einem Fehler wird kein Terminal geoeffnet");
 
   await act(async () => root.unmount());
   mounted.splice(0, mounted.length);
   container.remove();
+});
+
+test("auf dem Telefon spawnt die Shell in die Overlay-Breite", async () => {
+  const desktopWidth = win.innerWidth;
+  win.innerWidth = 390;
+  try {
+    const { root, container, calls } = await mount({ fetchImpl: defaultFetch });
+    const trigger = container.querySelector('button[aria-haspopup="menu"]');
+    await act(async () => {
+      trigger.click();
+    });
+    const newItem = [...container.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent.includes("New terminal"));
+    await act(async () => {
+      newItem.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    const post = calls.find((call) => call.options.method === "POST");
+    // Kein messbares Panel (geschlossen, display: none) → (390 − 32) / 8,4 =
+    // 42 Spalten; 62 waeren auf diesem Bild umgebrochene Zeilen.
+    assert.deepEqual(JSON.parse(post.options.body), { cwd: "/work", cols: 42, rows: 30 });
+
+    await act(async () => root.unmount());
+    mounted.splice(0, mounted.length);
+    container.remove();
+  } finally {
+    win.innerWidth = desktopWidth;
+  }
+});
+
+test("die Spalten folgen der gemessenen Breite, sonst dem Viewport", () => {
+  // Gemessenes Panel gewinnt: 522 / 8,4 = 62.
+  assert.equal(terminalSpawnCols(522, 1280), 62);
+  // Ohne Messung: Telefon-Overlay (390 − 32) / 8,4 = 42; Desktop (1200 − 32) / 8,4 = 139.
+  assert.equal(terminalSpawnCols(null, 390), 42);
+  assert.equal(terminalSpawnCols(null, 1280), 139);
+  // Klemmen: nie unter die Messgrenze, nie ueber 200 Spalten.
+  assert.equal(terminalSpawnCols(10, 390), 20);
+  assert.equal(terminalSpawnCols(2400, 1280), 200);
 });
 
 test("erfolgreicher Spawn oeffnet das neue Terminal und schliesst das Menue", async () => {
@@ -267,7 +340,7 @@ test("Kill schickt DELETE und laedt die Liste neu", async () => {
   container.remove();
 });
 
-test("Mousedown daneben schliesst das Menue, disabled oeffnet es nicht", async () => {
+test("Mousedown daneben schliesst das Menue", async () => {
   const { root, container } = await mount({ fetchImpl: defaultFetch });
   const trigger = container.querySelector('button[aria-haspopup="menu"]');
   await act(async () => {
@@ -283,17 +356,6 @@ test("Mousedown daneben schliesst das Menue, disabled oeffnet es nicht", async (
   await act(async () => root.unmount());
   mounted.splice(0, mounted.length);
   container.remove();
-
-  const second = await mount({ fetchImpl: defaultFetch, disabled: true });
-  const disabledTrigger = second.container.querySelector('button[aria-haspopup="menu"]');
-  assert.equal(disabledTrigger.getAttribute("title"), "Select a project to open a terminal");
-  await act(async () => {
-    disabledTrigger.click();
-  });
-  assert.equal(second.container.querySelector('[role="menu"]'), null);
-  await act(async () => second.root.unmount());
-  mounted.splice(0, mounted.length);
-  second.container.remove();
 });
 
 test("ein POST ohne JSON-Antwort nennt den Statuscode", async () => {

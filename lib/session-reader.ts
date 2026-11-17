@@ -4,11 +4,14 @@ import {
   buildSessionContext as ompBuildSessionContext,
   getAgentDir,
   listAllSessions as listAllSessionsIn,
+  resolveBlobRefsInEntries,
 } from "@oh-my-pi/pi-coding-agent";
 import { Tokenizer } from "@oh-my-pi/pi-agent-core";
 import type { AgentMessage as OmpAgentMessage } from "@oh-my-pi/pi-agent-core";
 import { calculatePromptTokens, hasContextTokenUsage } from "@oh-my-pi/pi-agent-core/compaction";
 import { closeSync, existsSync, openSync, readSync } from "fs";
+import { getBlobsDir } from "@oh-my-pi/pi-utils";
+import { BlobStore } from "@oh-my-pi/pi-coding-agent/session/blob-store";
 import { normalize as normalizePath } from "path";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
 import type { ContextUsage } from "./omp-types";
@@ -20,7 +23,7 @@ import { sessionPathKey } from "./session-path";
 import { isPathWithinRoots } from "./path-security";
 import { getUserHome, type WebIdentity } from "./request-identity";
 import { resolveProject, type ProjectInfo } from "./worktree";
-import { tenantSessionsRoot } from "./tenant-sessions";
+import { tenantSessionsAgentDir, tenantSessionsRoot } from "./tenant-sessions";
 
 export { getAgentDir };
 
@@ -472,6 +475,33 @@ export function readSessionRecord(filePath: string): SessionHeader | null {
 export async function getSessionEntries(filePath: string): Promise<SessionEntry[]> {
   const manager = await SessionManager.open(filePath);
   return manager.getEntries() as unknown as SessionEntry[];
+}
+
+/**
+ * Loest `blob:sha256:`-Bilddaten aus dem Blob-Store **des Kontos** auf.
+ *
+ * `session-persistence.ts:16,87` lagert Bilder ueber 1024 Base64-Zeichen als
+ * `blob:sha256:<hash>` aus. Der Store, in dem der Hash liegt, ist der des
+ * Prozesses, der das Transcript geschrieben hat — bei einer
+ * Mandanten-Worker-Session also der des Workers (`PI_CODING_AGENT_DIR` des
+ * Kontos). Der Web-Prozess oeffnet die Datei mit seinem eigenen Agent-Verzeichnis
+ * und laesst den Ref stehen; der Browser baut daraus
+ * `data:image/png;base64,blob:sha256:…` und zeigt ein kaputtes Bild.
+ *
+ * Deshalb wird hier gegen den Store des Kontos aufgeloest — aber nur fuer eine
+ * Nicht-Admin-Identitaet, denn nur die hat ein eigenes Agent-Verzeichnis. Ein
+ * Admin liest das Prozessarchiv, und dort war der Blob schon beim
+ * `SessionManager.open` erreichbar; ein zweiter Lesevorgang waere eine zweite
+ * Wahrheit ueber denselben Ref. Fehlt ein Blob, bleibt der Ref stehen — dieselbe
+ * Degradierung wie im SDK (`resolveImageData`: Warnung, Ref unveraendert).
+ */
+export async function resolveSessionBlobRefs(
+  entries: OmpSessionEntry[],
+  identity: WebIdentity | null,
+): Promise<void> {
+  const agentDir = tenantSessionsAgentDir(identity);
+  if (!agentDir) return;
+  await resolveBlobRefsInEntries(entries, new BlobStore(getBlobsDir(agentDir)));
 }
 
 /**

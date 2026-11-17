@@ -62,6 +62,34 @@ globalThis.fetch = async (url, init = {}) => {
   return { ok: true, status: 200, json: async () => ({ phrases: [] }) };
 };
 
+/**
+ * Die Bildstrecke braucht `FileReader` und `URL.createObjectURL` — in Bun
+ * fehlt beides. Dieselben Attrappen wie in `ChatInput.unit.test.mjs`; ohne
+ * sie liesse sich der Unterschied zwischen "Bild als Anhang" und "Datei als
+ * Upload" nicht messen.
+ */
+const ORIGINAL_FILE_READER = globalThis.FileReader;
+const ORIGINAL_CREATE_OBJECT_URL = globalThis.URL.createObjectURL;
+const ORIGINAL_REVOKE_OBJECT_URL = globalThis.URL.revokeObjectURL;
+let objectUrlCounter = 0;
+globalThis.URL.createObjectURL = () => `blob:mock-${++objectUrlCounter}`;
+globalThis.URL.revokeObjectURL = () => {};
+globalThis.FileReader = class FakeFileReader {
+  result = null;
+  error = null;
+  onload = null;
+  onerror = null;
+  readAsDataURL(file) {
+    file.arrayBuffer().then((buffer) => {
+      this.result = `data:${file.type};base64,${Buffer.from(buffer).toString("base64")}`;
+      this.onload?.();
+    }).catch((error) => {
+      this.error = error;
+      this.onerror?.();
+    });
+  }
+};
+
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
 const { ChatInput } = await jiti.import("./ChatInput.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
@@ -73,6 +101,7 @@ let draftCounter = 0;
 
 async function mountInput(props = {}) {
   const sent = [];
+  const ref = React.createRef();
   const draftKey = `attach-file-test-${draftCounter++}`;
   const container = document.createElement("div");
   dom.document.body.appendChild(container);
@@ -85,11 +114,12 @@ async function mountInput(props = {}) {
       modelList: [],
       modelNames: {},
       draftKey,
+      ref,
       ...props,
     })));
   });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-  return { container, sent, draftKey };
+  return { container, sent, draftKey, ref };
 }
 
 function reactProps(element, name) {
@@ -151,7 +181,16 @@ test.afterEach(async () => {
 
 test.after(() => {
   for (let index = 0; index < draftCounter; index += 1) clearDraft(`attach-file-test-${index}`);
+  if (ORIGINAL_FILE_READER === undefined) delete globalThis.FileReader;
+  else globalThis.FileReader = ORIGINAL_FILE_READER;
+  globalThis.URL.createObjectURL = ORIGINAL_CREATE_OBJECT_URL;
+  globalThis.URL.revokeObjectURL = ORIGINAL_REVOKE_OBJECT_URL;
 });
+
+/** Die Grenze zwischen den zwei Wegen: Bild = Anhang, alles andere = Upload. */
+function pdfFile(name = "report.pdf") {
+  return new File(["%PDF-1.4\n"], name, { type: "application/pdf" });
+}
 
 test("without a working directory the paperclip is disabled and says why", async () => {
   const { container } = await mountInput({ cwd: null });
@@ -250,6 +289,46 @@ test("the send payload references the file and a file-only message is sendable",
   await act(async () => { reactProps(sendWithoutMention, "onClick").onClick({}); });
   assert.equal(sent[2], "read it @sample.csv");
   assert.equal((sent[2].match(/@sample\.csv(?:\s|$)/g) ?? []).length, 1, "genau eine Erwaehnung, nachgetragen");
+});
+
+test("a pasted PDF goes the upload path and the message carries the reference", async () => {
+  uploadReply = { status: 200, body: { uploaded: ["report.pdf"], skipped: [], errors: [] } };
+  const { container, sent } = await mountInput({ cwd: "/home/alice/project" });
+
+  const textarea = container.querySelector("textarea");
+  const pdf = pdfFile();
+  await act(async () => {
+    reactProps(textarea, "onPaste").onPaste({
+      clipboardData: { items: [{ kind: "file", type: "application/pdf", getAsFile: () => pdf }] },
+      preventDefault() {},
+    });
+  });
+  await waitFor(() => chips(container).length === 1);
+
+  assert.equal(uploads.length, 1, "die Zwischenablage-Datei wurde hochgeladen");
+  assert.equal(uploads[0].file.type, "application/pdf");
+  assert.equal(uploads[0].file.name, "report.pdf");
+
+  const sendButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Send");
+  await act(async () => { reactProps(sendButton, "onClick").onClick({}); });
+  assert.deepEqual(sent, ["@report.pdf"], "der Prompt verweist auf die abgelegte Datei");
+});
+
+test("a dropped PDF uploads, while a dropped image stays an attachment", async () => {
+  uploadReply = { status: 200, body: { uploaded: ["report.pdf"], skipped: [], errors: [] } };
+  const { container, ref } = await mountInput({ cwd: "/home/alice/project" });
+
+  // Der Drop-Pfad im ChatWindow reicht die Dateien an genau diese Methode.
+  await act(async () => { ref.current.addFiles([pdfFile()]); });
+  await waitFor(() => chips(container).length === 1);
+  assert.equal(uploads.length, 1, "die PDF ging als Upload");
+  assert.equal(uploads[0].file.name, "report.pdf");
+
+  const image = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+  await act(async () => { ref.current.addFiles([image]); });
+  await waitFor(() => container.querySelector('img[src^="blob:mock-"]') !== null);
+  assert.equal(uploads.length, 1, "ein Bild geht nicht durch den Datei-Upload");
+  assert.equal(container.querySelector('img[src^="blob:mock-"]') !== null, true, "das Bild steht als Anhang");
 });
 
 test("a rejected upload is visible in the composer and localized", async () => {

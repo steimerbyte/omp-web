@@ -128,7 +128,8 @@ export interface ChatInputHandle {
   insertIfEmpty: (text: string) => void;
   replaceMessage: (message: UserMessage) => void;
   prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
+  /** Bilder und andere Dateien aus Zwischenablage oder Drag-and-drop. */
+  addFiles: (files: File[]) => void;
   rekeyDraft: (previousKey: string, nextKey: string) => void;
   restoreSubmission: (text: string, images?: ChatDraftImage[], targetDraftKey?: string) => void;
 }
@@ -829,8 +830,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     },
     insertText: insertTextAtCursor,
-    addImages(files: File[]) {
-      processImageFiles(files);
+    addFiles(files: File[]) {
+      // Eine Trennlinie fuer beide Wege: Bilder gehen den Weg mit
+      // Downscale und Datenblock, alles andere in den Arbeitsordner und als
+      // @-Erwaehnung in die Nachricht.
+      const images = files.filter((file) => file.type.startsWith("image/"));
+      const others = files.filter((file) => !file.type.startsWith("image/"));
+      if (images.length > 0) void processImageFiles(images);
+      if (others.length > 0) void processUploadFiles(others);
     },
   }));
 
@@ -911,7 +918,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
    * Fehlschlag nimmt die anderen Anhaenge nicht mit. Der Chip zeigt den Namen
    * aus der Antwort der Route — der Client vergibt keinen.
    */
-  const processUploadFiles = useCallback(async (files: File[]) => {
+  // Wie `processImageFiles` bewusst kein `useCallback`: der Koerper setzt
+  // State, und ein Memo darueber lehnt der React Compiler ab. Jeder Aufrufer
+  // ist ein Inline-Handler (Paste, Drop, Datei-Input, Handle) — dort kostet
+  // eine neue Identitaet je Render nichts.
+  const processUploadFiles = async (files: File[]) => {
     if (!cwd) {
       setUploadError(t("chat.attachFileNoCwd"));
       return;
@@ -937,7 +948,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return next;
       });
     }
-  }, [cwd, t]);
+  };
 
   const clearImages = useCallback(() => {
     attachedImagesRef.current = [];
@@ -1553,14 +1564,24 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, []);
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+  // Kein `useCallback`: der Handler haengt an `processUploadFiles` (cwd und
+  // Katalog aendern sich), und ein Memo darueber kann der React Compiler nicht
+  // erhalten. Eine neue Identitaet je Render ist an `onPaste` kostenlos.
+  const handlePaste = (e: React.ClipboardEvent) => {
+    // Jede Datei aus der Zwischenablage zaehlt, nicht nur Bilder: ein
+    // kopierter PDF-Anhang wurde vorher stillschweigend verworfen.
     const items = Array.from(e.clipboardData?.items ?? []);
-    const imageItems = items.filter((item) => item.type.startsWith("image/"));
-    if (!imageItems.length) return;
+    const files = items
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (!files.length) return;
     e.preventDefault();
-    const files = imageItems.map((item) => item.getAsFile()).filter((f): f is File => f !== null);
-    processImageFiles(files);
-  }, [processImageFiles]);
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    const others = files.filter((file) => !file.type.startsWith("image/"));
+    if (images.length > 0) void processImageFiles(images);
+    if (others.length > 0) void processUploadFiles(others);
+  };
 
   useEffect(() => {
     if (slashQuery === null) {
@@ -1993,7 +2014,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {quickPhrases.length > 0 && (
           <div
             data-testid="composer-quick-phrases"
-            className="composerRow"
             style={{
               display: "flex",
               alignItems: "center",
@@ -2606,14 +2626,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }}>
 
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
-          <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
+          <div style={{ flex: isMobile ? "1 1 auto" : "0 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
             <button
+              type="button"
               onClick={() => fileInputRef.current?.click()}
-             title={t("chat.attachImage")}
+              title={t("chat.attachImage")}
+              aria-label={t("chat.attachImage")}
               className="composer-attach-button"
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, padding: 0,
+                width: 40, height: 40, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 8,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
@@ -2630,7 +2652,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
               }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                 <circle cx="8.5" cy="8.5" r="1.5" />
                 <polyline points="21 15 16 10 5 21" />
@@ -2653,7 +2675,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               data-testid="composer-attach-file"
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, padding: 0,
+                width: 40, height: 40, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 8,
                 color: uploadedFiles.length ? "var(--accent)" : "var(--text-muted)",
@@ -2672,7 +2694,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 e.currentTarget.style.color = uploadedFiles.length ? "var(--accent)" : "var(--text-muted)";
               }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
@@ -2689,7 +2711,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     // Vor der ersten Modellliste haelt ein Platzhalter die
                     // 32-px-Zeile der unteren Leiste: sonst springt sie, sobald
                     // der Waehler geliefert wird.
-                    <Skeleton width={isMobile ? "100%" : 132} height={32} radius={9} />
+                    <Skeleton width={isMobile ? "100%" : 160} height={40} radius={10} />
                   ) : (
                   <button
                     onClick={(e) => {
@@ -2704,19 +2726,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     aria-haspopup="listbox"
                     aria-expanded={modelDropdownOpen}
                     style={{
-                      display: "flex", alignItems: "center", gap: 6,
+                      display: "flex", alignItems: "center", gap: 8,
                       justifyContent: isMobile ? "flex-start" : undefined,
-                      padding: isMobile ? "8px 10px" : "8px 12px",
-                      height: 32,
+                      padding: isMobile ? "8px 10px" : "8px 14px",
+                      height: 40,
                       width: isMobile ? "100%" : undefined,
-                      maxWidth: isMobile ? "100%" : 220,
+                      maxWidth: isMobile ? "100%" : 240,
                       overflow: "hidden",
                       background: modelDropdownOpen ? "var(--bg-hover)" : "none",
                       border: "none",
                       borderRadius: 8,
-                      color: "var(--text-muted)",
+                      color: "var(--text)",
                       cursor: "pointer",
-                      fontSize: 12,
+                      fontSize: 13,
                       transition: "background var(--duration-hover), color var(--duration-hover)",
                     }}
                     onMouseEnter={(e) => {
@@ -2725,18 +2747,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = modelDropdownOpen ? "var(--bg-hover)" : "none";
-                      e.currentTarget.style.color = "var(--text-muted)";
+                      e.currentTarget.style.color = "var(--text)";
                     }}
                     title={`${currentName ? `${currentName} — ` : ""}${modelSwitching ? t("chat.modelSwitching") : modelOptions.length > 0 ? t("chat.changeModel") : t("chat.noModels")}`}
                   >
                     {modelSwitching ? (
-                      <Spin style={{ width: 11, height: 11, flexShrink: 0, display: "flex" }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                      <Spin style={{ width: 13, height: 13, flexShrink: 0, display: "flex" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
                           <path d="M21 12a9 9 0 1 1-2.64-6.36" />
                         </svg>
                       </Spin>
                     ) : (
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="4" y="4" width="16" height="16" rx="2" />
                         <rect x="9" y="9" width="6" height="6" />
                         <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
@@ -2746,7 +2768,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       </svg>
                     )}
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                      {currentName ?? (modelOptions.length > 0 ? "Select model" : "No models")}
+                      {currentName ?? t(modelOptions.length > 0 ? "chat.selectModel" : "chat.noModels")}
                     </span>
                   </button>
                   )}
@@ -2956,16 +2978,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             )}
           </div>
 
-          {!isMobile && (
-            <div style={{
-              flex: 1,
-              minWidth: 0,
-              display: "flex",
-              justifyContent: "center",
-            }}>
-              <ContextUsageMeter usage={contextUsage} t={t} />
-            </div>
-          )}
           {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming) */}
           <div ref={controlsMenuRef} style={{
             flex: "0 0 auto",
@@ -2992,16 +3004,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: "100%",
-                  height: 32,
-                  padding: "8px 10px",
+                  width: 40,
+                  height: 40,
+                  padding: 0,
                   background: "none",
                   border: "none",
                   borderRadius: 8,
                   color: "var(--text-muted)",
                   cursor: controlsMenuOpen ? "default" : "pointer",
-                  fontSize: 12,
-                  fontWeight: 500,
                   visibility: controlsMenuOpen ? "hidden" : "visible",
                   pointerEvents: controlsMenuOpen ? "none" : "auto",
                   transition: "background var(--duration-hover), color var(--duration-hover)",
@@ -3017,7 +3027,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   e.currentTarget.style.color = "var(--text-muted)";
                 }}
               >
-                {t("chat.moreControls")}
+                {/* Ein Symbol statt des deutschen Wortes: "Weitere
+                    Steuerelemente" war breiter als der Modellname, den es auf
+                    390 px auf "DeepSeek…" drueckte. */}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                  <line x1="4" y1="8" x2="20" y2="8" />
+                  <line x1="4" y1="16" x2="20" y2="16" />
+                  <circle cx="9" cy="8" r="2.2" fill="var(--bg-panel)" />
+                  <circle cx="15" cy="16" r="2.2" fill="var(--bg-panel)" />
+                </svg>
               </button>
             )}
             <div style={{
@@ -3366,6 +3384,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             )}
             </div>
           </div>
+          {/* Letztes Kind der Leiste: rechts hinter den Steuerelementen. Die
+              rechte Gruppe schiebt sich mit `marginLeft: auto` selbst nach
+              rechts, der Zaehler steht damit buendig am Rand — ohne eigene
+              zentrierte Zeile, die dem Modellnamen Breite nahm. */}
+          {!isMobile && <ContextUsageMeter usage={contextUsage} t={t} />}
 
         </div>
       </div>

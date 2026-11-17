@@ -43,7 +43,8 @@ interface TerminalRecord {
   info: TerminalInfo;
   child: Subprocess;
   streams: Set<WritableStreamDefaultWriter<Uint8Array>>;
-  pendingData: Buffer[];
+  /** Every byte the PTY produced, bounded — replay for the next client. */
+  history: TerminalReplayBuffer;
 }
 
 /**
@@ -54,6 +55,55 @@ interface TerminalRecord {
  */
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Replay-Budget pro Shell, in Bytes.
+ *
+ * Bytes, nicht Zeilen: eine eingefuegte Zeile kann Megabyte lang sein, eine
+ * Zeilengrenze wuerde also den Speicher nicht begrenzen — und die Leitung
+ * transportiert ohnehin Bytes. 256 KiB sind bei 80 Spalten rund 3 200 Zeilen,
+ * mehr als ein Vollbild-Repaint von `htop`/`vim` und vergleichbar mit xterms
+ * eigenem 5000-Zeilen-Scrollback.
+ */
+export const MAX_REPLAY_BYTES = 256 * 1024;
+
+/**
+ * Der Schwanz der PTY-Ausgabe, begrenzt und in Reihenfolge.
+ *
+ * `append` haelt die Bytes als Chunks und wirft die aeltesten zuerst weg; ein
+ * einzelner Chunk, der groesser als das Budget ist, bleibt als sein eigener
+ * Schwanz stehen. Ein eigener Typ statt einer Liste im Record, weil die Grenze
+ * ohne Prozess testbar sein muss.
+ */
+export class TerminalReplayBuffer {
+  private chunks: Buffer[] = [];
+  private bytes = 0;
+
+  constructor(private readonly limit: number = MAX_REPLAY_BYTES) {}
+
+  append(chunk: Buffer): void {
+    this.chunks.push(chunk);
+    this.bytes += chunk.length;
+    while (this.bytes > this.limit && this.chunks.length > 0) {
+      const overflow = this.bytes - this.limit;
+      const oldest = this.chunks[0]!;
+      if (oldest.length <= overflow) {
+        this.chunks.shift();
+        this.bytes -= oldest.length;
+      } else {
+        // `subarray` teilt den Speicher mit dem Original; der Rest des Chunks
+        // bleibt hoechstens eine Chunk-Groesse langreferenziert.
+        this.chunks[0] = oldest.subarray(overflow);
+        this.bytes -= overflow;
+      }
+    }
+  }
+
+  /** Aeltestes zuerst. */
+  snapshot(): readonly Buffer[] {
+    return this.chunks;
+  }
+}
 
 /** Dieselbe Form, die `validateAccountName` in `bin/web-auth-store.js` zulaesst. */
 const SHELL_SAFE_NAME = /^[a-z_][a-z0-9_-]{0,31}$/;
@@ -165,7 +215,20 @@ export class TerminalManager {
       // aufrufenden uid (gemessen: `--setenv USER=omp` kam als `USER=steimer`
       // in der Shell an, `LOGNAME` blieb richtig). Ohne das zeigt die Shell den
       // Dienstbenutzer an, obwohl `HOME` schon das Konto ist.
-      const inner = `printf '\\033[36m[omp-web terminal]\\033[0m ready in %s (shell=%s %dx%d)\\n' "$PWD" "$0" "${cols}" "${rows}"; USER=${owner} LOGNAME=${owner} exec ${shell} -i`;
+      // `$0` ist unter `script -qfc … /dev/null` leer (gemessen: `0=`), also
+      // druckt der Banner den aufgeloesten Shell-Namen als Literal. Nur
+      // [A-Za-z0-9._-] ueberlebt, damit kein Anfuehrungszeichen das `sh -c`
+      // aufbricht. Die Groesse fehlt bewusst: sie waere die Spawn-Groesse, und
+      // die ist nach dem ersten Resize des Clients falsch — eine Angabe, die
+      // luegt, ist schlechter als keine.
+      //
+      // `stty cols/rows` setzt die echte Winsize der PTY. Ohne das steht sie
+      // auf `0 0` (gemessen) und nur `COLUMNS`/`LINES` tragen die Groesse —
+      // bash respektiert das, `vim`/`htop` lesen aber den ioctl und tun es
+      // nicht. `stty` fehlt auf keinem System mit `script(1)`; falls doch,
+      // bleibt es beim alten Verhalten.
+      const shellLabel = path.basename(shell).replace(/[^A-Za-z0-9._-]/g, "") || "shell";
+      const inner = `stty cols ${cols} rows ${rows} 2>/dev/null; printf '\\033[36m[omp-web terminal]\\033[0m ready in %s (shell=%s)\\n' "$PWD" '${shellLabel}'; USER=${owner} LOGNAME=${owner} exec ${shell} -i`;
       cmd = ["/usr/bin/script", "-qfc", inner, "/dev/null"];
     }
 
@@ -262,7 +325,7 @@ export class TerminalManager {
       info,
       child,
       streams: new Set(),
-      pendingData: [],
+      history: new TerminalReplayBuffer(),
     };
     this.terminals.set(id, record);
 
@@ -274,17 +337,12 @@ export class TerminalManager {
           if (done) break;
           if (!value || value.byteLength === 0) continue;
           record.info.lastActivityAt = Date.now();
-          if (record.streams.size === 0) {
-            record.pendingData.push(Buffer.from(value));
-            let total = record.pendingData.reduce((sum, c) => sum + c.length, 0);
-            while (total > 64 * 1024 && record.pendingData.length > 1) {
-              total -= record.pendingData.shift()!.length;
-            }
-          } else {
-            for (const writer of record.streams) {
-              this.safeWrite(writer, Buffer.from(value));
-            }
-          }
+          const chunk = Buffer.from(value);
+          // Auch ohne Zuschauer mitschreiben: der naechste Client bekommt
+          // diese Bytes als Replay. stdout und stderr teilen sich einen
+          // Puffer, damit ihre Reihenfolge zueinander erhalten bleibt.
+          record.history.append(chunk);
+          for (const writer of record.streams) this.safeWrite(writer, chunk);
         }
       } catch {
         // Stream closed; ignore.
@@ -345,11 +403,17 @@ export class TerminalManager {
     record.info.lastActivityAt = Date.now();
   }
 
-  async resize(_id: string, cols: number, rows: number): Promise<void> {
+  async resize(id: string, cols: number, rows: number): Promise<void> {
     if (cols < 2 || rows < 1) throw new Error("Invalid terminal size");
-    // Non-PTY runs ignore SIGWINCH; we keep the values for the UI's sake
-    // and so future PTY implementations can wire through.
-    void cols; void rows;
+    // `script(1)` haelt die PTY-Master-Seite; dieser Prozess hat kein Handle,
+    // auf dem ein TIOCSWINSZ ein SIGWINCH beim Kind ausloesen koennte. Die
+    // Werte werden fuer die UI gemerkt (GET und `connected` melden, was der
+    // Client angefordert hat); die echte Winsize setzt `stty` beim Spawn
+    // (siehe `spawn`), also gilt die Spawn-Groesse fuer alle PTY-Programme.
+    const record = this.terminals.get(id);
+    if (!record) return;
+    record.info.cols = cols;
+    record.info.rows = rows;
   }
 
   async kill(id: string): Promise<void> {
@@ -388,11 +452,13 @@ export class TerminalManager {
 
   attach(id: string, writer: WritableStreamDefaultWriter<Uint8Array>): () => void {
     const record = this.requireRecord(id);
+    // Erst der Verlauf, dann live: `pipeOutput` schreibt die History und die
+    // angeschlossenen Stroeme im selben synchronen Block, es gibt also keinen
+    // Zeitpunkt zwischen beiden, an dem ein Chunk doppelt oder gar nicht
+    // ankaeme. Deshalb wird die History hier geflusht und nicht in der Route
+    // separat gelesen — das waere ein zweiter Zeitpunkt mit Luecke.
+    for (const chunk of record.history.snapshot()) this.safeWrite(writer, chunk);
     record.streams.add(writer);
-    if (record.pendingData.length > 0) {
-      for (const chunk of record.pendingData) this.safeWrite(writer, chunk);
-      record.pendingData.length = 0;
-    }
     return () => {
       record.streams.delete(writer);
     };

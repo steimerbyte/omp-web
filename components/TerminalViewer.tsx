@@ -27,6 +27,30 @@ function decodeOutput(arr: number[]): string {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
+// A ResizeObserver ticks on every layout change; one POST per tick starved the
+// input POSTs in dev (measured: ten resizes per mount).
+const RESIZE_DEBOUNCE_MS = 150;
+// FitAddon clamps at 2 columns / 1 row, so a panel that is not laid out (or is
+// 1 px wide during StrictMode's double mount, measured) fits to that sentinel.
+// A terminal below these thresholds is not a measured panel and must not open
+// the stream: the replay would be painted into ~2 columns and the later refit
+// cannot put the prompt back.
+const MIN_READY_COLS = 20;
+const MIN_READY_ROWS = 5;
+// One hung input POST would block every later keystroke (dev measured 1.0–3.1 s
+// per POST, up to 15 s). After this the request is aborted and the chain goes on.
+const INPUT_TIMEOUT_MS = 15_000;
+
+/**
+ * Ab wann eine gefittete Geometrie ein gemessenes Panel ist.
+ *
+ * `false` heisst: das ist FitAddons Kleinstwert (2 Spalten / 1 Zeile) oder ein
+ * Panel mitten im Layout, kein Terminal, in das man den Verlauf schreiben darf.
+ */
+export function isMeasuredTerminal(cols: number, rows: number): boolean {
+  return cols >= MIN_READY_COLS && rows >= MIN_READY_ROWS;
+}
+
 export function TerminalViewer({ terminalId, onExit }: Props) {
   const { isDark } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -73,88 +97,151 @@ export function TerminalViewer({ terminalId, onExit }: Props) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
-    fit.fit();
     termRef.current = term;
     fitRef.current = fit;
 
-    // Resize observer keeps the PTY cols/rows in sync with the panel size.
-    const sendResize = () => {
-      const cols = term.cols;
-      const rows = term.rows;
-      if (cols > 0 && rows > 0) {
-        fetch(`/api/terminal/${encodeURIComponent(terminalId)}/resize`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols, rows }),
-        }).catch(() => undefined);
-      }
-    };
-    const resizeObserver = new ResizeObserver(() => {
-      try {
-        fit.fit();
-      } catch {
-        // xterm throws if the container has zero size during teardown.
-      }
-      sendResize();
-    });
-    resizeObserver.observe(containerRef.current);
-
-    const sendInput = (data: string) => {
-      fetch(`/api/terminal/${encodeURIComponent(terminalId)}/input`, {
+    // `script(1)` besitzt die PTY-Master-Seite, also kann der Server sie nicht
+    // umgroessen (siehe TerminalManager.resize). Das Panel bestimmt trotzdem
+    // die Anzeige: fit() auf den Container, dann die gefittete Groesse melden —
+    // einmal pro Aenderung, nicht pro Tick.
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let sentSize = "";
+    const sendResize = (cols: number, rows: number) => {
+      const size = `${cols}x${rows}`;
+      // Unter der Messgrenze ist die Geometrie xterms Kleinstwert, keine
+      // gemessene Panelgroesse — die darf nicht beim Server landen.
+      if (cols < MIN_READY_COLS || rows < MIN_READY_ROWS || size === sentSize) return;
+      sentSize = size;
+      fetch(`/api/terminal/${encodeURIComponent(terminalId)}/resize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data }),
+        body: JSON.stringify({ cols, rows }),
       }).catch(() => undefined);
+    };
+
+    // Jeder Tastendruck war ein eigener POST; ohne Reihenfolge kam
+    // "echo verify" bei 250 ms pro Zeichen als "yehco veirfy" an (gemessen).
+    // Die Bytes sind ein Strom, also wird auch so gesendet: genau ein POST
+    // gleichzeitig, der naechste erst nach seiner Antwort. Ein Fehler bricht
+    // die Kette nicht ab — sonst ginge jedes spaetere Zeichen still verloren —
+    // und wird nur einmal gemeldet, weil eine tote Verbindung sonst pro
+    // Zeichen eine Zeile schriebe.
+    let inputChain = Promise.resolve();
+    let inputFailed = false;
+    const sendInput = (data: string) => {
+      inputChain = inputChain.then(async () => {
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), INPUT_TIMEOUT_MS);
+        try {
+          const response = await fetch(`/api/terminal/${encodeURIComponent(terminalId)}/input`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data }),
+            signal: abort.signal,
+          });
+          if (!response.ok) throw new Error(`input POST answered ${response.status}`);
+        } catch (error) {
+          if (!inputFailed) {
+            inputFailed = true;
+            console.warn("[terminal] input POST failed; later keystrokes are still sent", error);
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      });
     };
     const inputDisposable = term.onData((data) => sendInput(data));
 
-    const url = `/api/terminal/${encodeURIComponent(terminalId)}/stream`;
-    const es = new EventSource(url);
-    esRef.current = es;
+    let eventSource: EventSource | null = null;
+    const connect = () => {
+      if (eventSource) return;
+      const es = new EventSource(`/api/terminal/${encodeURIComponent(terminalId)}/stream`);
+      eventSource = es;
+      esRef.current = es;
 
-    es.addEventListener("connected", (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data) as ConnectedEvent;
-        term.resize(payload.cols, payload.rows);
-      } catch {
-        // ignore
-      }
-      setStatus("running");
-    });
-
-    es.addEventListener("output", (event: MessageEvent) => {
-      try {
-        const arr = JSON.parse(event.data) as number[];
-        term.write(decodeOutput(arr));
-      } catch {
-        // ignore malformed chunks
-      }
-    });
-
-    // Die Exit-Zeile schreibt bereits der Manager in den Byte-Strom; ein
-    // zweites `term.write` hier haette sie doppelt gezeigt.
-    const handleExit = () => {
-      setStatus("exited");
-      onExit?.();
-    };
-    es.addEventListener("exit", handleExit);
-
-    es.onerror = () => {
-      // EventSource reconnects automatically on transient errors. If the
-      // server explicitly closed the stream (terminal killed) the readyState
-      // is CLOSED and we should surface that.
-      if (es.readyState === EventSource.CLOSED) {
-        if (statusRef.current === "running") {
-          setStatus("error");
-          setErrorMessage("Stream closed by server");
+      es.addEventListener("connected", (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data) as ConnectedEvent;
+          // Der Server schickt den Verlauf, bevor live weiterfliesst (siehe
+          // TerminalManager.attach). Ein Reconnect bekaeme ihn sonst ein zweites
+          // Mal auf den alten Bildschirm — also beginnt der Bildschirm leer und
+          // der Verlauf ist die einzige Quelle.
+          term.reset();
+          fitIfMeasured();
+          // Der Spawn hat die PTY schon auf diese Groesse gesetzt (stty in
+          // TerminalManager.spawn); nur eine Abweichung ist ein POST wert.
+          sentSize = `${payload.cols}x${payload.rows}`;
+          sendResize(term.cols, term.rows);
+        } catch {
+          // ignore
         }
-      }
+        setStatus("running");
+      });
+
+      es.addEventListener("output", (event: MessageEvent) => {
+        try {
+          const arr = JSON.parse(event.data) as number[];
+          term.write(decodeOutput(arr));
+        } catch {
+          // ignore malformed chunks
+        }
+      });
+
+      // Die Exit-Zeile schreibt bereits der Manager in den Byte-Strom; ein
+      // zweites `term.write` hier haette sie doppelt gezeigt.
+      const handleExit = () => {
+        setStatus("exited");
+        onExit?.();
+      };
+      es.addEventListener("exit", handleExit);
+
+      es.onerror = () => {
+        // EventSource reconnects automatically on transient errors. If the
+        // server explicitly closed the stream (terminal killed) the readyState
+        // is CLOSED and we should surface that.
+        if (es.readyState === EventSource.CLOSED) {
+          if (statusRef.current === "running") {
+            setStatus("error");
+            setErrorMessage("Stream closed by server");
+          }
+        }
+      };
     };
+
+    // Erst den Vorschlag pruefen, dann fitten: `fit()` selbst ruft
+    // `term.resize()` mit FitAddons `Math.max(2, …)`, sobald das Panel noch
+    // keine Breite hat (1-px-Panel aus StrictModes doppeltem Mount, gemessen).
+    // Ein solcher Resize zerlegt eine bereits gezeichnete Zeile im Puffer —
+    // gemessen `[s` statt des 31 Zeichen langen Prompts, und ein spaeterer
+    // Refit holt sie nicht zurueck (gemessen: 62 -> 61 Spalten togglen
+    // korrumpiert die Zeile; ein Reattach malt sie neu). Also wird unterhalb
+    // der Messgrenze gar nicht gefittet und nicht verbunden; der
+    // ResizeObserver kommt wieder, sobald das Layout steht.
+    const fitIfMeasured = () => {
+      const proposal = fit.proposeDimensions();
+      if (!proposal || !isMeasuredTerminal(proposal.cols, proposal.rows)) return false;
+      fit.fit();
+      // Der Strom oeffnet erst, wenn die Geometrie wirklich am Terminal steht
+      // — in diese Spalten wird der Verlauf geschrieben.
+      return isMeasuredTerminal(term.cols, term.rows);
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (fitIfMeasured()) connect();
+      clearTimeout(resizeTimer ?? undefined);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        sendResize(term.cols, term.rows);
+      }, RESIZE_DEBOUNCE_MS);
+    });
+    if (fitIfMeasured()) connect();
+    resizeObserver.observe(containerRef.current);
 
     return () => {
+      clearTimeout(resizeTimer ?? undefined);
       inputDisposable.dispose();
       resizeObserver.disconnect();
-      es.close();
+      eventSource?.close();
       esRef.current = null;
       term.dispose();
       termRef.current = null;

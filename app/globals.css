@@ -1597,8 +1597,8 @@ html.dark .chat-session-column::before {
   }
 }
 
-/* Die beiden Anhang-Knoepfe des Composer. Auf Geraeten ohne Zeiger gibt es
- * kein Hover: 32px waeren dort ein Ziel fuer den Fingernagel. `!important`,
+/* Die beiden Anhang-Knoepfe des Composer. Sie sind 40px gross; auf Geraeten
+ * ohne Zeiger gibt es kein Hover, dort ist 44px die Trefferflaeche. `!important`,
  * weil die Groesse inline gesetzt ist — dieselbe Regel wie bei den
  * Seitenleisten-Knoepfen. */
 .composer-attach-button:focus-visible {

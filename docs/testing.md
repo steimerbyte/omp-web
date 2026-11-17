@@ -112,6 +112,85 @@ Deklarationszeile (`const f = (x) => x + 1`, `() => void` in einem Props-Objekt)
 läuft die Zeile schon beim Modul-Import; ein Zeilentreffer beweist dort nichts.
 Sie zählen weder als gedeckt noch als ungedeckt.
 
+## Browser-Abnahme
+
+`bun run ui:audit` ist die zweite Ebene: eine echte Chromium-Sitzung gegen einen
+eigenen Dev-Server. Sie existiert, weil eine ganze Fehlerklasse in der Suite
+grundsätzlich grün ist — das DOM ist korrekt, nur der Blick darauf nicht:
+
+- ein Werkzeug in der waagerecht rollenden Kopfleiste liegt ausserhalb des
+  sichtbaren Bereichs (`elementFromPoint` auf seiner Mitte liefert etwas
+  anderes);
+- ein fester 36-px-Knopf liegt über dem Ende der Leiste und verdeckt das letzte
+  Ziel;
+- ein Popover wird gerendert und dann von `overflow-y: hidden` seiner Leiste
+  abgeschnitten;
+- ein Panel bekommt eine Geometrie, die nicht in den Viewport passt;
+- ein Knopf verschwindet auf dem Telefon durch eine Breitenprüfung.
+
+Diese Woche wurden alle fünf von Hand gefunden. Jede davon ist im Browser in
+Sekunden messbar und in `bun test` unsichtbar, weil `linkedom` kein Layout hat.
+
+```bash
+bun run ui:audit                      # Exit != 0 bei mindestens einem FAIL
+PLAYWRIGHT_CHROMIUM_PATH=/pfad/zu/chromium bun run ui:audit
+```
+
+Was der Lauf tut:
+
+1. eigener `bun run dev`-Kindprozess auf einem freien Port ab 30142, mit
+   `OMP_WEB_USERNAME=omp` und einem **pro Lauf zufälligen** `OMP_WEB_PASSWORD`
+   — nur in der Umgebung des Kindes. Dazu ein eigenes `HOME` samt
+   `XDG_*`-Variablen, ein eigener `PI_CODING_AGENT_DIR`, eigene
+   Auth-/Session-/Kontendateien und ein eigenes `OMP_WEB_HOME_ROOT`; Bericht,
+   Server-Log und Fixtures liegen unter `/tmp/omp-ui-audit-<Zeitstempel>/`: der
+   Lauf schreibt weder in die echten Sitzungen noch in `~/.omp/logs`, und er
+   liest nie `/etc/omp-web.env`. Gebaut wird nach `.next-ui-audit` (relativ,
+   weil Next `distDir` gegen die Projektwurzel auflöst — ein absoluter Pfad
+   landet als `<repo>/tmp/…` im Baum), und dieses Verzeichnis räumt der Lauf
+   selbst wieder weg.
+   `OMP_WEB_ADMINS=omp` macht die Identität zum Admin, sonst beantwortet
+   `GET /api/project-trust` kein cwd und `GET /api/stats` (CPU/RAM-Popover)
+   antwortet 403. Die Live-Instanzen 8788/8799 werden nicht berührt.
+2. Login über `POST /api/web-access/login` **im Browser**, damit das Cookie
+   dort landet, wo es hingehört und der Proxy den Weg eines Menschen sieht.
+3. Prüfungen bei 390×844 (`hasTouch`, `isMobile`) und 1280×900, jeweils in drei
+   Kopfleisten-Zuständen: ohne Sitzung (`/`), mit Sitzung (`/?cwd=…`) und mit
+   Trust-Streifen (`/?cwd=` auf ein Projekt mit `.omp/config.yml`).
+4. Klartext-Bericht auf stdout, JSON unter `/tmp/omp-ui-audit-<Zeitstempel>/report.json`
+   (dort liegt auch `dev-server.log`). Kindprozess und Browser sterben in jedem
+   Fall, auch bei `SIGINT`/`SIGTERM`.
+
+Die Prüfungen: Erreichbarkeit jedes bedienbaren Elements in Kopfleiste,
+Composer-Werkzeugleiste und Seitenleisten-Aktionen (an `scrollLeft` 0, an der
+Zielmitte und am Maximum; ein Ziel gilt als erreichbar, sobald *eine* Position
+seinen eigenen Mittelpunkt trifft), Überdeckung an der Maximalposition,
+Abschneide-Vorfahr als Diagnose (erster Vorfahr mit `overflow-x`/`overflow-y`
+≠ `visible`), jedes `aria-haspopup`-Popover (Rechteck im Viewport ±1 px,
+Mittelpunkt trifft das Popover), Dokumentbreite ≤ `innerWidth + 1`,
+Roll-Andeutung für jede waagerecht rollende Fläche (`data-*fade`-Attribut oder
+sichtbare Scrollleiste), Tap-Ziele unter 44×44 px (WARN mit den fünf kleinsten,
+kein Fehler) und `pageerror`/`console.error` (jeder ist ein FAIL).
+
+Playwright ist als **`playwright-core`** installiert (kein Browser-Download):
+der Lauf startet `chromium.launch({ executablePath })` mit
+`PLAYWRIGHT_CHROMIUM_PATH` oder `/usr/bin/chromium`. Fehlt Chromium, bricht der
+Lauf mit einem Satz ab, der den Pfad nennt.
+
+Die Regeln ohne Browser — Viewport-Toleranz, Roll-Andeutung, Hit-Urteil,
+Scroll-Positionen, Tap-Zählung, Abschneide-Vorfahr — stehen in
+`lib/ui-audit.ts` und sind mit `lib/ui-audit.test.mjs` in `bun run test`
+gedeckt. Das Skript `scripts/ui-audit.mjs` misst nur und steht deshalb in
+`.test-baseline.json` als nicht importierbares CLI-Werkzeug.
+
+`ui:audit` gehört **nicht** in `bun run verify`: es braucht einen Browser, einen
+eigenen Dev-Server und **rund 5 Minuten**, weil der Dev-Server bei jedem Lauf in
+ein frisches `.next` kompiliert (gemessen: 294 s für beide Viewports und alle
+sechs Läufe). Die Trennung ist Absicht — zwei Dev-Server im selben Checkout
+teilen sich sonst das Build-Verzeichnis und stören den des Entwicklers. `verify`
+läuft ausserdem auf Hosts ohne Chromium. Der Lauf ist Teil der
+Release-Checkliste (`docs/release.md`).
+
 ## Ausnahmen
 
 Die 17 `unreachable`-Einträge sind echte Fälle: `app/layout.tsx` und

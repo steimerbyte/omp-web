@@ -1,4 +1,5 @@
 import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import type { ImageContent } from "@oh-my-pi/pi-ai";
 import {
   applyResolvedSystemPromptInputs,
   createAgentSession,
@@ -25,6 +26,7 @@ import { randomUUID } from "crypto";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
+import { persistPromptImages } from "./chat-attachments";
 import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
@@ -1154,6 +1156,13 @@ export class AgentSessionWrapper {
     if (type === "prompt" || type === "steer" || type === "follow_up") {
       const imageError = validateAgentImages(command.images);
       if (imageError) throw new Error(imageError);
+      // Base64 becomes a file in the session's `local://` root plus the SDK's
+      // hidden path notice — the TUI does the same before it admits a prompt.
+      // Only when there is something to persist: an empty array must not turn
+      // into a defined `images` option for a caller that sent none.
+      if (Array.isArray(command.images) && command.images.length > 0) {
+        command.images = await persistPromptImages(this.inner, command.images as ImageContent[]);
+      }
     }
 
     switch (type) {

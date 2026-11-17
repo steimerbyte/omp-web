@@ -100,7 +100,8 @@ test("keeps the model selector visible when a model error leaves no options", ()
     ),
   );
 
-  assert.match(html, />No models</);
+  // Die Beschriftung faellt auf den Katalog zurueck, nicht auf Englisch im Markup.
+  assert.match(html, />No available models</);
   assert.match(html, /title="No available models"/);
 });
 
@@ -108,10 +109,11 @@ test("keeps the model selector visible when a model error leaves no options", ()
  * Waehrend die Modellliste laedt, sitzt an ihrer Stelle ein Platzhalter.
  *
  * Der Waehler erschien bisher erst mit der ersten Liste, die untere Leiste
- * wuchs also um 32 px, sobald sie ankam — und der Composer darueber rutschte
- * mit. Geprueft wird die reservierte Hoehe, nicht die Klasse des Platzhalters.
+ * wuchs also mit, sobald sie ankam — und der Composer darueber rutschte mit.
+ * Geprueft wird die reservierte Groesse des 40-px-Ausloesers, nicht die
+ * Klasse des Platzhalters.
  */
-test("the model picker reserves its 32-px slot while the list loads", () => {
+test("the model picker reserves its 40-px slot while the list loads", () => {
   const html = renderToStaticMarkup(
     React.createElement(
       I18nProvider,
@@ -128,7 +130,7 @@ test("the model picker reserves its 32-px slot while the list loads", () => {
   );
 
   assert.doesNotMatch(html, /title="No available models"/, "vor der ersten Liste gibt es keinen irrefuehrenden Knopf");
-  assert.match(html, /aria-hidden="true"[^>]*style="[^"]*height:\s*32px/, "ein 32-px-Platzhalter haelt die Zeile");
+  assert.match(html, /aria-hidden="true"[^>]*style="[^"]*height:\s*40px/, "ein 40-px-Platzhalter haelt die Zeile");
 });
 
 /**

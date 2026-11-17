@@ -20,7 +20,7 @@ import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantB
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { MessageView } from "./MessageView";
 import { CollapsibleMessage } from "./CollapsibleMessage";
-import { isCollapsibleOutput, shouldCollapseOutput, summarizeCollapsedOutput, createOutputClock } from "@/lib/chat-collapse";
+import { isCollapsibleOutput, shouldCollapseOutput, shouldCollapseProcessGroup, summarizeCollapsedOutput, createOutputClock } from "@/lib/chat-collapse";
 import { AnimatePresence, motion } from "motion/react";
 import {
   DURATION_ENTER,
@@ -165,12 +165,14 @@ function withAssistantBlocks(
   return next;
 }
 
-// Every turn starts folded — also one that ended without a final answer. Its
-// children are the expensive part (a measured long session had 8 expanded
-// tool histories at 88 % of the first view's nodes); a historical turn is one
-// click away, and the running turn renders ungrouped anyway.
-function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { messageCount: number; toolCallCount: number; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
-  const [expanded, setExpanded] = useState(false);
+// Every turn starts folded — except the newest foldable row of the transcript,
+// which the rule keeps open. The children are the expensive part (a measured
+// long session had 8 expanded tool histories at 88 % of the first view's
+// nodes), so a historical turn is one click away; the newest one is not
+// historical, and a turn that ended without a final answer exists only here.
+// The running turn is unaffected because the live tail renders ungrouped.
+function ProcessDetailsGroup({ collapsed, onToggle, messageCount, toolCallCount, children, t }: { collapsed: boolean; onToggle: () => void; messageCount: number; toolCallCount: number; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+  const expanded = !collapsed;
   const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
 
@@ -179,7 +181,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
       <button
         type="button"
         aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={onToggle}
         style={{
           display: "flex",
           alignItems: "center",
@@ -392,7 +394,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
 
   const onDrop = useCallback((files: File[]) => {
     if (sessionBusy) return;
-    chatInputRef?.current?.addImages(files);
+    chatInputRef?.current?.addFiles(files);
   }, [sessionBusy, chatInputRef]);
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
@@ -697,7 +699,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               // summary is derived from. `outputsAfter` is counted over this
               // list — live tail included — so the newest three outputs of the
               // transcript stay open and everything older is one click away.
-              const rendered: { node: ReactNode; output?: { key: string; message: AgentMessage } }[] = [];
+              // A process group is a foldable row too (`foldableAfter`), but
+              // takes no output slot: it is not a summary card.
+              const rendered: {
+                node: ReactNode;
+                output?: { key: string; message: AgentMessage };
+                group?: { key: string; messageCount: number; toolCallCount: number; children: ReactNode };
+              }[] = [];
               const pushMessage = (renderIdx: number, node: ReactNode, message: AgentMessage = messages[renderIdx]) => {
                 rendered.push({
                   node,
@@ -755,22 +763,21 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
 
                 const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
                 if (processCount > 0) {
-                  const processGroup = (
-                    <ProcessDetailsGroup
-                      messageCount={processCount}
-                      t={t}
-                      toolCallCount={countToolCalls(messages, visibleProcessIndices, displayOptions) + countToolCallBlocks(finalSplit.processBlocks)}
-                    >
-                      {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { keyPrefix: "process" }))}
-                      {finalProcessMessage && renderMessage(finalAssistantIdx, { keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
-                    </ProcessDetailsGroup>
-                  );
+                  // The group's open state comes from the rule, so the group
+                  // itself is rendered below, after the foldable count.
                   rendered.push({
-                    node: (
-                      <div key={`process-group-${userIdx}-${finalAssistantIdx}`}>
-                        {processGroup}
-                      </div>
-                    ),
+                    node: null,
+                    group: {
+                      key: `process-group-${userIdx}-${finalAssistantIdx}`,
+                      messageCount: processCount,
+                      toolCallCount: countToolCalls(messages, visibleProcessIndices, displayOptions) + countToolCallBlocks(finalSplit.processBlocks),
+                      children: (
+                        <>
+                          {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { keyPrefix: "process" }))}
+                          {finalProcessMessage && renderMessage(finalAssistantIdx, { keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
+                        </>
+                      ),
+                    },
                   });
                 }
 
@@ -796,13 +803,19 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               }
               // Count collapsible cards after each item, newest first; cards
               // inside a ProcessDetailsGroup are not part of this list and take
-              // no slot. The visible window is a suffix, so its numbers are the
-              // same as if only mounted items counted.
+              // no slot. `foldableAfter` counts groups too: it names the newest
+              // foldable row, and the rule keeps that one open. The visible
+              // window is a suffix, so its numbers are the same as if only
+              // mounted items counted.
               const outputsAfter = new Array<number>(rendered.length);
+              const foldableAfter = new Array<number>(rendered.length);
               let seenOutputs = 0;
+              let seenFoldables = 0;
               for (let i = rendered.length - 1; i >= 0; i--) {
                 outputsAfter[i] = seenOutputs;
+                foldableAfter[i] = seenFoldables;
                 if (rendered[i].output) seenOutputs += 1;
+                if (rendered[i].output || rendered[i].group) seenFoldables += 1;
               }
               const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
               return (
@@ -813,10 +826,31 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                     </div>
                   )}
                   {rendered.slice(startIndex).map((item, offset) => {
+                    const index = startIndex + offset;
+                    if (item.group) {
+                      const group = item.group;
+                      const override = outputOverrides[group.key];
+                      const collapsed = override === undefined
+                        ? shouldCollapseProcessGroup({ foldableAfter: foldableAfter[index] })
+                        : override;
+                      return (
+                        <div key={group.key}>
+                          <ProcessDetailsGroup
+                            collapsed={collapsed}
+                            onToggle={() => setOutputOverrides((prev) => ({ ...prev, [group.key]: !collapsed }))}
+                            messageCount={group.messageCount}
+                            toolCallCount={group.toolCallCount}
+                            t={t}
+                          >
+                            {group.children}
+                          </ProcessDetailsGroup>
+                        </div>
+                      );
+                    }
                     const output = item.output;
                     if (!output) return item.node;
                     const collapsed = shouldCollapseOutput({
-                      outputsAfter: outputsAfter[startIndex + offset],
+                      outputsAfter: outputsAfter[index],
                       ageMs: typeof output.message.timestamp === "number" ? nowMs - output.message.timestamp : null,
                       hasUserOverride: outputOverrides[output.key] !== undefined,
                       userOverride: outputOverrides[output.key] ?? false,

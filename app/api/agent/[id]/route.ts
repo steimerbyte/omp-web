@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
+import { validateAgentImages } from "@/lib/image-attachments";
 import { startRpcSession, getRpcSession, TenantBoundaryError, tenantBoundaryHttpStatus } from "@/lib/rpc-manager";
 import { switchColdSessionModel } from "@/lib/cold-model-switch";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
@@ -57,6 +58,19 @@ export async function POST(
     // `prompt_rejected`-Form, die der Client schon kennt.
     const body = await readJsonBodyWithinLimit(req, MAX_AGENT_REQUEST_BODY_BYTES) as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
+
+    // Eine ungueltige Bildliste ist ein Fehler des Requests, kein Fehler der
+    // Session: 400 statt des 500, das der Wrapper beim Dispatch daraus macht.
+    // Die Pruefung im Wrapper bleibt die zweite Wand.
+    if (commandType === "prompt" || commandType === "steer" || commandType === "follow_up") {
+      const imageError = validateAgentImages(body.images);
+      if (imageError) {
+        return NextResponse.json(
+          { error: imageError, code: "prompt_rejected", accepted: false },
+          { status: 400 },
+        );
+      }
+    }
 
     // Der Aufrufer, nicht der Erzeuger der Session: dieselbe laufende Session
     // kann von jedem Konto angesprochen werden, dem `requireSessionAccess`

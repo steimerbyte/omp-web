@@ -15,7 +15,7 @@ import { restoreLinkedomPrototypesOnExit } from "../lib/test-linkedom.mjs";
  *    Modellen, auch ohne offenes Menue);
  *  - gemountet: die Imperativ-Handle-Methoden (`focus`, `insertIfEmpty`,
  *    `replaceMessage`, `prependText`, `rekeyDraft`, `restoreSubmission`,
- *    `addImages`), das Slash-Palettensortieren (`slashMatchRank`,
+ *    `addFiles`), das Slash-Palettensortieren (`slashMatchRank`,
  *    `getSlashDescription`) und der Outside-Click-Handler.
  *
  * `FileReader` fehlt in Bun, `URL.createObjectURL`/`requestAnimationFrame`
@@ -187,6 +187,23 @@ test("model options are sorted by display name even while the menu is closed", (
   // the visible current model name proves the options reached the renderer.
   assert.match(html, /Alpha/);
   assert.match(html, /Change model/);
+});
+
+test("the context meter is the last control of the desktop toolbar", async () => {
+  const ref = React.createRef();
+  const { container, root } = await mount(ref, {
+    draftKey: "meter-last",
+    contextUsage: { percent: 42, contextWindow: 200_000, tokens: 84_000 },
+  });
+
+  const meter = container.querySelector('[role="status"]');
+  assert.ok(meter, "der Kontextzaehler fehlt");
+  const bar = meter.parentElement;
+  assert.ok(bar, "der Zaehler haengt an der Leiste");
+  assert.ok(bar.contains(container.querySelector('[data-testid="composer-attach-file"]')), "die Leiste ist die Werkzeugzeile");
+  assert.equal(bar.lastElementChild, meter, "der Zaehler steht nicht zuletzt — sein Platz ist hinter den Steuerelementen");
+  assert.equal(meter.nextElementSibling, null);
+  await act(async () => { root.unmount(); });
 });
 
 test("the slash palette ranks name matches before description matches", { timeout: 30_000 }, async () => {
@@ -393,9 +410,9 @@ test("the imperative handle edits, restores and rekeys the draft", { timeout: 30
   const chip = container.querySelector('img[src^="data:image/png;base64,AAAA"]');
   assert.ok(chip, "der wiederhergestellte Anhang steht als Chip");
 
-  // addImages: Datei -> base64 + blob-Vorschau (FileReader/URL gestubbt).
+  // addFiles: Bild -> base64 + blob-Vorschau (FileReader/URL gestubbt).
   const file = new File([new Uint8Array([1, 2, 3, 4])], "shot.png", { type: "image/png" });
-  await act(async () => { ref.current.addImages([file]); });
+  await act(async () => { ref.current.addFiles([file]); });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   const blobChip = container.querySelector('img[src^="blob:mock-"]');
   assert.ok(blobChip, "die angehaengte Datei zeigt ihre Blob-Vorschau");

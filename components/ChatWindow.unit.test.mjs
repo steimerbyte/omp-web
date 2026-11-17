@@ -127,6 +127,10 @@ const MESSAGES = [
   result("t2", "grep", "match", 6),
 ];
 const ENTRY_IDS = MESSAGES.map((_, index) => `e${index}`);
+// Der Testaufbau reicht der Sitzung seine eigene Nachrichtenliste; der Standard
+// bleibt die Fixture oben.
+let sessionMessages = MESSAGES;
+let sessionEntryIds = ENTRY_IDS;
 
 const SESSION = { id: "sess-1", path: "/sessions/sess-1.jsonl", cwd: "/work", name: "Demo" };
 
@@ -146,14 +150,14 @@ globalThis.fetch = async (url, init = {}) => {
       ok: true,
       status: 200,
       json: async () => ({
-        leafId: "e8",
-        context: { messages: MESSAGES, entryIds: ENTRY_IDS, thinkingLevel: "medium" },
+        leafId: sessionEntryIds.at(-1),
+        context: { messages: sessionMessages, entryIds: sessionEntryIds, thinkingLevel: "medium" },
         contextUsage: { percent: 10, contextWindow: 200000, tokens: 20000 },
       }),
     };
   }
   if (path.startsWith("/api/sessions/")) {
-    return { ok: true, status: 200, json: async () => ({ context: { messages: MESSAGES, entryIds: ENTRY_IDS } }) };
+    return { ok: true, status: 200, json: async () => ({ context: { messages: sessionMessages, entryIds: sessionEntryIds } }) };
   }
   if (path.startsWith("/api/branch-tree") || path.includes("get_branch")) {
     return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
@@ -199,7 +203,9 @@ function emptyStateBox(container) {
   return box;
 }
 
-async function mountChatWindow() {
+async function mountChatWindow({ messages = MESSAGES } = {}) {
+  sessionMessages = messages;
+  sessionEntryIds = messages.map((_, index) => `e${index}`);
   win.document.body.replaceChildren();
   instances.length = 0;
   const container = win.document.createElement("div");
@@ -245,9 +251,32 @@ test.after(() => {
 
 /* ── Prozessdetails ───────────────────────────────────────────────────── */
 
-test("every turn folds its process messages, including one without a final answer", { timeout: 30_000 }, async () => {
+test("a run that ended without a final answer keeps its turn open", { timeout: 30_000 }, async () => {
+  // Der gemeldete Fall: eine einzige Frage, deren Lauf nach dem Werkzeugaufruf
+  // endet (Abort, Absturz). Die Sitzung ist dann ein Turn ohne Antwort — liegt
+  // er in der zugeklappten Gruppe, besteht das ganze Transkript aus Zeilen
+  // ohne Inhalt.
+  agentState = { running: false };
+  const messages = [
+    user("only question", 0),
+    assistant([{ type: "toolCall", toolCallId: "t1", toolName: "read", input: { path: "/a" } }], 1),
+    result("t1", "read", "file body", 1),
+  ];
+  const { container, root } = await mountChatWindow({ messages });
+
+  const group = container.querySelector("button[aria-expanded]");
+  assert.ok(group, "die Prozess-Gruppe fehlt");
+  assert.equal(group.getAttribute("aria-expanded"), "true", "die neueste Zeile des Transkripts bleibt offen");
+  // Zugeklappt stand hier nur "Process details · 1 message · 1 tool call";
+  // die Werkzeugkarte des Turns ist erst mit der offenen Gruppe im DOM.
+  assert.match(container.textContent, /read/, "der Inhalt des neuesten Turns steht im DOM");
+  await act(async () => { root.unmount(); });
+});
+
+test("an older turn folds its process messages, the newest turn stays open", { timeout: 30_000 }, async () => {
   // Ohne laufenden Agenten ist kein Turn der Live-Schwanz; beide Tuernen mit
-  // Prozessnachrichten bekommen ihre Gruppe — und beide starten zugeklappt.
+  // Prozessnachrichten bekommen ihre Gruppe. Die neueste zuklappbare Zeile
+  // bleibt offen — hier ist das die Gruppe des Turns ohne Antwort.
   agentState = { running: false };
   const { container, root } = await mountChatWindow();
 
@@ -255,9 +284,8 @@ test("every turn folds its process messages, including one without a final answe
     .filter((button) => button.textContent.includes("Process"));
   assert.equal(groupButtons.length, 2, "beide Tuernen mit Prozessnachrichten haben eine Gruppe");
   const [folded, withoutAnswer] = groupButtons;
-  for (const button of groupButtons) {
-    assert.equal(button.getAttribute("aria-expanded"), "false", "keine Gruppe startet aufgeklappt");
-  }
+  assert.equal(folded.getAttribute("aria-expanded"), "false", "der aeltere Turn startet zugeklappt");
+  assert.equal(withoutAnswer.getAttribute("aria-expanded"), "true", "die neueste Zeile bleibt offen");
   assert.match(folded.textContent, /Process details/);
 
   await click(folded);
@@ -269,8 +297,11 @@ test("every turn folds its process messages, including one without a final answe
   await click(folded);
   assert.equal(folded.getAttribute("aria-expanded"), "false");
 
-  // Der Turn ohne Antwort ist genau einen Klick entfernt: zugeklappt steht
-  // "grep" nicht im DOM, aufgeklappt schon.
+  // Der Turn ohne Antwort ist offen, weil er die neueste Zeile ist; ein Klick
+  // des Nutzers klappt ihn zu und wieder auf.
+  assert.match(container.textContent, /grep/);
+  await click(withoutAnswer);
+  assert.equal(withoutAnswer.getAttribute("aria-expanded"), "false");
   assert.equal(container.textContent.includes("grep"), false);
   await click(withoutAnswer);
   assert.equal(withoutAnswer.getAttribute("aria-expanded"), "true");

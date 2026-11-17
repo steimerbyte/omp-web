@@ -157,6 +157,11 @@ test("zeigt CPU, RAM und GPU und oeffnet die History mit 10-Sekunden-Fenster", a
   const dialog = container.querySelector('[role="dialog"]');
   assert.ok(dialog, "das Popover wurde nicht geoeffnet");
   assert.equal(dialog.getAttribute("aria-label"), "System resource history");
+  // Die Kopfleiste schneidet ihre Kinder ab; das Popover liegt fest im
+  // Viewport und bekommt seine Kanten aus dem gemessenen Ausloeser.
+  assert.equal(dialog.style.position, "fixed");
+  assert.equal(Number.isFinite(Number.parseFloat(dialog.style.top)), true, `top fehlt: ${dialog.style.top}`);
+  assert.equal(Number.isFinite(Number.parseFloat(dialog.style.left)), true, `left fehlt: ${dialog.style.left}`);
   assert.match(dialog.textContent, /last 10s · [12] samples/);
   assert.match(dialog.textContent, /cores: 8 · loadavg 0\.50 \/ 0\.40 \/ 0\.30/);
   assert.match(dialog.textContent, /mem: 8\.0 GB \/ 16\.0 GB/);
@@ -179,6 +184,47 @@ test("zeigt CPU, RAM und GPU und oeffnet die History mit 10-Sekunden-Fenster", a
   await act(async () => root.unmount());
   mounted.splice(0, mounted.length);
   container.remove();
+});
+
+test("auf dem Telefon bleibt der Badge bei Punkt und Prozent", async () => {
+  installFetch(STATS);
+  // Ein Badge auf 390 px: 342,66 px Werkzeuge davor, also darf der Badge nur
+  // Punkt, Name und Prozentsatz tragen — Kerne, Gesamt-RAM und GPU entfallen.
+  const desktopMatchMedia = globalThis.matchMedia;
+  const mobileMatchMedia = (query) => ({
+    matches: String(query).includes("max-width"),
+    media: String(query),
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    onchange: null,
+  });
+  win.matchMedia = mobileMatchMedia;
+  globalThis.matchMedia = mobileMatchMedia;
+  try {
+    const { root, container } = await mount();
+    const button = container.querySelector("button");
+
+    assert.match(button.textContent, /CPU42%/);
+    assert.match(button.textContent, /RAM50%/);
+    assert.doesNotMatch(button.textContent, /8c/, "die Kernzahl braucht Platz, den das Telefon nicht hat");
+    assert.doesNotMatch(button.textContent, /16\.0 GB/, "die RAM-Summe steht im Popover");
+    assert.doesNotMatch(button.textContent, /GPU/, "die GPU-Zeile entfaellt auf dem Telefon");
+    assert.match(button.getAttribute("title"), /across 8 cores/, "der Tooltip behaelt alle Zahlen");
+
+    await click(button);
+    const dialog = container.querySelector('[role="dialog"]');
+    assert.ok(dialog, "das Popover bleibt erreichbar");
+    assert.match(dialog.textContent, /mem: 8\.0 GB \/ 16\.0 GB/);
+
+    await act(async () => root.unmount());
+    mounted.splice(0, mounted.length);
+    container.remove();
+  } finally {
+    win.matchMedia = desktopMatchMedia;
+    globalThis.matchMedia = desktopMatchMedia;
+  }
 });
 
 test("Escape und ein Klick ausserhalb schliessen das Popover", async () => {

@@ -6,6 +6,7 @@ import { allowFileRoot, getAllowedFileRoots, isExistingFilePathAllowed } from "@
 import { getRequestIdentity } from "@/lib/request-identity";
 import { isWritePathAllowed } from "@/lib/write-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
+import { validateAgentImages } from "@/lib/image-attachments";
 import { startRpcSession, TenantBoundaryError, tenantBoundaryHttpStatus } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import {
@@ -43,6 +44,19 @@ export async function POST(req: Request) {
     const body = await readJsonBodyWithinLimit(req, MAX_AGENT_REQUEST_BODY_BYTES) as { cwd?: string; [key: string]: unknown };
     const { cwd, ...command } = body;
     commandType = typeof command.type === "string" ? command.type : undefined;
+
+    // Dieselbe Grenze wie `/api/agent/[id]`: eine ungueltige Bildliste ist ein
+    // Request-Fehler (400), kein Session-Fehler (500). Die Pruefung im Wrapper
+    // bleibt die zweite Wand.
+    if (commandType === "prompt" || commandType === "steer" || commandType === "follow_up") {
+      const imageError = validateAgentImages(command.images);
+      if (imageError) {
+        return NextResponse.json(
+          { error: imageError, code: "prompt_rejected", accepted: false },
+          { status: 400 },
+        );
+      }
+    }
 
     if (!cwd || typeof cwd !== "string") {
       return NextResponse.json({

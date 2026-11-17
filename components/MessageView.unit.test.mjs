@@ -158,6 +158,38 @@ test("a user bubble shows images, text, timestamp and fork/navigate actions", ()
   assert.match(html, /Copy/);
 });
 
+test("an unresolved blob reference becomes text, not a broken image", () => {
+  const html = render({
+    role: "user",
+    timestamp: Date.now(),
+    content: [
+      // Die Bytes liegen nicht in der Nachricht: nur der Verweis steht da.
+      { type: "image", data: "blob:sha256:deadbeef", mimeType: "image/png" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "" } },
+    ],
+  });
+
+  assert.doesNotMatch(html, /<img/, "kein kaputtes Bildsymbol");
+  // Der Platzhalter traegt den Text einmal als Inhalt und einmal als
+  // `aria-label`; gezaehlt wird der Platzhalter selbst.
+  assert.equal((html.match(/role="img"/g) ?? []).length, 2, "jede unbrauchbare Quelle wird benannt");
+  assert.match(html, /Image unavailable/);
+});
+
+test("an inline image over the server's 10 MiB limit is a placeholder", () => {
+  // Base64 ist 4/3 der Bytes: knapp ueber der Grenze, die `validateAgentImages`
+  // durchsetzt. Ein data-URL dieser Groesse wuerde im Browser nur scheitern.
+  const data = "A".repeat(Math.ceil((10 * 1024 * 1024 + 3) / 3) * 4);
+  const html = render({
+    role: "user",
+    timestamp: Date.now(),
+    content: [{ type: "image", data, mimeType: "image/png" }],
+  });
+
+  assert.doesNotMatch(html, /src="data:image/);
+  assert.match(html, /Image unavailable/);
+});
+
 test("assistant usage, model name and written files are rendered", () => {
   const html = render({
     role: "assistant",
