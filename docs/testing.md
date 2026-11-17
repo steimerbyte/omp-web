@@ -165,6 +165,12 @@ Die Prüfungen: Erreichbarkeit jedes bedienbaren Elements in Kopfleiste,
 Composer-Werkzeugleiste und Seitenleisten-Aktionen (an `scrollLeft` 0, an der
 Zielmitte und am Maximum; ein Ziel gilt als erreichbar, sobald *eine* Position
 seinen eigenen Mittelpunkt trifft), Überdeckung an der Maximalposition,
+**Reihenfolge der Kopfleiste** (nur Telefon: bei `scrollLeft` 0 muss der
+Schubladen-Knopf — erkannt an `sidebar.show`/`sidebar.hide` aus allen
+Sprachpaketen — das bedienbare Element mit dem kleinsten `left` sein und
+innerhalb von 8 px der linken Leistenkante stehen; genau das bricht ein
+`order` an einem Geschwister, ohne dass Erreichbarkeit oder Hit-Test etwas
+merken),
 Abschneide-Vorfahr als Diagnose (erster Vorfahr mit `overflow-x`/`overflow-y`
 ≠ `visible`), jedes `aria-haspopup`-Popover (Rechteck im Viewport ±1 px,
 Mittelpunkt trifft das Popover), Dokumentbreite ≤ `innerWidth + 1`,

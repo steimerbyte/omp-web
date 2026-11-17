@@ -159,6 +159,29 @@ export function summarizeTapTargets(
   return { count: small.length, smallest: small.slice(0, limit) };
 }
 
+/**
+ * Das Element mit dem kleinsten `left` — die erste Spalte einer Leiste.
+ *
+ * Diese Regel fragt nur nach gemessenen Rechtecken und weiss nichts von CSS
+ * `order`, `flex-direction` oder `position`: genau das ist ihr Zweck. Ein
+ * `order: -1` an einem Geschwister schiebt die erste Spalte weg, ohne dass
+ * Erreichbarkeit oder Hit-Test etwas merken — das Element steht weiter an
+ * seinem Platz im DOM, nur nicht mehr an seinem Platz im Bild. Bei gleichem
+ * `left` gewinnt das frueheste Element der Eingabe (Dokumentreihenfolge).
+ */
+export function leftmostItem<T extends { left: number }>(items: readonly T[]): T | null {
+  let best: T | null = null;
+  for (const item of items) {
+    if (best === null || item.left < best.left) best = item;
+  }
+  return best;
+}
+
+/** |`value` − `edge`| ≤ `tolerance`; 8 px ist die Vorgabe fuer die linke Kante. */
+export function isAlignedToEdge(value: number, edge: number, tolerance = 8): boolean {
+  return Math.abs(value - edge) <= Math.abs(tolerance);
+}
+
 export interface OverflowAncestor {
   selector: string;
   overflowX: string;

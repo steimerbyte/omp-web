@@ -291,8 +291,9 @@ test("auf dem Telefon steht der System-Badge vor den Werkzeugen", async () => {
 
   const badgeSlot = container.querySelector('[data-testid="topbar-system-badge"]');
   assert.ok(badgeSlot, "der System-Badge fehlt");
-  // `order: -1` setzt den Badge in der Flex-Zeile an scrollLeft 0; die Leiste
-  // selbst bleibt in DOM-Reihenfolge und Desktop-Layout unberuehrt.
+  // `order: -1` setzt den Badge in der Flex-Zeile direkt hinter den
+  // Menue-Knopf (`order: -2`); die Leiste selbst bleibt in DOM-Reihenfolge und
+  // Desktop-Layout unberuehrt.
   assert.equal(badgeSlot.style.order, "-1", "der Badge steht auf dem Telefon nicht vorn");
   // Das Terminal ist auch auf dem Telefon erreichbar: der Knopf ist gerendert
   // (teilweise sichtbar, der Rest liegt im Rollweg) und oeffnet das
@@ -325,6 +326,44 @@ test("auf dem Telefon steht der System-Badge vor den Werkzeugen", async () => {
   assert.equal(terminalMenu.style.position, "fixed", "das Menue liegt nicht fest im Viewport");
 
   await act(async () => root.unmount());
+});
+
+test("the sidebar toggle stays the first item in the top bar on every width", async () => {
+  FakeEventSource.instances = [];
+  FakeNotification.instances = [];
+
+  const mobile = await mountShell("?session=s1", { mobile: true });
+  await settle(150);
+  const mobileBar = mobile.container.querySelector('[data-testid="topbar-scroll"]');
+  assert.ok(mobileBar, "the top bar is missing");
+  const mobileToggle = mobileBar.firstElementChild;
+  // Nothing may sort itself in front of the sidebar toggle: with `order: -1`
+  // on the badge and no order here, the badge took slot 0 and the drawer
+  // button sat one place right of the left edge (operator report).
+  assert.match(
+    mobileToggle.getAttribute("aria-label") ?? "",
+    /Seitenleiste|sidebar/i,
+    "the sidebar toggle is not the first top-bar item",
+  );
+  assert.equal(mobileToggle.style.order, "-2", "the toggle must sort before the badge on mobile");
+  assert.equal(
+    mobile.container.querySelector('[data-testid="topbar-system-badge"]').style.order,
+    "-1",
+    "the badge belongs directly behind the toggle on mobile",
+  );
+  await act(async () => mobile.root.unmount());
+
+  const desktop = await mountShell("?session=s1");
+  await settle(100);
+  const desktopBar = desktop.container.querySelector('[data-testid="topbar-scroll"]');
+  const desktopToggle = desktopBar.firstElementChild;
+  assert.equal(desktopToggle.style.order, "0", "the toggle keeps DOM order on the desktop");
+  assert.equal(
+    desktop.container.querySelector('[data-testid="topbar-system-badge"]').style.order,
+    "0",
+    "the badge keeps its place on the desktop",
+  );
+  await act(async () => desktop.root.unmount());
 });
 
 test("die Kopfleiste endet mit Freiraum und blendet verborgene Seiten ab", async () => {

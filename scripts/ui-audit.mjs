@@ -43,12 +43,30 @@ import { chromium } from "playwright-core";
 import {
   classifyReachability,
   findClippingAncestor,
+  isAlignedToEdge,
   isInsideViewport,
+  leftmostItem,
   needsScrollAffordance,
   reachabilityProbeOffsets,
   summarizeCovering,
   summarizeTapTargets,
 } from "../lib/ui-audit.ts";
+import { deLocale } from "../lib/i18n/messages/de.ts";
+import { enLocale } from "../lib/i18n/messages/en.ts";
+import { zhCNLocale } from "../lib/i18n/messages/zh-CN.ts";
+
+/**
+ * Beschriftungen des Schubladen-Knopfs in jeder ausgelieferten Sprache. Der
+ * Knopf ist der einzige Zugang zur Seitenleiste auf dem Telefon; welche
+ * Sprache gerade gilt, haengt am Browser, also wird gegen alle geprueft statt
+ * gegen eine geratene.
+ */
+const SIDEBAR_TOGGLE_LABELS = new Set(
+  [deLocale, enLocale, zhCNLocale].flatMap((plugin) => [
+    plugin.messages["sidebar.show"],
+    plugin.messages["sidebar.hide"],
+  ]),
+);
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const CHROMIUM_PATH = process.env.PLAYWRIGHT_CHROMIUM_PATH ?? "/usr/bin/chromium";
@@ -402,6 +420,31 @@ function installAuditHelpers() {
       return chain;
     },
 
+    /**
+     * Die bedienbaren Kinder einer Zone in Dokumentreihenfolge, mit gemessenen
+     * linken Kanten — die Grundlage der Reihenfolge-Pruefung. CSS `order`
+     * aendert nur `left`, nicht die Reihenfolge in dieser Liste; genau dieser
+     * Unterschied ist der Befund.
+     */
+    layout(regionId) {
+      const bar = byId(regionId);
+      if (!bar) return null;
+      const barRect = rectOf(bar);
+      const items = [];
+      for (const el of bar.querySelectorAll(INTERACTIVE)) {
+        if (!isVisible(el) || !isInteractive(el)) continue;
+        const rect = rectOf(el);
+        items.push({
+          id: idFor(el),
+          label: labelFor(el),
+          aria: el.getAttribute("aria-label") ?? "",
+          left: rect.left,
+          right: rect.right,
+        });
+      }
+      return { barLeft: barRect.left, barRight: barRect.right, items };
+    },
+
     popups() {
       const visible = [];
       const hidden = [];
@@ -613,6 +656,36 @@ async function auditState(page, viewport, state, baseUrl, projects) {
         detail += " — fades shown without overflow";
       }
       record(viewport.name, state.name, "top bar fade", verdict, detail);
+    }
+  }
+
+  // --- Reihenfolge der Kopfleiste (nur Telefon) ----------------------------
+  // Die Erreichbarkeit sagt nichts ueber die *Reihenfolge*: ein `order: -1`
+  // an einem Geschwister schiebt den Schubladen-Knopf aus der Ecke, waehrend
+  // sein eigener Hit-Test weiter stimmt (gemessen: der CPU/RAM-Badge nahm auf
+  // dem Telefon den ersten Platz ein, die Schublade war nur noch in der Mitte
+  // zu treffen). Deshalb hier die gemessene linke Kante, nicht die DOM-Position.
+  if (viewport.mobile && topbarRegion) {
+    await page.evaluate(([cid, value]) => globalThis.__uiAudit.scrollTo(cid, value), [topbarRegion.id, 0]);
+    const layout = await page.evaluate((id) => globalThis.__uiAudit.layout(id), topbarRegion.id);
+    const toggle = layout?.items.find((item) => SIDEBAR_TOGGLE_LABELS.has(item.aria)) ?? null;
+    const leftmost = leftmostItem(layout?.items ?? []);
+    const inCorner = toggle !== null && isAlignedToEdge(toggle.left, layout.barLeft);
+    const measured = (layout?.items ?? [])
+      .slice()
+      .sort((a, b) => a.left - b.left)
+      .map((item) => `${item.label} @${Math.round(item.left)}`)
+      .join(", ");
+    if (toggle === null) {
+      record(viewport.name, state.name, "topbar order", "FAIL",
+        `drawer toggle not found in the bar (no aria-label from sidebar.show/hide); interactive children: ${measured}`);
+    } else {
+      const verdict = leftmost !== null && leftmost.id === toggle.id && inCorner ? "PASS" : "FAIL";
+      record(viewport.name, state.name, "topbar order", verdict,
+        `bar edge ${Math.round(layout.barLeft)}, drawer toggle "${toggle.label}" left ${Math.round(toggle.left)} (Δ${Math.round(toggle.left - layout.barLeft)})`
+        + (verdict === "PASS"
+          ? `, leftmost of ${layout.items.length} interactive children`
+          : `, leftmost is "${leftmost?.label ?? "(none)"}" @${Math.round(leftmost?.left ?? 0)}; children in order: ${measured}`));
     }
   }
 

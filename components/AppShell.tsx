@@ -1519,6 +1519,12 @@ export function AppShell() {
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
             style={{
+              // Der System-Badge traegt auf dem Telefon `order: -1`; ohne
+              // eigenen negativeren Wert ruecke der Schalter einen Platz nach
+              // rechts, und der linke Rand der Leiste (scrollLeft 0) waere der
+              // Messwert statt des Menue-Knopfs. Gemeldet vom Operator: die
+              // Seitenleiste war an der linken Ecke nicht mehr zu oeffnen.
+              order: isMobile ? -2 : 0,
               display: "flex", alignItems: "center", justifyContent: "center",
               width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
               background: "none", border: "none", borderRight: "1px solid var(--border)",
@@ -1835,10 +1841,10 @@ export function AppShell() {
               </button>
             </div>
           )}
-          {/* Auf dem Telefon steht der Live-Messwert vorn: `order: -1` setzt
-              ihn an scrollLeft 0, ohne die DOM-Reihenfolge oder das
-              Desktop-Layout anzufassen (die Leiste ist eine Flex-Zeile mit
-              `overflowX: auto`). */}
+          {/* Auf dem Telefon steht der Live-Messwert direkt hinter dem
+              Menue-Knopf (`order: -1`, der Knopf selbst `-2`), ohne die
+              DOM-Reihenfolge oder das Desktop-Layout anzufassen (die Leiste
+              ist eine Flex-Zeile mit `overflowX: auto`). */}
           <div
             data-testid="topbar-system-badge"
             style={{ order: isMobile ? -1 : 0, display: "flex", height: "100%" }}

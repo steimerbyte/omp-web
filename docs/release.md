@@ -31,10 +31,11 @@ starts its own dev server on a free port (30142+) with a throwaway identity,
 drives `/usr/bin/chromium` through `playwright-core` at 390×844 and 1280×900,
 and fails on an unreachable or covered control, a popover outside the viewport,
 a horizontally scrolling surface without a fade or scrollbar, a page error or a
-console error. It is not part of `bun run verify` — that stays a headless
-suite; see [testing.md](./testing.md#browser-abnahme). If the browser is not at
-`/usr/bin/chromium`, set `PLAYWRIGHT_CHROMIUM_PATH`. The JSON report is kept in
-`/tmp/omp-ui-audit-<timestamp>/report.json`.
+console error, or when the drawer toggle is not the leftmost top-bar control at
+`scrollLeft: 0` (`topbar order`). It is not part of `bun run verify` — that
+stays a headless suite; see [testing.md](./testing.md#browser-abnahme). If the
+browser is not at `/usr/bin/chromium`, set `PLAYWRIGHT_CHROMIUM_PATH`. The JSON
+report is kept in `/tmp/omp-ui-audit-<timestamp>/report.json`.
 
 The `bun install` line is not ceremony. `scripts/deploy-local.sh` contains no
 `bun install` (grep returns nothing), and its rsync excludes `node_modules/` —
