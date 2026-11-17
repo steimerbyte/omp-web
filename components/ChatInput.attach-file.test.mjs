@@ -46,17 +46,29 @@ globalThis.CSS = { supports: () => true, registerProperty: () => {} };
 
 /** Jeder Upload-Aufruf dieses Tests, in der Reihenfolge des Absendens. */
 const uploads = [];
-/** Alles, was ausser dem Upload gefragt wird (Quick Phrases beim Mount). */
+/** Die Antwort auf den PUT — der Mint antwortet mit `ticketReply`. */
 let uploadReply = { status: 200, body: { uploaded: [] } };
+/** Die Antwort auf den Ticket-Request; Standard ist ein frisches Ticket. */
+let ticketReply = { status: 200, body: { token: "tok-1" } };
 
 globalThis.fetch = async (url, init = {}) => {
   const href = String(url);
   if (href.startsWith("/api/files/")) {
-    uploads.push({ url: href, file: init.body.get("files"), method: init.method });
+    const reply = ticketReply;
+    return {
+      ok: reply.status >= 200 && reply.status < 300,
+      status: reply.status,
+      json: async () => reply.body,
+      text: async () => JSON.stringify(reply.body),
+    };
+  }
+  if (href.startsWith("/upload/")) {
+    uploads.push({ url: href, file: init.body, method: init.method });
     return {
       ok: uploadReply.status >= 200 && uploadReply.status < 300,
       status: uploadReply.status,
       json: async () => uploadReply.body,
+      text: async () => JSON.stringify(uploadReply.body),
     };
   }
   return { ok: true, status: 200, json: async () => ({ phrases: [] }) };
@@ -176,6 +188,7 @@ test.afterEach(async () => {
   }
   uploads.length = 0;
   uploadReply = { status: 200, body: { uploaded: [] } };
+  ticketReply = { status: 200, body: { token: "tok-1" } };
   storage.clear();
 });
 
@@ -227,10 +240,10 @@ test("one uploaded file becomes exactly one chip carrying the name and size", as
 
   await upload(container);
 
-  assert.equal(uploads.length, 1, "genau ein Request");
-  assert.equal(uploads[0].url, "/api/files/home/alice/project?type=upload&conflict=skip");
+  assert.equal(uploads.length, 1, "genau ein PUT nach dem Ticket");
+  assert.equal(uploads[0].url, "/upload/tok-1");
   assert.equal(uploads[0].file.name, "sample.csv");
-  assert.equal(uploads[0].method, "POST");
+  assert.equal(uploads[0].method, "PUT");
 
   assert.equal(chips(container).length, 1, "genau ein Chip");
   assert.match(chips(container)[0].textContent, /sample\.csv/);
@@ -251,7 +264,7 @@ test("removing the chip drops the reference and issues no second request", async
   // Ein DELETE auf die Datei waere hier genau der Fehler: der Upload hat den
   // Chip erzeugt, das Entfernen ist eine Aenderung an der *Nachricht*.
   assert.equal(uploads.length, 1, "kein zusaetzlicher Request beim Entfernen");
-  assert.equal(uploads.filter((entry) => entry.method !== "POST").length, 0);
+  assert.equal(uploads[0].method, "PUT", "der eine Request war der Upload selbst");
 });
 
 test("the send payload references the file and a file-only message is sendable", async () => {
@@ -332,7 +345,7 @@ test("a dropped PDF uploads, while a dropped image stays an attachment", async (
 });
 
 test("a rejected upload is visible in the composer and localized", async () => {
-  uploadReply = { status: 413, body: { error: "Files must be 8 MB or smaller" } };
+  uploadReply = { status: 413, body: { error: "Files must be 10 GB or smaller" } };
   const { container } = await mountInput({ cwd: "/home/alice/project" });
 
   await upload(container, new File(["x"], "big.bin"));
@@ -340,12 +353,12 @@ test("a rejected upload is visible in the composer and localized", async () => {
   const alert = container.querySelector('[data-testid="composer-upload-error"]');
   assert.ok(alert, "der Fehler ist sichtbar");
   assert.equal(alert.getAttribute("role"), "alert");
-  assert.match(alert.textContent, /Files must be 8 MB or smaller/);
+  assert.match(alert.textContent, /Files must be 10 GB or smaller/);
   assert.equal(chips(container).length, 0, "kein Chip fuer eine abgelehnte Datei");
 });
 
 test("a name collision is a message, not a silently overwritten file", async () => {
-  uploadReply = { status: 200, body: { uploaded: [], skipped: ["sample.csv"], errors: [] } };
+  ticketReply = { status: 200, body: { uploaded: [], skipped: ["sample.csv"], errors: [] } };
   const { container } = await mountInput({ cwd: "/home/alice/project" });
 
   await upload(container);
@@ -359,11 +372,14 @@ test("a name collision is a message, not a silently overwritten file", async () 
 test("an oversize file is refused with the localized message and no request", async () => {
   const { container } = await mountInput({ cwd: "/home/alice/project" });
 
-  await upload(container, new File([Buffer.alloc(8 * 1024 * 1024 + 1, 0x61)], "big.bin"));
+  // 10 GiB + 1 darf nicht alloziert werden; der Guard liest nur `size`.
+  const tooBig = { name: "big.bin", size: 10 * 1024 ** 3 + 1, type: "" };
+
+  await upload(container, tooBig);
 
   const alert = container.querySelector('[data-testid="composer-upload-error"]');
   assert.ok(alert, "die Meldung ist sichtbar");
-  assert.match(alert.textContent, /Files must be 8 MB or smaller/);
+  assert.match(alert.textContent, /Files must be 10 GB or smaller/);
   assert.equal(uploads.length, 0, "die Grenze greift vor dem Request");
   assert.equal(chips(container).length, 0);
 });

@@ -1043,11 +1043,6 @@
       "functionsHit": 3,
       "uncovered": 0
     },
-    "lib/bounded-form-data.ts": {
-      "functionsFound": 5,
-      "functionsHit": 4,
-      "uncovered": 1
-    },
     "lib/browser-notifications.ts": {
       "functionsFound": 8,
       "functionsHit": 8,

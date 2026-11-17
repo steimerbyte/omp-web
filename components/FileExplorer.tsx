@@ -352,25 +352,101 @@ function GitStatusBadge({ status, t }: { status: GitFileStatus; t: Translate }) 
   );
 }
 
-function uploadFiles(
+/**
+ * Erst ein Ticket je Datei, dann die Bytes als Streaming-PUT.
+ *
+ * Der zweite Request liegt ausserhalb des Proxy-Matchers, weil der Proxy jeden
+ * Body in den Speicher klont (`MAX_UPLOAD_FILE_BYTES` in `lib/file-upload.ts`
+ * erklaert das). Die Dateien gehen nacheinander, damit der Fortschritt eine
+ * Aussage ueber den ganzen Stapel bleibt; ein Fehler landet als Eintrag in
+ * `errors` und nimmt die restlichen Dateien nicht mit.
+ */
+async function uploadFiles(
   targetDirectory: string,
   files: File[],
   strategy: UploadConflictStrategy,
   onProgress: (progress: number) => void,
 ): Promise<{ status: number; data: UploadResponse }> {
-  return new Promise((resolve, reject) => {
-    const formData = new FormData();
-    files.forEach((file) => formData.append("files", file, file.name));
+  const data: UploadResponse = { uploaded: [], skipped: [], errors: [] };
+  const totalBytes = files.reduce((total, file) => total + file.size, 0) || 1;
+  let finishedBytes = 0;
 
-    const xhr = new XMLHttpRequest();
-    xhr.open(
-      "POST",
-      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}`,
+  for (const file of files) {
+    const reportProgress = (loaded: number) => {
+      onProgress(Math.min(100, Math.round(((finishedBytes + loaded) / totalBytes) * 100)));
+    };
+
+    const ticketResponse = await fetch(
+      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload-ticket&conflict=${strategy}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, size: file.size }),
+      },
     );
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        onProgress(Math.round((event.loaded / event.total) * 100));
+    let ticket: UploadResponse & { token?: string } = {};
+    try {
+      ticket = JSON.parse(await ticketResponse.text()) as UploadResponse & { token?: string };
+    } catch {
+      // An empty or non-JSON rejection body keeps the status as the message.
+    }
+
+    if (!ticketResponse.ok) {
+      if (ticketResponse.status === 409 && ticket.conflicts?.length) {
+        return { status: 409, data: ticket };
       }
+      return {
+        status: ticketResponse.status,
+        data: { ...ticket, error: ticket.error ?? `Upload failed (HTTP ${ticketResponse.status})` },
+      };
+    }
+    if (ticket.skipped?.length) {
+      data.skipped!.push(...ticket.skipped);
+      finishedBytes += file.size;
+      reportProgress(0);
+      continue;
+    }
+    if (ticket.errors?.length) {
+      data.errors!.push(...ticket.errors);
+      finishedBytes += file.size;
+      reportProgress(0);
+      continue;
+    }
+    if (typeof ticket.token !== "string") {
+      return { status: 500, data: { error: "The server sent no upload ticket" } };
+    }
+
+    const result = await putFileWithProgress(`/upload/${encodeURIComponent(ticket.token)}`, file, reportProgress);
+    if (result.status < 200 || result.status >= 300) {
+      data.errors!.push({ name: file.name, error: result.data.error ?? `Upload failed (HTTP ${result.status})` });
+    } else if (result.data.errors?.length) {
+      data.errors!.push(...result.data.errors);
+    } else {
+      data.uploaded!.push(...(result.data.uploaded ?? [file.name]));
+    }
+    finishedBytes += file.size;
+    reportProgress(0);
+  }
+
+  return { status: data.errors!.length > 0 ? 207 : 200, data };
+}
+
+/**
+ * Die Bytes mit Fortschritt. `XMLHttpRequest`, weil `fetch` fuer einen
+ * Upload-Body keine Fortschrittsereignisse liefert; `send(file)` uebertraegt
+ * den Blob, ohne ihn im Speicher zu kopieren.
+ */
+function putFileWithProgress(
+  url: string,
+  file: File,
+  onProgress: (loaded: number) => void,
+): Promise<{ status: number; data: UploadResponse }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded);
     };
     xhr.onerror = () => reject(new Error("Network error while uploading files"));
     xhr.onabort = () => reject(new Error("Upload cancelled"));
@@ -383,7 +459,7 @@ function uploadFiles(
       }
       resolve({ status: xhr.status, data });
     };
-    xhr.send(formData);
+    xhr.send(file);
   });
 }
 

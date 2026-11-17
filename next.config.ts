@@ -95,26 +95,28 @@ const nextConfig: NextConfig = {
      * ends the clone silently once `bytesRead > proxyClientMaxBodySize`
      * (`node_modules/next/dist/server/body-streams.js`, `cloneBodyStream`),
      * pushing `null` into both streams; the route handler then reads a body
-     * that ends in the middle of a part. Measured on this build (production,
-     * 32 MB configured): a raw 40 MB POST arrived as 33 391 238 of 41 943 040
-     * bytes, and a 40 MB multipart upload failed as
-     * `FormData parse error missing final boundary` — an HTTP 500, not a 413.
+     * that ends early. Measured on this build (production, 32 MB configured): a
+     * raw 40 MB POST arrived as 33 391 238 of 41 943 040 bytes, and a 40 MB
+     * multipart upload failed as `FormData parse error missing final boundary`
+     * — an HTTP 500, not a 413. The clone also keeps the whole body in memory
+     * while the middleware call is outstanding, measured as +100 MB RSS for a
+     * 100 MB POST.
      *
      * So the only layer that can reject with a real status is the route, and
-     * this value has to sit strictly above the largest limit a route enforces
-     * itself. That is the upload route: `MAX_UPLOAD_REQUEST_BYTES` (101 MB) in
-     * `lib/file-upload.ts`, which answers 413 on its own. 104 MB leaves 3 MB
-     * of headroom above it, so a body the upload route accepts can never be
-     * truncated by construction.
-     *
-     * Two lower bounds also apply: the base64 expansion of
+     * this value has to sit strictly above the largest body a proxied route
+     * accepts. That is the agent prompt (`MAX_AGENT_REQUEST_BODY_BYTES`, 30 MB
+     * in `lib/request-body.ts`); the base64 expansion of
      * `MAX_ATTACHED_IMAGES_TOTAL_BYTES` (a chat prompt carries its images
-     * inline, 4/3 inflation, `lib/image-attachments.ts`) and the 30 MB prompt
-     * ceiling of `app/api/agent/[id]/route.ts`. Both are far below 104 MB.
+     * inline, 4/3 inflation, `lib/image-attachments.ts`) is the second lower
+     * bound. Both are far below 104 MB.
      *
-     * Keep in sync with `MAX_UPLOAD_REQUEST_BYTES`; `lib/file-upload.test.mjs`
-     * asserts this value exceeds it, and `lib/image-attachments.test.mjs`
-     * asserts the image budget still fits.
+     * File uploads are deliberately **not** in that set: their limit is 10 GiB
+     * (`MAX_UPLOAD_FILE_BYTES`), which no in-memory clone can carry. The bytes
+     * go to `PUT /upload/<token>` instead — a path outside this matcher that
+     * streams `request.body` to disk (`app/upload/[token]/route.ts`), with the
+     * authorization minted through the proxy. `lib/file-upload.test.mjs` pins
+     * both halves: the upload path is not covered by the matcher, and this
+     * ceiling still exceeds the proxied agent limit.
      */
     proxyClientMaxBodySize: "104mb",
   },

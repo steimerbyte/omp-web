@@ -3,24 +3,29 @@ import fs from "fs";
 import path from "path";
 
 /**
- * Upload limits, enforced by the route itself.
+ * The one upload size limit, enforced by the route that accepts the bytes.
  *
- * They live here rather than in the route because they are part of one
- * contract with `experimental.proxyClientMaxBodySize` in `next.config.ts`, and
- * a test has to compare the two. The transport cannot be the rejecting layer:
- * Next ends its body clone silently above that size instead of refusing
- * (`next/dist/server/body-streams.js`, `cloneBodyStream`), so a route that let
- * the transport decide would receive a body cut in the middle of a part.
- * Measured on a production build with the old 32 MB ceiling: a 40 MB multipart
- * upload answered HTTP 500 `FormData parse error missing final boundary`.
+ * It is 10 GiB, and the reason it is not enforced on `/api/**` is the proxy:
+ * `experimental.proxyClientMaxBodySize` in `next.config.ts` clones the body of
+ * every request `proxy.ts` matches into memory and ends that clone silently
+ * once the ceiling is passed (`next/dist/server/body-streams.js`,
+ * `cloneBodyStream`) — measured at +100 MB RSS for a 100 MB POST. A 10 GiB
+ * limit behind that clone is a 10 GiB buffer, so the bytes go to
+ * `PUT /upload/<token>` (`app/upload/[token]/route.ts`) instead: a path
+ * outside the proxy matcher that streams `request.body` into a sibling temp
+ * file of the destination and only then renames it into place. The PUT is
+ * authorized by a single-use ticket minted through the proxy by
+ * `POST /api/files/**?type=upload-ticket`, so the identity still comes from
+ * `proxy.ts` alone.
  *
- * The ceiling therefore has to sit strictly above `MAX_UPLOAD_REQUEST_BYTES`,
- * which makes truncation unreachable for any body this route accepts.
+ * `lib/file-upload-client.ts` mirrors the number so the browser refuses before
+ * a byte is sent; `lib/file-upload.test.mjs` asserts that the streaming path
+ * is not covered by the proxy matcher.
  */
-export const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
-export const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
-// Multipart boundaries and headers are not file bytes, but must be bounded too.
-export const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
+export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 ** 3;
+
+/** The same limit as text, so rejection messages and the check cannot drift. */
+export const MAX_UPLOAD_LABEL = "10 GB";
 
 export const UPLOAD_CONFLICT_STRATEGIES = ["error", "overwrite", "skip"] as const;
 export type UploadConflictStrategy = typeof UPLOAD_CONFLICT_STRATEGIES[number];
@@ -80,34 +85,39 @@ export function inspectUploadTargets(directory: string, fileNames: string[]): Up
 }
 
 /**
- * Write one uploaded file, replacing an existing target atomically.
+ * The sibling temp file the streamed body lands in.
+ *
+ * Same directory as the target on purpose: `rename`/`link` must not cross a
+ * filesystem boundary, or the commit stops being atomic.
+ */
+export function uploadTempPath(directory: string, fileName: string): string {
+  return path.join(directory, `.${fileName}.${randomUUID()}.upload`);
+}
+
+/**
+ * Put a fully received upload in place, replacing an existing target atomically.
  *
  * The previous implementation deleted the target and then wrote it. Anything
  * that made the write fail — ENOSPC, a read-only filesystem, or a full disk —
  * therefore destroyed the old file and left nothing behind, while the response
- * could only report "error". Here the bytes go to a sibling temp file that is
- * put in place in one step, so a failure anywhere before that step leaves the
- * old file exactly as it was and leaves no half-written file under the target
- * name either.
+ * could only report "error". Here the bytes were streamed to a sibling temp
+ * file first and are put in place in one step, so a failure anywhere before
+ * this call leaves the old file exactly as it was and leaves no half-written
+ * file under the target name either.
  *
  * For a fresh name the temp file is `link`ed rather than renamed: link fails
  * with EEXIST if the name was taken in the meantime, which is the guarantee
  * the old `flag: "wx"` gave, without the window in which the name was claimed
  * and then written.
  *
- * The temp file takes the target's mode when replacing one, so overwriting a
- * 0755 script does not quietly strip its +x.
+ * The file takes the target's mode when replacing one, so overwriting a 0755
+ * script does not quietly strip its +x.
  */
-export function writeUploadedFileAtomicSync(
+export function commitUploadedTempFile(
+  tempPath: string,
   destination: string,
-  bytes: Buffer,
   replacing: boolean,
 ): void {
-  const tempPath = path.join(
-    path.dirname(destination),
-    `.${path.basename(destination)}.${randomUUID()}.upload`,
-  );
-
   // A fresh upload gets the usual umask-derived mode; a replacement keeps the
   // mode of the file it takes the place of.
   let mode = 0o666 & ~process.umask();
@@ -121,9 +131,8 @@ export function writeUploadedFileAtomicSync(
   }
 
   try {
-    fs.writeFileSync(tempPath, bytes, { flag: "wx", mode });
-    // writeFileSync masks `mode` with the umask again, so an inherited mode
-    // that is more permissive than the umask would arrive weakened.
+    // The temp file was created with the umask-derived mode, so an inherited
+    // mode that is more permissive than the umask would arrive weakened.
     if (replacing) fs.chmodSync(tempPath, mode);
     if (replacing) {
       fs.renameSync(tempPath, destination);

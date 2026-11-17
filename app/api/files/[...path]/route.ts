@@ -35,18 +35,16 @@ import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import {
   MAX_UPLOAD_FILE_BYTES,
-  MAX_UPLOAD_REQUEST_BYTES,
-  MAX_UPLOAD_TOTAL_BYTES,
+  MAX_UPLOAD_LABEL,
   inspectUploadTargets,
   parseUploadConflictStrategy,
   validateUploadFileNames,
-  writeUploadedFileAtomicSync,
 } from "@/lib/file-upload";
-import {
-  parseFormDataWithinLimit,
-  RequestBodyTooLargeError,
-  RequestBodyTruncatedError,
-} from "@/lib/bounded-form-data";
+import { RequestBodyTooLargeError, readJsonBodyWithinLimit } from "@/lib/request-body";
+import { mintUploadTicket } from "@/lib/upload-tickets";
+
+/** A ticket names one file and its size; anything larger is not a ticket. */
+const MAX_UPLOAD_TICKET_BYTES = 16 * 1024;
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -213,7 +211,7 @@ export async function POST(
       return NextResponse.json(inspectUploadTargets(directory, fileNames));
     }
 
-    if (type !== "upload") {
+    if (type !== "upload-ticket") {
       return NextResponse.json({ error: "Invalid upload request type" }, { status: 400 });
     }
 
@@ -222,94 +220,69 @@ export async function POST(
       return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
     }
 
-    let formData: FormData;
+    // Minting a ticket is the authenticated half of an upload: the identity
+    // arrives as a header from `proxy.ts`, and this is where the directory,
+    // the write boundary and the conflict are settled. The bytes themselves are
+    // then PUT to `/upload/<token>`, which streams them to disk — see
+    // `MAX_UPLOAD_FILE_BYTES` in `lib/file-upload.ts` for why they cannot
+    // travel through the proxy.
+    let ticketRequest: unknown;
     try {
-      formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
+      ticketRequest = await readJsonBodyWithinLimit(request, MAX_UPLOAD_TICKET_BYTES);
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
-        return NextResponse.json({
-          error: `Uploads must total ${MAX_UPLOAD_TOTAL_BYTES / (1024 * 1024)}MB or less`,
-        }, { status: 413 });
+        return NextResponse.json({ error: "Upload ticket request is too large" }, { status: 413 });
       }
-      if (error instanceof RequestBodyTruncatedError) {
-        // The body was cut by the transport, not by this route's own limit:
-        // `experimental.proxyClientMaxBodySize` ends the clone silently instead
-        // of refusing it, so the declared length is the only evidence left of
-        // what the caller meant to send. Reported as 413 because that is what
-        // happened — the payload was too large for the transport — and never
-        // as 500, which would say "the server broke".
-        return NextResponse.json({
-          error: `Upload request exceeded the ${MAX_UPLOAD_REQUEST_BYTES / (1024 * 1024)}MB transport limit `
-            + `(${error.received} of ${error.declared} bytes arrived); upload fewer or smaller files`,
-        }, { status: 413 });
-      }
-      throw error;
+      return NextResponse.json({ error: "Expected a JSON body" }, { status: 400 });
     }
-    const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
-    if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
-      return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
+
+    const fileName = (ticketRequest as { name?: unknown } | null)?.name;
+    const declaredSize = (ticketRequest as { size?: unknown } | null)?.size;
+    if (
+      typeof fileName !== "string"
+      || typeof declaredSize !== "number"
+      || !Number.isSafeInteger(declaredSize)
+      || declaredSize < 0
+    ) {
+      return NextResponse.json({ error: "Expected a file name and its size in bytes" }, { status: 400 });
     }
-    if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
-      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
-    }
-    const fileNames = files.map((file) => file.name);
-    const validationError = validateUploadFileNames(fileNames);
+    const validationError = validateUploadFileNames([fileName]);
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
-
-    const inspection = inspectUploadTargets(directory, fileNames);
-    if (strategy === "error" && inspection.conflicts.length > 0) {
-      return NextResponse.json({
-        error: "One or more files already exist",
-        conflicts: inspection.conflicts,
-        nonReplaceable: inspection.nonReplaceable,
-      }, { status: 409 });
+    if (declaredSize > MAX_UPLOAD_FILE_BYTES) {
+      return NextResponse.json({ error: `Files must be ${MAX_UPLOAD_LABEL} or smaller` }, { status: 413 });
     }
 
-    const conflictSet = new Set(inspection.conflicts);
-    const nonReplaceableSet = new Set(inspection.nonReplaceable);
-    const uploaded: string[] = [];
-    const skipped: string[] = [];
-    const errors: Array<{ name: string; error: string }> = [];
-
-    for (const file of files) {
-      const destination = path.join(directory, file.name);
-      if (conflictSet.has(file.name) && strategy === "skip") {
-        skipped.push(file.name);
-        continue;
+    const inspection = inspectUploadTargets(directory, [fileName]);
+    const conflicts = inspection.conflicts.includes(fileName);
+    if (conflicts) {
+      if (strategy === "skip") {
+        return NextResponse.json({ uploaded: [], skipped: [fileName], errors: [] });
       }
-      if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
-        errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
-        continue;
+      if (inspection.nonReplaceable.includes(fileName)) {
+        return NextResponse.json({
+          uploaded: [],
+          skipped: [],
+          errors: [{ name: fileName, error: "Cannot replace a directory or symbolic link" }],
+        }, { status: 207 });
       }
-
-      let bytes: Buffer;
-      try {
-        bytes = Buffer.from(await file.arrayBuffer());
-      } catch (error) {
-        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-        continue;
-      }
-
-      // The target is replaced, never deleted and then rewritten. `rename` over
-      // an existing path is atomic, so the file is either the old one or the new
-      // one — never absent. Deleting first would lose the old content outright
-      // whenever the write then fails (ENOSPC, EROFS, or the `wx` collision
-      // below), and the response can only report the failure, not the data.
-      const replacing = conflictSet.has(file.name);
-      try {
-        writeUploadedFileAtomicSync(destination, bytes, replacing);
-        uploaded.push(file.name);
-      } catch (error) {
-        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+      if (strategy === "error") {
+        return NextResponse.json({
+          error: "One or more files already exist",
+          conflicts: [fileName],
+          nonReplaceable: inspection.nonReplaceable,
+        }, { status: 409 });
       }
     }
 
-    return NextResponse.json(
-      { uploaded, skipped, errors },
-      { status: errors.length > 0 ? 207 : 200 },
-    );
+    const token = mintUploadTicket({
+      directory,
+      fileName,
+      size: declaredSize,
+      replacing: conflicts,
+    });
+    return NextResponse.json({ token });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }

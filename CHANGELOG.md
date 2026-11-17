@@ -7,6 +7,21 @@ upstream line — see the Provenance section in the README.
 
 ### Neu
 
+- **Datei-Uploads gehen bis 10 GB, ohne den Server-Speicher zu füllen.** Die
+  Grenze von Composer und Dateiablage steigt von 8 MB auf 10 GiB
+  (`MAX_UPLOAD_FILE_BYTES`/`MAX_CHAT_UPLOAD_BYTES`, Meldung „10 GB“), und der
+  Body läuft dafür nicht mehr durch den Proxy:
+  `experimental.proxyClientMaxBodySize` klont jeden Body in den Speicher und
+  schneidet ihn oberhalb der Grenze stillschweigend ab (gemessen: +100 MB RSS
+  für einen 100-MB-POST). Ein Upload besteht jetzt aus einem Ticket
+  (`POST /api/files/**?type=upload-ticket`, durch den Proxy, mit Identität,
+  Schreibgrenze und Konfliktprüfung wie bisher) und einem Streaming-PUT
+  `/upload/<token>` außerhalb des Matchers: er schreibt die Bytes chunkweise in
+  eine Nachbardatei, bricht bei 10 GiB + 1 Byte ab, löscht sie bei jedem Fehler
+  und hängt sie erst am Ende atomar ein. Das Multipart-Parsing im Speicher ist
+  damit entfallen; das 30-MiB-Body-Limit der Agent-Routen
+  (`readJsonBodyWithinLimit`) bleibt unverändert.
+
 - **Die Bewegung der Oberfläche folgt einer benannten Taktung statt verstreuter
   Zahlen.** `components/motion/animations.ts` führt drei Kurven (Standard für
   Hover und Zustandswechsel, betont für Panels und Dialoge, Abgang für alles,
@@ -129,7 +144,10 @@ upstream line — see the Provenance section in the README.
   Sitzung, mit Trust-Streifen): ob jedes bedienbare Element der Kopfleiste,
   der Composer-Werkzeugleiste und der Seitenleisten-Aktionen an seinem eigenen
   Mittelpunkt getroffen wird (Anfang, Zielmitte und Maximalposition der
-  Rollachse), ob an der Maximalposition ein anderes bedienbares Element
+  Rollachse), ob auf dem Telefon der Schubladen-Knopf die linke Ecke der
+  Leiste hält (kleinstes `left`, höchstens 8 px Abstand zur Leistenkante — ein
+  `order` an einem Geschwister verschiebt ihn, ohne die Erreichbarkeit zu
+  brechen), ob an der Maximalposition ein anderes bedienbares Element
   darüberliegt, welcher Vorfahr mit `overflow` das Ziel abschneidet, ob jedes
   `aria-haspopup`-Popover vollständig im Viewport liegt und an seiner Mitte
   getroffen wird, ob die Dokumentbreite die Fensterbreite überschreitet, ob
@@ -144,6 +162,15 @@ upstream line — see the Provenance section in the README.
   `bun run verify` — er braucht einen Browser und einen eigenen Dev-Server.
 
 ### Behoben
+
+- **Auf dem Telefon nahm der CPU/RAM-Badge den ersten Platz der Kopfleiste
+  ein und schob den Seitenleisten-Knopf aus der linken Ecke.** Der Badge steht
+  per `order: -1` vor den Werkzeugen, der Schalter hatte keinen eigenen Wert —
+  in der Flex-Zeile begann `scrollLeft: 0` deshalb beim Badge. Der Schalter
+  trägt jetzt `order: -2` (Badge `-1`, beide `0` auf dem Desktop): im Browser
+  auf 390×844 gemessen wanderte seine linke Kante von 136,25 px auf 0 px, der
+  Badge von 0 auf 36 px, `document.elementFromPoint(12, 18)` trifft den
+  Schalter, und die Seitenleiste öffnet sich mit dem Klick in der Ecke.
 
 - **Die Terminal-Geometrie passte nicht zum Panel, und ein erneut geöffnetes
   Terminal zeigte nur den Cursor.** Der Spawn setzt die PTY-Größe jetzt selbst

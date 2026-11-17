@@ -126,6 +126,14 @@ function installFetch({ uploadCheck = "ok", files = GIT_FILES } = {}) {
       if (uploadCheck === "error") return { ok: false, status: 403, json: async () => ({ error: "No permission" }) };
       return { ok: true, status: 200, json: async () => ({}) };
     }
+    if (href.includes("type=upload-ticket")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ token: "tok-1" }),
+        text: async () => JSON.stringify({ token: "tok-1" }),
+      };
+    }
     if (href.includes("type=meta")) return { ok: true, status: 200, json: async () => ({ size: 1536, mime: "text/plain", language: "text" }) };
     return { ok: true, status: 200, json: async () => ({}) };
   };
@@ -143,6 +151,9 @@ class FakeXHR {
   open(method, url) {
     this.method = method;
     this.url = url;
+  }
+  setRequestHeader(name, value) {
+    this.headers = { ...(this.headers ?? {}), [name]: value };
   }
   send(body) {
     this.body = body;
@@ -523,17 +534,18 @@ test("Upload ueber den Handle: Fehler mit Dismiss, dann Erfolg mit Zusammenfassu
 
   const failed = await deliver(new File(["x"], "notes.txt", { type: "text/plain" }), { status: 500, body: "boom" });
   assert.equal(failed.length, 1);
-  assert.equal(failed[0].method, "POST");
-  assert.match(failed[0].url, /type=upload&conflict=error$/);
-  assert.ok(failed[0].body instanceof FormData);
-  assert.equal(failed[0].body.get("files").name, "notes.txt");
-  assert.match(container.textContent, /boom/);
-  const dismissError = container.querySelector('[title="Dismiss error"]');
+  assert.equal(failed[0].method, "PUT", "die Bytes gehen als Streaming-PUT an /upload/<token>");
+  assert.equal(failed[0].url, "/upload/tok-1");
+  assert.equal(failed[0].body.name, "notes.txt");
+  // Der Fehler eines einzelnen PUT steht als Zeile in der Upload-Zusammenfassung;
+  // die Meldung selbst haengt als Titel daran (die Zeile ist zu schmal fuer sie).
+  assert.equal(container.querySelector('[title="boom"]')?.textContent, "notes.txt");
+  const dismissError = container.querySelector('[title="Dismiss upload results"]');
   assert.ok(dismissError);
   await act(async () => {
     dismissError.click();
   });
-  assert.doesNotMatch(container.textContent, /boom/);
+  assert.equal(container.querySelector('[title="boom"]'), null);
 
   await deliver(new File(["y"], "notes.txt", { type: "text/plain" }), { status: 200, body: { uploaded: ["notes.txt"], skipped: [], errors: [] } });
   assert.match(container.textContent, /notes\.txt/);

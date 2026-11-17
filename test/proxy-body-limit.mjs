@@ -6,8 +6,10 @@ import { readFileSync } from "node:fs";
  * The Next config loader cannot be trusted to resolve `lib/` imports, so the
  * value is read from the source text here instead of imported. Shared because
  * two things assert against it from different directions: the image budget is a
- * *lower* bound (its base64 expansion must fit) and the upload route's request
- * limit is an *upper* bound (the route's own 413 has to fire first).
+ * *lower* bound (its base64 expansion must fit) and the agent prompt limit is
+ * an *upper* bound (the route's own 413 has to fire first). File uploads are
+ * deliberately outside both: their bytes go to `/upload/<token>`, a path the
+ * proxy matcher does not cover (`lib/file-upload.test.mjs`).
  */
 export function readConfiguredProxyBodyLimit() {
   const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");

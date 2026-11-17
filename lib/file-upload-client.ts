@@ -4,11 +4,13 @@ import { encodeFilePathForApi } from "./file-paths";
 /**
  * Der Client-Teil des Dateianhaengs im Composer.
  *
- * Der Upload selbst ist vorhanden: `POST /api/files/[...path]?type=upload`
- * schreibt multipart in das Verzeichnis aus dem URL-Pfad und prueft es gegen
- * Read- **und** Schreib-Allowlist (`getUploadDirectory`, doppeltes `realpath`).
- * Hier steht nur, was der Composer davon braucht: die URL, die Strategie und
- * die Uebersetzung der Antwort in Chip oder Meldung.
+ * Ein Upload besteht aus zwei Requests: `POST /api/files/[...path]?type=upload-ticket`
+ * (durch den Proxy, mit Identitaet) prueft Zielverzeichnis, Schreib-Allowlist
+ * und Konflikt und gibt ein Einmal-Ticket zurueck; `PUT /upload/<token>`
+ * schickt die Bytes. Der zweite Request liegt bewusst ausserhalb des
+ * Proxy-Matchers, weil der Proxy jeden Body in den Speicher klont und oberhalb
+ * von `proxyClientMaxBodySize` abschneidet statt abzulehnen — festgehalten in
+ * `lib/file-upload.ts` (`MAX_UPLOAD_FILE_BYTES`).
  *
  * ### Warum `conflict=skip` und nicht `overwrite` oder `error`
  *
@@ -23,19 +25,18 @@ import { encodeFilePathForApi } from "./file-paths";
  */
 
 /**
- * 8 MB je Datei, clientseitig geprueft.
+ * 10 GB je Datei, clientseitig geprueft.
  *
- * Die Route erlaubt 25 MB, aber der Next-Proxy klont den Body bei
- * `proxyClientMaxBodySize` (32 MB) und **schneidet** oberhalb davon ab, statt
- * abzulehnen — ein groesserer Upload endet deshalb nicht in einer 413 der
- * Route, sondern in einem abgeschnittenen Multipart-Body. Unter dieser Grenze
- * bleibt der Fehlerfall eine erklaerte Meldung; die Servergrenze bleibt die
- * zweite, nicht die erste Verteidigung.
+ * Dieselbe Zahl wie `MAX_UPLOAD_FILE_BYTES` in `lib/file-upload.ts`, und aus
+ * demselben Grund vor dem Request: ein zu grosser Body soll eine erklaerte
+ * Meldung ergeben, bevor ein Byte unterwegs ist. Die Servergrenze bleibt die
+ * zweite, nicht die erste Verteidigung — die Route lehnt dieselbe Groesse mit
+ * 413 ab, das Ticket wird fuer mehr gar nicht erst ausgestellt.
  */
-export const MAX_CHAT_UPLOAD_BYTES = 8 * 1024 * 1024;
+export const MAX_CHAT_UPLOAD_BYTES = 10 * 1024 ** 3;
 
 /** Dieselbe Grenze als Text, damit Meldung und Pruefung nicht getrennt altern. */
-export const MAX_CHAT_UPLOAD_LABEL = "8 MB";
+export const MAX_CHAT_UPLOAD_LABEL = "10 GB";
 
 export interface UploadedFile {
   /** Der Name auf der Platte (die Route vergibt bei `skip` keinen neuen). */
@@ -53,55 +54,91 @@ export type UploadOutcome =
 /**
  * Eine Datei in den Arbeitsordner der Sitzung legen.
  *
- * Ein Request je Datei: so bleibt die Groessengrenze eine Grenze pro Datei,
- * und ein Fehlschlag trifft nicht die anderen Anhaenge. Der Dateiname kommt
- * aus der Antwort der Route, nicht aus einer Vermutung des Clients.
+ * Zwei Requests je Datei: ein Ticket, dann die Bytes. Der Fehlschlag eines
+ * Uploads trifft die anderen Anhaenge nicht. Der Dateiname in der Antwort ist
+ * der des Tickets — der Client raet keinen.
  */
 export async function uploadFileToCwd(cwd: string, file: File): Promise<UploadOutcome> {
-  // Vor dem Request, nicht danach: die Proxy-Grenze (s.o.) macht aus einem zu
-  // grossen Body einen abgeschnittenen, und der Fehler waere dann nicht mehr
-  // erklaerbar.
+  // Vor dem Request, nicht danach: die Meldung soll ohne Uebertragung kommen.
   if (file.size > MAX_CHAT_UPLOAD_BYTES) {
     return { ok: false, kind: "tooLarge", error: `Files must be ${MAX_CHAT_UPLOAD_LABEL} or smaller` };
   }
 
-  const form = new FormData();
-  form.append("files", file, file.name);
-
   let response: Response;
   try {
     response = await fetch(
-      `/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=skip`,
-      { method: "POST", body: form },
+      `/api/files/${encodeFilePathForApi(cwd)}?type=upload-ticket&conflict=skip`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, size: file.size }),
+      },
     );
   } catch (error) {
     return { ok: false, kind: "failed", error: error instanceof Error ? error.message : String(error) };
   }
 
-  const body = await response.json().catch(() => null) as
-    | { uploaded?: string[]; skipped?: string[]; errors?: Array<{ name: string; error: string }>; error?: string }
-    | null;
+  type UploadReply = {
+    token?: string;
+    uploaded?: string[];
+    skipped?: string[];
+    errors?: Array<{ name: string; error: string }>;
+    error?: string;
+  };
+  const mint = await jsonOrNull(response) as UploadReply | null;
 
   if (!response.ok) {
-    const kind = response.status === 413
-      ? "tooLarge"
-      : response.status === 400 || response.status === 403 || response.status === 404 || response.status === 409
-        ? "forbidden"
-        : "failed";
-    return { ok: false, kind, error: body?.error ?? `HTTP ${response.status}` };
+    return { ok: false, kind: failureKind(response.status), error: mint?.error ?? `HTTP ${response.status}` };
+  }
+  if (mint?.skipped?.includes(file.name)) {
+    return { ok: false, kind: "conflict", name: file.name, error: "A file with that name already exists" };
+  }
+  if (typeof mint?.token !== "string") {
+    return { ok: false, kind: "failed", error: mint?.errors?.[0]?.error ?? "The server sent no upload ticket" };
   }
 
+  let uploaded: Response;
+  try {
+    // `body: file` uebertraegt den Blob, statt ihn im Speicher zu kopieren —
+    // und genau dafuer ist die Route ein Streaming-PUT.
+    uploaded = await fetch(`/upload/${encodeURIComponent(mint.token)}`, {
+      method: "PUT",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    });
+  } catch (error) {
+    return { ok: false, kind: "failed", error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const body = await jsonOrNull(uploaded) as UploadReply | null;
+
+  if (!uploaded.ok) {
+    return { ok: false, kind: failureKind(uploaded.status), error: body?.error ?? `HTTP ${uploaded.status}` };
+  }
   if (body?.errors?.length) {
     return { ok: false, kind: "failed", error: body.errors[0]?.error ?? "The file could not be written" };
-  }
-  if (body?.skipped?.includes(file.name)) {
-    return { ok: false, kind: "conflict", name: file.name, error: "A file with that name already exists" };
   }
   if (!body?.uploaded?.includes(file.name)) {
     return { ok: false, kind: "failed", error: "The server reported no uploaded file" };
   }
 
   return { ok: true, file: { name: file.name, size: file.size, path: file.name } };
+}
+
+/** Ein leerer oder kaputter Body ist kein Grund, den ganzen Upload zu werfen. */
+async function jsonOrNull(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Eine 4xx nennt einen Grund, den der Composer erklaeren kann; alles andere ist ein Fehler. */
+function failureKind(status: number): "tooLarge" | "forbidden" | "failed" {
+  if (status === 413) return "tooLarge";
+  if (status === 400 || status === 403 || status === 404 || status === 409) return "forbidden";
+  return "failed";
 }
 
 /** Die `@`-Erwaehnungen der Anhaenge, in der Syntax des Composer-Menues. */
@@ -161,7 +198,7 @@ function messageMentionsFile(message: string, filePath: string): boolean {
   return false;
 }
 
-/** Groesse fuer den Chip: „820 B", „12 kB", „3,4 MB" ohne Nachkommastellen zu viel. */
+/** Groesse fuer den Chip: „820 B", „12 kB", „3,4 MB", „1,2 GB" ohne Nachkommastellen zu viel. */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) {
@@ -169,5 +206,9 @@ export function formatFileSize(bytes: number): string {
     return `${kilobytes < 10 ? kilobytes.toFixed(1) : Math.round(kilobytes)} kB`;
   }
   const megabytes = bytes / (1024 * 1024);
-  return `${megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes)} MB`;
+  if (megabytes < 1024) {
+    return `${megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes)} MB`;
+  }
+  const gigabytes = megabytes / 1024;
+  return `${gigabytes < 10 ? gigabytes.toFixed(1) : Math.round(gigabytes)} GB`;
 }

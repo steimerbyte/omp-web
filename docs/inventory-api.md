@@ -463,67 +463,93 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 - **Ort**: `app/api/files/[...path]/route.ts:432-523`, `lib/file-access.ts`
   (`resolveAuthorizedPath`, `openAuthorizedFile`)
 
-### Datei hochladen — `POST` `/api/files/**`
+### Datei hochladen — `POST /api/files/**?type=upload-ticket` + `PUT /upload/<token>`
 
-- **Kann**: Multipart-Upload in das Verzeichnis aus dem URL-Pfad. Grenzen: 25 MB
-  pro Datei, 100 MB gesamt, 101 MB für den gesamten Request inklusive
-  Multipart-Boundaries und -Header (`MAX_UPLOAD_FILE_BYTES`,
-  `MAX_UPLOAD_TOTAL_BYTES`, `MAX_UPLOAD_REQUEST_BYTES` in `lib/file-upload.ts`).
-  Diese drei Grenzen sind **tatsächlich durchsetzbar**: `MAX_UPLOAD_REQUEST_BYTES`
-  liegt mit 106 954 752 Bytes strikt unter `experimental.proxyClientMaxBodySize`
-  (104 MB = 109 051 904 Bytes), Antwort ist ein 413 mit eigener Meldung.
-- **Das Transportlimit ist keine Ablehnung.** `proxyClientMaxBodySize` in
-  `next.config.ts` ist eine Klon-Grenze, kein Reject: Next beendet den Body-Klon
-  stillschweigend (`node_modules/next/dist/server/body-streams.js`,
-  `cloneBodyStream`, pusht `null` in beide Passthroughs), der Handler liest einen
-  mitten im Teil endenden Body. Gemessen am Produktionsbuild mit der alten
-  32-MB-Grenze: ein roher 40-MB-POST kam als 33 391 238 von 41 943 040 Bytes an;
-  ein 40-MB-Multipart-Upload endete als HTTP **500**
-  `FormData parse error missing final boundary`; ein 20-MB-Multipart-Upload kam
-  unversehrt an (sha256 der abgelegten Datei gleich der Quelle). Deshalb steht die
-  Klon-Grenze **über** der Route-Grenze statt darunter, und
-  `parseFormDataWithinLimit` meldet einen zu kurzen Body als
-  `RequestBodyTruncatedError` → 413 statt als Parserfehler → 500.
-- **Identität**: `identity` wird in die Hilfsfunktion **durchgereicht**
-  (`getUploadDirectory(segments, getRequestIdentity(request.headers))`), nicht
-  dort neu gelesen — die Entscheidung kommt so aus genau einer Stelle, und nichts
-  downstream kann sie erweitern.
-- **Darf nicht**: (a) Die **Leser**-Roots nicht als Schreibfreigabe benutzen — sie
+Ein Upload besteht aus zwei Requests, und das ist keine Aufteilung aus Ordnungsliebe:
+
+1. **Ticket** — `POST /api/files/<verzeichnis>?type=upload-ticket&conflict=<strategie>`
+   mit JSON `{ "name": "report.csv", "size": 1234 }`. Dieser Request läuft durch
+   `proxy.ts`, die Identität kommt wie überall aus dessen Headern.
+   `getUploadDirectory` prüft Leser- **und** Schreiber-Allowlist (inklusive
+   `realpath` beider Seiten), `validateUploadFileNames` den Namen,
+   `MAX_UPLOAD_FILE_BYTES` die Größe, `inspectUploadTargets` den Konflikt.
+   Antwort: `{ token }`, bei `skip` ein `skipped`-Eintrag, bei `error` 409 mit
+   `conflicts`, bei einem nicht ersetzbaren Ziel (Verzeichnis/Symlink) 207 mit
+   `errors`. Ein Ticket ist **einmalig** und zehn Minuten gültig.
+2. **Bytes** — `PUT /upload/<token>` mit dem rohen Datei-Body. Diese Route liegt
+   **außerhalb** des Proxy-Matchers (`/api/:path*`); das Ticket ersetzt dort die
+   Identität. Der Body wird chunkweise in eine Nachbardatei
+   `.<name>.<uuid>.upload` im Zielverzeichnis geschrieben (gleiche Partition, damit
+   der Commit atomar bleibt), die Bytes werden mitgezählt, und erst wenn die
+   angekündigte Anzahl vollständig angekommen ist, wird die Datei per
+   `rename` (vorhandenes Ziel) bzw. `link`+`unlink` (frischer Name) eingehaengt.
+   Jeder Abbruch — zu groß, zu kurz, I/O-Fehler, Verbindungsende — löscht die
+   Nachbardatei; das Ziel bleibt in jedem Fall unangetastet.
+
+- **Grenze**: **10 GiB** je Datei (`MAX_UPLOAD_FILE_BYTES`, `MAX_UPLOAD_LABEL` in
+  `lib/file-upload.ts`), serverseitig beim Ticket und clientseitig in
+  `lib/file-upload-client.ts` geprüft. Ein größeres Ticket ist 413
+  (`Files must be 10 GB or smaller`), ein PUT über der Ticketgröße ebenfalls 413.
+  Ein PUT, der vor der angekündigten Größe endet, ist 400 — es wird nichts
+  geschrieben.
+- **Warum nicht über den Proxy.** `experimental.proxyClientMaxBodySize` in
+  `next.config.ts` ist eine Klon-Grenze, kein Reject: Next klont den Body jedes
+  Requests, den `proxy.ts` matcht, **in den Speicher**
+  (`node_modules/next/dist/server/body-streams.js`, `cloneBodyStream`) und beendet
+  den Klon oberhalb der Grenze stillschweigend (die Route liest einen zu kurzen
+  Body). Gemessen: ein 100-MB-POST durch den Proxy hob den RSS des Servers um
+  ~100 MB, derselbe POST an die ungematchte Streaming-Route gar nicht; ein
+  40-MB-Multipart-Upload endete am 32-MB-Klon als HTTP **500**
+  `FormData parse error missing final boundary`. Ein 10-GiB-Limit hinter diesem
+  Klon wäre ein 10-GiB-Puffer — deshalb streamt die Byte-Route am Proxy vorbei.
+- **Trust-Grenze der Byte-Route**: Host-Allowlist und Origin/Sec-Fetch-Site
+  prüft sie selbst über dasselbe `isApiRequestAllowed` wie jede Route hinter dem
+  Proxy; **authentifiziert ist sie nicht** — die Autorisierung ist das Ticket
+  (`crypto.randomUUID()`, 122 Bit, einmalig, zehn Minuten, ein Ziel).
+  Ein geleaktes Ticket ist damit eine Ein-Schreib-Capability auf genau eine
+  Datei; deshalb steht es nur im Antwort-Body des Mints und als PUT-Pfad, in
+  keinem Log und keinem Header. Ein **Plattenplatz-Check existiert nicht**
+  (kein `statfs`): die Route streamt, bis das Dateisystem ENOSPC/EDQUOT meldet,
+  löscht dann die Nachbardatei, und das Ziel bleibt. Die Platte ist die einzige
+  Obergrenze für die Zahl der Tickets, die landen.
+- **Identität**: `identity` wird in `getUploadDirectory` **durchgereicht**
+  (`getRequestIdentity(request.headers)`), nicht dort neu gelesen — die
+  Entscheidung kommt aus genau einer Stelle. Die Byte-Route liest keine Identität:
+  sie kennt nur das Ticket, dessen Zielverzeichnis und Konflikt bereits
+  entschieden sind.
+- **Darf nicht**: (a) Die **Leser**-Roots als Schreibfreigabe benutzen — sie
   enthalten für einen Admin `/`; ein Upload braucht zusätzlich
   `isWritePathAllowed`, dessen Menge absichtlich schmaler ist und das
   admin-only-`/` nie erbt. (b) Symlinks auflösen, **bevor** geschrieben wird, und
-  zwar auf beiden Seiten (`realpathSync` des Zielverzeichnisses und aller Roots):
-  ein Symlink innerhalb einer erlaubten Root darf das Upload-Ziel nicht nach
-  draußen umleiten. (c) Alle Prüfungen **vor** der ersten angenommenen Byte —
-  nachdem die Schleife geschrieben hat, ist der Schaden da. (d) Existierende
-  Dateien nicht still überschreiben; `type=` und die Konfliktstrategie werden über
-  `inspectUploadTargets`, `parseUploadConflictStrategy` und
-  `validateUploadFileNames` ausgewertet. (e) Das Zielverzeichnis muss ein
-  existierendes Verzeichnis sein, kein Pfad im Leerlauf. (f) Einen gekürzten Body
-  nicht als „fertig" behandeln: die Länge im Stream wird gegen `Content-Length`
-  geprüft, und ein zu kurzer Body schreibt **keine** Datei.
-- **Ort**: `app/api/files/[...path]/route.ts:88-148`, `:180-300`,
-  `lib/file-upload.ts:5-23`, `lib/bounded-form-data.ts:1-76`
+  zwar auf beiden Seiten (`realpathSync` des Zielverzeichnisses und aller Roots).
+  (c) Alle Prüfungen **vor** der ersten angenommenen Byte — nachdem geschrieben
+  wurde, ist der Schaden da. (d) Existierende Dateien nicht still überschreiben;
+  der Konflikt wird beim Ticket entschieden. (e) Das Zielverzeichnis muss ein
+  existierendes Verzeichnis sein. (f) Einen gekürzten Body nicht als „fertig"
+  behandeln: weicht `Content-Length` von der Ticketgröße ab, ist der Request 400
+  ohne einen einzigen geschriebenen Byte; endet der Stream zu früh, wird die
+  Nachbardatei gelöscht.
+- **Ort**: `app/api/files/[...path]/route.ts:186-295`, `app/upload/[token]/route.ts`,
+  `lib/upload-stream.ts`, `lib/upload-tickets.ts`, `lib/file-upload.ts`
 
-### Anhang im Composer — derselbe `POST`, mit `conflict=skip`
+### Anhang im Composer — Ticket + Streaming-PUT, mit `conflict=skip`
 
-Die Papierklammer in `components/ChatInput.tsx` benutzt den Upload oben, sie hat
-keinen eigenen Endpunkt: `POST /api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=skip`
-mit Feld `files`. Geschrieben wird damit **in das Arbeitsverzeichnis der Sitzung**
-selbst — kein Unterordner, also auch kein zweites `mkdir` und kein zweiter
-Fehlerpfad.
+Die Papierklammer in `components/ChatInput.tsx` benutzt denselben Weg, sie hat
+keinen eigenen Endpunkt: erst
+`POST /api/files/${encodeFilePathForApi(cwd)}?type=upload-ticket&conflict=skip`
+mit `{ name, size }`, dann `PUT /upload/<token>` mit der Datei als Body.
+Geschrieben wird damit **in das Arbeitsverzeichnis der Sitzung** selbst — kein
+Unterordner, also auch kein zweites `mkdir` und kein zweiter Fehlerpfad.
 
 - **Konflikt**: `skip` lässt eine gleichnamige Datei unverändert, meldet sie in
   `skipped`, und der Composer zeigt das als Meldung. Es gibt **kein** `rename`:
   die Route kennt nur `error|overwrite|skip`, und ein clientseitig geratener
   Suffix wäre ein Name, den der Agent nicht kennt.
-- **Grenze**: 8 MB je Datei, **clientseitig** geprüft (`lib/file-upload-client.ts`).
-  Die Grenze ist eine Produktentscheidung, keine Notwendigkeit: die Route trägt
-  seit dem Proxy-Fix (siehe oben, `MAX_UPLOAD_REQUEST_BYTES` unter der
-  Klon-Grenze) ihre 25/100/101 MB wirklich, und ein zu großer Body endet als
-  **413** mit eigener Meldung. Für den Composer bleibt es bei 8 MB, weil ein
-  Anhang im Chat etwas anderes ist als eine Dateiablage: er soll in den Prompt
-  passen und nicht minutenlang hochladen.
+- **Grenze**: **10 GB** je Datei, **clientseitig** geprüft
+  (`MAX_CHAT_UPLOAD_BYTES`/`MAX_CHAT_UPLOAD_LABEL` in
+  `lib/file-upload-client.ts`). Dieselbe Zahl setzt die Route durch; der Client
+  prüft vor dem ersten Byte, damit die Meldung ohne Übertragung kommt. Der Chip
+  zeigt die Größe über `formatFileSize` (B/kB/MB/GB).
 - **Agent-Lesbarkeit**: der Chip ist nur eine Referenz; beim Senden hängt der
   Composer `@<name>` an den Prompt, und die SDK löst `@`-Erwähnungen relativ
   zum `cwd` auf und liest die Datei. Ein Zeilenbereich (`@name:12-14`) wird
