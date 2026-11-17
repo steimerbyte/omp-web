@@ -102,6 +102,7 @@ function newsletter(overrides = {}) {
       lastRunAt: "2026-11-17T05:00:00Z",
       lastRunStatus: "ok",
       cron: "0 8 * * *",
+      cwd: null,
     },
     ...overrides,
   };
@@ -149,6 +150,10 @@ async function mount({ newsletters = [newsletter()], handler = null } = {}) {
     if (url === "/api/newsletters/n1/run" && method === "POST") return json({ sessionId: "s9" });
     if (url === "/api/newsletters/n1" && method === "PATCH") return json({ newsletter: newsletter() });
     if (url === "/api/newsletters/n1" && method === "DELETE") return json({ ok: true });
+    // Der Dialog und der Kopf lesen dieselben Ordner wie die geplanten Aufgaben.
+    if (url === "/api/scheduled-settings" && method === "GET") {
+      return json({ defaultCwd: null, home: "/home/alice", folders: ["/home/alice", "/home/alice/work"] });
+    }
     if (url.startsWith("/api/models")) {
       return json({
         modelList: [
@@ -292,6 +297,7 @@ test("the dialog creates a newsletter with topics, schedule and model", async ()
     provider: "test",
     modelId: "m2",
     cron: "15 7 * * 1-5",
+    cwd: null,
   });
   assert.equal(dialog(), null, "der Dialog blieb offen");
   await harness.unmount();
@@ -315,11 +321,57 @@ test("editing prefills the schedule from schedule.cron and sends it back", async
     provider: "test",
     modelId: "m1",
     cron: "0 8 * * *",
+    cwd: null,
   });
 
   await click(button(harness.container, "Edit"));
   await click(button(dialog(), "Cancel"));
   assert.equal(dialog(), null, "Cancel hat den Dialog nicht geschlossen");
+  await harness.unmount();
+});
+
+test("the header shows the workspace of the run, shortened to the home prefix", async () => {
+  const harness = await mount({
+    newsletters: [newsletter({ schedule: { ...newsletter().schedule, cwd: "/home/alice/work" } })],
+  });
+  assert.match(harness.container.textContent, /Working folder: ~\/work/);
+  await harness.unmount();
+});
+
+test("the dialog prefills the stored workspace and sends it back", async () => {
+  const harness = await mount({
+    newsletters: [newsletter({ schedule: { ...newsletter().schedule, cwd: "/home/alice/work" } })],
+  });
+  await click(button(harness.container, "Edit"));
+
+  const select = win.document.querySelector("#newsletter-cwd");
+  assert.ok(select, "die Arbeitsordner-Wahl fehlt");
+  assert.equal(select.value, "/home/alice/work", "der gespeicherte Ordner ist nicht vorbelegt");
+  // Die Ordner des Kontos sind absolut und der Leerwert ist der Standard.
+  assert.deepEqual([...select.querySelectorAll("option")].map((option) => option.value).slice(0, 3), ["", "/home/alice", "/home/alice/work"]);
+
+  await act(async () => {
+    reactProps(win.document.querySelector("form")).onSubmit({ preventDefault() {} });
+  });
+  await settle();
+  const patch = calls.find((call) => call.method === "PATCH");
+  assert.equal(patch.body.cwd, "/home/alice/work");
+  await harness.unmount();
+});
+
+test("choosing the default workspace sends null", async () => {
+  const harness = await mount({
+    newsletters: [newsletter({ schedule: { ...newsletter().schedule, cwd: "/home/alice/work" } })],
+  });
+  await click(button(harness.container, "Edit"));
+  await change(win.document.querySelector("#newsletter-cwd"), "");
+
+  await act(async () => {
+    reactProps(win.document.querySelector("form")).onSubmit({ preventDefault() {} });
+  });
+  await settle();
+  const patch = calls.find((call) => call.method === "PATCH");
+  assert.equal(patch.body.cwd, null, "der Leerwert muss als Loeschung ankommen");
   await harness.unmount();
 });
 

@@ -25,6 +25,7 @@ import {
   type ScheduledTaskPatch,
 } from "@/lib/scheduled-tasks-store";
 import { scheduledTaskErrorResponse } from "@/lib/scheduled-tasks-http";
+import { assertUsableCwd } from "@/lib/scheduled-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +119,10 @@ export async function PATCH(
   const prompt = buildNewsletterPrompt({ id, name, topics });
 
   try {
+    // `cwd` geht durch dieselbe Pruefung wie beim Anlegen. `null` bedeutet
+    // "wieder Voreinstellung" und muss als Loeschung ankommen — deshalb wird
+    // es hier *nicht* zu `undefined` gemacht.
+    const cwd = raw.cwd === undefined ? undefined : assertUsableCwd(raw.cwd, identity);
     const { modelRegistry } = await getOmpRuntime();
     const isKnownModel = (candidate: string, model: string) =>
       modelRegistry.find(candidate, model) !== undefined;
@@ -135,6 +140,7 @@ export async function PATCH(
         ...(raw.thinkingLevel === undefined
           ? {}
           : { thinkingLevel: raw.thinkingLevel as ScheduledTaskPatch["thinkingLevel"] }),
+        ...(raw.cwd === undefined ? {} : { cwd }),
         ...(raw.enabled === undefined ? {} : { enabled: raw.enabled as boolean }),
       }, isKnownModel);
     }
@@ -166,6 +172,7 @@ export async function PATCH(
         ...(raw.thinkingLevel === undefined
           ? {}
           : { thinkingLevel: raw.thinkingLevel as ScheduledTaskInput["thinkingLevel"] }),
+        ...(cwd ? { cwd } : {}),
         ...(raw.enabled === undefined ? {} : { enabled: raw.enabled as boolean }),
       };
       task = createTask(identity, input, isKnownModel);

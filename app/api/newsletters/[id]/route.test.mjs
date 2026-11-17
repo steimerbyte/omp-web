@@ -162,6 +162,8 @@ test("an unknown id is a 404 for PATCH and DELETE", async () => {
 
 test("a newsletter that was deleted outside can be recreated through a patch with a cron", async () => {
   const headers = createAccount("neu-anlegen");
+  const folder = join(HOME_ROOT, headers.username, "projekt");
+  mkdirSync(folder, { recursive: true });
   const newsletter = await createNewsletter(headers);
   deleteTask(headers, newsletter.taskId);
 
@@ -174,16 +176,62 @@ test("a newsletter that was deleted outside can be recreated through a patch wit
   assert.equal((await withoutCron.json()).field, "cron");
 
   const response = await route.PATCH(
-    request("PATCH", `/api/newsletters/${newsletter.id}`, headers, { cron: "0 6 * * 1" }),
+    request("PATCH", `/api/newsletters/${newsletter.id}`, headers, { cron: "0 6 * * 1", cwd: folder }),
     idParams(newsletter.id),
   );
   assert.equal(response.status, 200);
   const updated = (await response.json()).newsletter;
   assert.notEqual(updated.taskId, newsletter.taskId);
   assert.equal(updated.schedule.cron, "0 6 * * 1");
+  // Die neu angelegte Aufgabe traegt die Ordnerwahl des Patches mit.
+  assert.equal(updated.schedule.cwd, folder);
   const task = getTask(headers, updated.taskId);
   assert.equal(task.cron, "0 6 * * 1");
+  assert.equal(task.cwd, folder);
   assert.match(task.prompt, /Wochenblick/);
+});
+
+test("a patch stores the working folder, and cwd: null clears it again", async () => {
+  const headers = createAccount("ordner");
+  const folder = join(HOME_ROOT, headers.username, "projekt");
+  mkdirSync(folder, { recursive: true });
+  const newsletter = await createNewsletter(headers);
+  assert.equal(newsletter.schedule.cwd, null);
+
+  const set = await route.PATCH(
+    request("PATCH", `/api/newsletters/${newsletter.id}`, headers, { cwd: folder }),
+    idParams(newsletter.id),
+  );
+  assert.equal(set.status, 200);
+  assert.equal((await set.json()).newsletter.schedule.cwd, folder);
+  assert.equal(getTask(headers, newsletter.taskId).cwd, folder);
+
+  // `null` ist eine Loeschung und kein "Feld fehlt".
+  const cleared = await route.PATCH(
+    request("PATCH", `/api/newsletters/${newsletter.id}`, headers, { cwd: null }),
+    idParams(newsletter.id),
+  );
+  assert.equal(cleared.status, 200);
+  assert.equal((await cleared.json()).newsletter.schedule.cwd, null);
+  assert.equal(getTask(headers, newsletter.taskId).cwd ?? null, null);
+});
+
+test("a working folder outside the home is a 400 that names the field", async () => {
+  const headers = createAccount("aussen");
+  const newsletter = await createNewsletter(headers);
+  const outside = mkdtempSync(join(tmpdir(), "omp-web-newsletter-outside-"));
+  try {
+    const response = await route.PATCH(
+      request("PATCH", `/api/newsletters/${newsletter.id}`, headers, { cwd: outside }),
+      idParams(newsletter.id),
+    );
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).field, "cwd");
+    // Die Aufgabe bleibt unveraendert — kein halber Zustand.
+    assert.equal(getTask(headers, newsletter.taskId).cwd ?? null, null);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 // --- Loeschen -------------------------------------------------------------------

@@ -10,6 +10,7 @@ import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { CONTENT_SEARCH_MIN_LENGTH, useSessionContentSearch } from "@/hooks/useSessionContentSearch";
 import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -472,6 +473,23 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [homeDir, setHomeDir] = useState<string>("");
   const [projectFilter, setProjectFilter] = useState("");
+  /**
+   * Die Inhaltssuche neben der Titelsuche: der Filter oben durchsucht die
+   * geladenen Titel, die Route die Transkripte. Sie hat einen eigenen Block
+   * ueber der Liste, damit die virtualisierten Zeilen unberuehrt bleiben.
+   */
+  const contentSearch = useSessionContentSearch(projectFilter);
+  /**
+   * Nur Treffer, zu denen es eine geladene Zeile gibt: ein Klick springt auf
+   * die Session, und eine, die die Liste nicht kennt, haette kein Ziel.
+   */
+  const contentMatches = useMemo(() => {
+    const byId = new Map(sessionsForDisplay.map((session) => [session.id, session]));
+    return contentSearch.matches.flatMap((match) => {
+      const session = byId.get(match.sessionId);
+      return session ? [{ match, session }] : [];
+    });
+  }, [contentSearch.matches, sessionsForDisplay]);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
   // Fork collapse lives here instead of inside a per-node component: the rows
   // handed to Virtuoso are flattened, so the list itself has to decide which
@@ -1418,6 +1436,109 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
             }}
           />
         </label>
+
+      {normalizedProjectFilter.length >= CONTENT_SEARCH_MIN_LENGTH
+      && (contentMatches.length > 0 || contentSearch.error !== null) ? (
+        <section
+          aria-label={t("sidebar.contentMatches", { count: contentMatches.length })}
+          style={{
+            margin: "0 8px 8px",
+            flexShrink: 0,
+            maxHeight: "40%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {contentMatches.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 6,
+                flexWrap: "wrap",
+                padding: "0 2px 4px",
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                color: "var(--text-dim)",
+                flexShrink: 0,
+              }}
+            >
+              <span>{t("sidebar.contentMatches", { count: contentMatches.length })}</span>
+              {contentSearch.truncated ? (
+                <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: "none" }}>
+                  {t("sidebar.contentMatchesTruncated")}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {contentSearch.error !== null ? (
+            <p style={{ margin: 0, padding: "2px", fontSize: 11, color: "var(--text-muted)" }} role="status">
+              {t("sidebar.contentSearchFailed")} {contentSearch.error}
+            </p>
+          ) : (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0, minHeight: 0, overflowY: "auto" }}>
+              {contentMatches.map(({ match, session }) => (
+                <li key={match.sessionId} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSessionFromList(session)}
+                    title={displayCwd(match.cwd, homeDir)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      padding: "5px 6px",
+                      border: "none",
+                      background: "none",
+                      color: "var(--text)",
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ display: "flex", justifyContent: "space-between", gap: 6, fontSize: 11, fontWeight: 550 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {session.name || session.firstMessage.slice(0, 50) || session.id.slice(0, 12)}
+                      </span>
+                      <span
+                        style={{
+                          maxWidth: "50%",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontSize: 10,
+                          fontWeight: 400,
+                          color: "var(--text-dim)",
+                        }}
+                      >
+                        {displayCwd(match.cwd, homeDir)}
+                      </span>
+                    </span>
+                    {/* Der Ausschnitt kommt als Text aus dem Transkript: React
+                        maskiert ihn, und ein `<mark>` waere hier nur Zierrat. */}
+                    <span
+                      style={{
+                        display: "block",
+                        marginTop: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      {match.snippet}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
       <div
         style={{

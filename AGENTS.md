@@ -92,6 +92,7 @@ app/api/
   sessions/[id]/route.ts          GET/PATCH/DELETE session
   sessions/[id]/context/route.ts  GET ?leafId= — context for a specific leaf
   sessions/[id]/export/route.ts   GET exported HTML for a session
+  sessions/search/route.ts        GET ?q= — sessions by transcript content (bounded)
   agent/new/route.ts              POST { cwd, message, toolNames?, provider?, modelId? }
   agent/[id]/route.ts             GET state (`running` = isRunning()) | POST any command
   agent/[id]/events/route.ts      GET SSE stream
@@ -154,6 +155,7 @@ lib/
   rpc-manager.ts       AgentSessionWrapper + registry + startRpcSession
   session-run-budget.ts per-run request and wall-clock budget
   session-reader.ts    session listing + path cache + buildSessionContext adapter
+  session-search.ts    transcript full-text search: streamed lines, byte/time/session caps
   session-system-prompt.ts  SYSTEM.md / APPEND_SYSTEM.md resolution per session cwd
   session-title.ts     thin wrapper over omp's own title generator
   stats.ts             stats data service: cache + single-flight sync
@@ -206,6 +208,7 @@ hooks/
   useDragDrop.ts      shared drag/drop state
   useIsMobile.ts      responsive breakpoint hook
   useNewsletters.ts   newsletters: load, write, 10 s visible-tab poll
+  useSessionContentSearch.ts  transcript search: 300 ms debounce, abort + generation guard
   useProjectSizes.ts  React binding for the size poll
   useStats.ts         stats fetch + bounded syncing poll + range state
   useTheme.ts         theme state
@@ -361,6 +364,12 @@ host, that retry recovered 18 of 19 sessions the tiny model and the session's
 own model had both declined (2026-11-12). Every source is capped at 2000
 characters: a full 15 749 B summary produced `null`/`"<chat>"`, its head a title
 in ~200 ms (measured 2026-11-12).
+Every generated title carries exactly one leading emoji: `withSingleEmoji`
+keeps the model's own first emoji (a ZWJ family or a flag counts as one), else
+picks one from the ordered `TITLE_EMOJI_RULES` keyword table, else `💬`. The
+80-character cap includes the emoji and its space; a title that is only emoji
+is still a decline. The rename route (`PATCH /api/sessions/[id]`) does not use
+the helper, so user-typed names stay verbatim.
 The auto-name button (`POST /api/sessions/[id]/auto-name`) remains the manual
 fallback for declined and old sessions; it writes `"user"` — `setSessionName`
 refuses `"auto"` once the user renamed the session, and the route reports that
@@ -856,6 +865,26 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
 - **The agent's `bash` tool has no sandbox and cannot get one from this SDK** (18.14.0 has no `sandbox`/`allowedPaths`/`noNewPrivs`, and the shell is embedded, so there is no `bash` binary to wrap). What it does get is a per-session `tool_call` guard (`lib/session-shell-guard.ts`, registered through `CreateAgentSessionOptions.extensions`): `bash` is refused when the session cwd is outside the account's home and the roots explicitly granted to it. **That is the whole gate, measured:** the bash tool's LLM-facing schema in 18.14.0 is `{command, timeout}` — `BashToolOptions` has a `spawnHook`, but the tool input carries no working directory, so the hook resolves one value per call (the session cwd; a `cwd` key only appears if the model invents one) and a `cd /` inside the command text is invisible to it. The shell also runs as the service user with whatever the uid can read, and the guard therefore narrows nothing beyond "this session was opened in a directory the account may use". Only per-account OS users (unavailable, see `lib/sandbox.ts`) or an SDK spawn hook would change that; `docs/inventory-tools.md` states the residual plainly.
 - None of the others are containment. Every one is an assignment decided from data the service process can write, so they stop an account from seeing another's work by accident and through the routes that exist, not against someone who edits the underlying files. `docs/authentication.md` says so in the place a reader of this file is pointed at.
 
+### The sidebar search covers titles locally and content through the route
+- The filter above the session list matches project names and session titles
+  from the already-loaded `GET /api/sessions` payload — no request, so typing
+  stays instant. Transcript **content** is not in that payload; shipping every
+  file to the browser to grep it would be a multiple of what the list costs.
+  `GET /api/sessions/search?q=` (`lib/session-search.ts`) answers that one
+  question instead: it scans only sessions the caller may see, reads each file
+  as a stream of lines, and stops at 25 matches, 40 sessions, 64 MiB or 2 s —
+  `truncated` in the answer says a cap stopped it. Only message text counts
+  (user/assistant text parts and compaction summaries), never tool calls or
+  results.
+- The client half is `hooks/useSessionContentSearch.ts`: nothing below 2
+  characters, 300 ms of quiet before asking, `AbortController` for the
+  previous request, and a generation counter for the answer that overtook the
+  abort. The matches render in their own block between the field and the
+  virtualized list (own ~40% max-height and scroll), so `sidebarRows` and the
+  Virtuoso measurements never change while a search is running. A match whose
+  session is not in the loaded list is dropped — clicking it would have no row
+  to land on. The snippet is text, never markup.
+
 ### Plugins and skills
 - `POST /api/plugins` is **admin-only**, first statement in the handler so every new action inherits it. Every action writes the process-global plugin tree, registries and lockfile, and install imports the package's declared extensions in the server process; a caller's `cwd` only selects project overrides. `GET` stays open behind the allowed-root check.
 - `/api/plugins` drives omp's `PluginManager` (`~/.omp/plugins`): install, uninstall, enable/disable, plus `doctor()` output as diagnostics. omp has no in-place update, so "update" reinstalls the spec with `force`.
@@ -985,6 +1014,12 @@ Newer omp emits `compaction_start` / `compaction_end`; older versions emitted `a
   reads. `schedule: null` therefore means the task is gone, not "no schedule
   set"; the view says so, and the dialog's save always carries a `cron`, so
   that save is what creates the task again.
+- **The workspace is chosen per newsletter.** The dialog's folder picker
+  (`components/CwdPicker.tsx`, the same control as the scheduled-tasks dialog)
+  sends `cwd`, the routes run it through `assertUsableCwd` and store it on the
+  task; `schedule.cwd` joins it back for the header and the dialog, and `null`
+  there means "no own folder" — the account default applies. The header shows
+  the effective folder with the home prefix shortened to `~`.
 - **The issue is written by the agent, through a tool.** The task's prompt
   tells the run to call `newsletter_write` (`lib/newsletter-tool.ts`), which
   appends one issue to the newsletter. That keeps the writing under the same

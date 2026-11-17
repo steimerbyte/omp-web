@@ -10,6 +10,8 @@ import {
   type NewsletterSchedule,
 } from "@/hooks/useNewsletters";
 import { formatRelativeTime } from "@/lib/i18n/format";
+import { useScheduledSettings } from "@/hooks/useScheduledSettings";
+import { CwdPicker } from "@/components/CwdPicker";
 import { toCron, toEditorValue, WEEKDAY_VALUES, weekdayLabelKey, type EditorValue } from "@/lib/schedule-editor";
 import { Skeleton } from "@/components/motion/Skeleton";
 import {
@@ -72,6 +74,17 @@ interface ModelOption {
  */
 function isHttpUrl(url: string | undefined): url is string {
   return typeof url === "string" && /^https?:\/\//i.test(url.trim());
+}
+
+/**
+ * Der Ordner mit gekuerztem Home-Praefix: `/home/alice/projekt` wird zu
+ * `~/projekt`. Dieselbe Anzeige wie die Zeile der geplanten Aufgaben, damit
+ * der Ort des Laufs nicht als langer Pfad die Kopfzeile sprengt.
+ */
+function shortenHome(path: string, home: string): string {
+  if (home === "" || path === "") return path;
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
 /** Eine absolute Zeit in der Zone des Browsers — dieselbe Form wie im Kalender. */
@@ -145,6 +158,12 @@ const primaryButton = {
 export function NewsletterView() {
   const { t, locale } = useI18n();
   const { newsletters, loading, error, refresh, create, update, remove, runNow } = useNewsletters();
+  /**
+   * Der Standardordner und die waehlbaren Ordner des Kontos — dieselbe Quelle
+   * wie im Dialog der geplanten Aufgaben. Der Kopf zeigt damit auch ohne
+   * eigenen Ordner den Ort, an dem der naechste Lauf startet.
+   */
+  const { settings: cwdSettings } = useScheduledSettings();
   /** Welcher Newsletter gezeigt wird — `null` heisst "der erste". */
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Welche Ausgabe gezeigt wird — `null` heisst "die neueste". */
@@ -204,6 +223,10 @@ export function NewsletterView() {
     }));
     return parts.join(" · ");
   };
+
+  /** Der Ordner des Laufs: eigener, sonst Kontostandard, sonst Home. */
+  const runCwd = selected?.schedule?.cwd ?? cwdSettings?.defaultCwd ?? cwdSettings?.home ?? "";
+  const runCwdLabel = runCwd === "" ? "" : shortenHome(runCwd, cwdSettings?.home ?? "");
 
   const retryButton = (
     <button type="button" onClick={() => void refresh()} style={secondaryButton}>
@@ -297,6 +320,13 @@ export function NewsletterView() {
       {selected ? (
         <div style={{ padding: "6px 16px", fontSize: 12, color: "var(--text-muted)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           {scheduleLine(selected.schedule)}
+          {/* Der Ordner steht hier, nicht nur im Dialog: "wo laeuft das" ist
+              die Frage, die man sich beim Ansehen der Liste stellt. */}
+          {runCwdLabel ? (
+            <span style={{ marginLeft: 8, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+              {t("newsletters.cwd")}: {runCwdLabel}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -424,6 +454,8 @@ export function NewsletterView() {
           startConfirmingDelete={dialog.mode === "edit" && dialog.confirmingDelete === true}
           busy={busy}
           error={actionError}
+          home={cwdSettings?.home ?? ""}
+          folders={cwdSettings?.folders ?? []}
           onCancel={() => { setActionError(null); setDialog(null); }}
           onSave={async (input, id) => {
             setActionError(null);
@@ -534,12 +566,15 @@ function IssueCard({ issue, nowMs }: { issue: NewsletterIssue; nowMs: number }) 
 }
 
 /** Der Dialog zum Anlegen und Bearbeiten. */
-function NewsletterDialog({ newsletter, startConfirmingDelete, busy, error, onCancel, onSave, onDelete }: {
+function NewsletterDialog({ newsletter, startConfirmingDelete, busy, error, home, folders, onCancel, onSave, onDelete }: {
   newsletter: Newsletter | null;
   /** Der Loeschknopf der Ansicht oeffnet denselben Dialog, nur fragend. */
   startConfirmingDelete: boolean;
   busy: boolean;
   error?: string | null;
+  /** Die Home des Kontos und die waehlbaren Ordner, wie im Aufgabendialog. */
+  home: string;
+  folders: string[];
   onCancel: () => void;
   onSave: (input: NewsletterInput, id: string | null) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
@@ -564,6 +599,12 @@ function NewsletterDialog({ newsletter, startConfirmingDelete, busy, error, onCa
   const [rawCron, setRawCron] = useState(initialCron);
   const [provider, setProvider] = useState(newsletter?.provider ?? "");
   const [modelId, setModelId] = useState(newsletter?.modelId ?? "");
+  /**
+   * Der Ordner des Laufs, aus `schedule.cwd` vorbelegt — wie `cron` kommt er
+   * aus der Aufgabe und nicht aus dem Datensatz. `null` heisst
+   * "Kontostandard", nicht "noch nichts gewaehlt".
+   */
+  const [cwd, setCwd] = useState<string | null>(newsletter?.schedule?.cwd ?? null);
   const [confirmingDelete, setConfirmingDelete] = useState(startConfirmingDelete);
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -617,7 +658,7 @@ function NewsletterDialog({ newsletter, startConfirmingDelete, busy, error, onCa
     event.preventDefault();
     if (!canSave) return;
     const [nextProvider, nextModelId] = modelValue.split("\u0000");
-    void onSave({ name: name.trim(), topics, cron, provider: nextProvider, modelId: nextModelId }, newsletter?.id ?? null);
+    void onSave({ name: name.trim(), topics, cron, provider: nextProvider, modelId: nextModelId, cwd }, newsletter?.id ?? null);
   };
 
   return (
@@ -756,6 +797,24 @@ function NewsletterDialog({ newsletter, startConfirmingDelete, busy, error, onCa
                 {t("scheduled.cronHint")}
               </p>
             </fieldset>
+
+            <div>
+              <label style={labelStyle} htmlFor="newsletter-cwd">{t("newsletters.cwd")}</label>
+              {/* Dieselbe Wahl wie im Dialog der geplanten Aufgaben: der
+                  Leerwert ist "kein eigener Ordner" und geht als `null` mit. */}
+              <CwdPicker
+                id="newsletter-cwd"
+                value={cwd}
+                home={home}
+                folders={folders}
+                inheritLabel={t("newsletters.cwdInherit")}
+                onChange={setCwd}
+                disabled={busy}
+              />
+              <p style={{ margin: "2px 0 0", fontSize: 10, color: "var(--text-dim)" }}>
+                {t("newsletters.cwdHint")}
+              </p>
+            </div>
 
             <div>
               <label style={labelStyle} htmlFor="newsletter-model">{t("newsletters.model")}</label>

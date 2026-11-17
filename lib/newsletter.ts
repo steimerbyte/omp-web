@@ -311,6 +311,11 @@ export function normalizeNewsletters(value: unknown): Newsletter[] {
 export interface NewsletterSchedule {
   /** Der Ausdruck der geplanten Aufgabe — die einzige Quelle fuer den Client. */
   cron: string;
+  /**
+   * Der Arbeitsordner des Laufs, wie `cron` aus der Aufgabe verbunden.
+   * `null` heisst: kein eigener Ordner, es gilt der Kontostandard.
+   */
+  cwd: string | null;
   enabled: boolean;
   nextRun: number | null;
   lastRunAt: string | null;
@@ -330,13 +335,15 @@ export interface NewsletterSchedule {
  *
  * `cron` geht mit hinaus, weil der Nutzer den Zeitplan bearbeiten koennen
  * muss: der PATCH-Body nimmt `cron`, und ohne dieses Feld kennt der Client
- * den aktuellen Wert nicht.
+ * den aktuellen Wert nicht. `cwd` geht aus demselben Grund mit — der Dialog
+ * zeigt den Ordner des Laufs vorbelegt, und der Speicher der Aufgabe bleibt
+ * die einzige Wahrheit darueber.
  *
  * ### Warum ein struktureller Parameter
  *
  * `ScheduledTask` kommt aus `lib/scheduled-tasks-store.ts`, und der zieht `fs`
- * nach. Diese Datei bleibt ohne Dateisystem — die vier Felder, die hier
- * gelesen werden, sind die ganze Schnittstelle, und ein `ScheduledTask` passt
+ * nach. Diese Datei bleibt ohne Dateisystem — die Felder, die hier gelesen
+ * werden, sind die ganze Schnittstelle, und ein `ScheduledTask` passt
  * strukturell hinein.
  *
  * `nextRun` wird serverseitig gerechnet: die Zeitplaene gelten in der Zone des
@@ -345,7 +352,7 @@ export interface NewsletterSchedule {
  * Aufgabe gibt es nicht mehr"; dann laeuft auch nichts mehr.
  */
 export function newsletterSchedule(
-  task: { cron: string; enabled: boolean; lastRunAt?: string; lastRunStatus?: "ok" | "error" } | null,
+  task: { cron: string; cwd?: string; enabled: boolean; lastRunAt?: string; lastRunStatus?: "ok" | "error" } | null,
   nowMs: number,
 ): NewsletterSchedule | null {
   if (task === null) return null;
@@ -359,6 +366,7 @@ export function newsletterSchedule(
   }
   return {
     cron: task.cron,
+    cwd: task.cwd ?? null,
     enabled: task.enabled,
     nextRun,
     lastRunAt: task.lastRunAt ?? null,

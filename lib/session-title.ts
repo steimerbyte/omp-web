@@ -71,6 +71,75 @@ export function truncateTitle(value: string): string {
     : trimmed;
 }
 
+/**
+ * Eine pictographische Sequenz: Grundzeichen mit optionalem Variantenselektor
+ * und Hautton, ZWJ-Verbund (👨‍👩‍👧, 🏳️‍🌈), Tag-Sequenz (Schottland-Flagge),
+ * Regional-Indicator-Paar (🇩🇪) oder Keycap (1️⃣). Laenger als ein Codepunkt,
+ * damit ein Verbund als **ein** Emoji zaehlt und nicht in Einzelteile zerfaellt.
+ */
+const EMOJI_SEQUENCE =
+  /(?:\p{Extended_Pictographic}[\uFE0E\uFE0F]?(?:\p{Emoji_Modifier})?[\u{E0020}-\u{E007F}]*(?:\u200D\p{Extended_Pictographic}[\uFE0E\uFE0F]?(?:\p{Emoji_Modifier})?)*|\p{Regional_Indicator}{2}|[0-9#*]\uFE0F?\u20E3)/gu;
+
+/** Der Titel ohne jedes Emoji; der Rest bleibt unveraendert. */
+export function stripEmoji(text: string): string {
+  return text.replace(EMOJI_SEQUENCE, "");
+}
+
+/** Das erste Emoji im Text als ganze Sequenz, oder `null`. */
+export function firstEmoji(text: string): string | null {
+  return text.match(EMOJI_SEQUENCE)?.[0] ?? null;
+}
+
+/**
+ * Schluesselwoerter fuer den Fall, dass das Modell selbst keins geschrieben
+ * hat. Die Reihenfolge ist die Prioritaet: "Deploy-Fix" ist ein Deploy.
+ */
+export const TITLE_EMOJI_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(deploy|deployment|ship|release|rollout|ausroll|veröffentlich)\b/i, "🚀"],
+  [/\b(bug|fix|fehler|behebe|repair|hotfix)\b/i, "🐛"],
+  [/\b(test|tests|testing|spec|pytest|vitest|jest)\b/i, "✅"],
+  [/\b(doc|docs|readme|doku|dokumentation|documentation)\b/i, "📘"],
+  [/\b(calendar|kalender|termin|schedule|zeitplan)\b/i, "📅"],
+  [/\b(newsletter|research|recherche|study|studie)\b/i, "🔎"],
+  [/\b(audio|sound|musik|music|voice|sprache)\b/i, "🎧"],
+  [/\b(search|suche|suchen|query|find|grep)\b/i, "🔍"],
+  [/\b(review|prüfung|pruefung|audit|check)\b/i, "👀"],
+  [/\b(plan|planung|design|architektur|architecture|konzept)\b/i, "📐"],
+  [/\b(refactor|refactoring|cleanup|aufräumen|aufraeumen|rewrite)\b/i, "🧹"],
+  [/\b(docker|k8s|kubernetes|container|pod|helm)\b/i, "📦"],
+  [/\b(database|datenbank|sql|postgres|sqlite|migration)\b/i, "🗄️"],
+  [/\b(ui|ux|frontend|front-end|css|layout)\b/i, "🎨"],
+  [/\b(api|server|backend|endpoint|route)\b/i, "🔌"],
+  [/\b(security|sicherheit|auth|login|anmeldung|oauth|token)\b/i, "🔐"],
+  [/\b(money|billing|invoice|rechnung|zahlung|preis|kosten)\b/i, "💰"],
+  [/\b(mail|email|e-mail|inbox|postfach)\b/i, "📧"],
+];
+
+/** Kein Schluesselwort getroffen: der neutrale Chat. */
+const TITLE_EMOJI_FALLBACK = "💬";
+
+/** Das Emoji fuer einen Titel: das eigene des Modells, sonst eins aus der Tabelle. */
+export function titleEmoji(text: string): string {
+  const own = firstEmoji(text);
+  if (own) return own;
+  const plain = stripEmoji(text);
+  for (const [pattern, emoji] of TITLE_EMOJI_RULES) {
+    if (pattern.test(plain)) return emoji;
+  }
+  return TITLE_EMOJI_FALLBACK;
+}
+
+/**
+ * Ein erzeugter Titel, mit genau einem Emoji vorn — das Modell schreibt oft
+ * keins, manchmal zwei. Der Text dahinter bleibt woertlich; gekuerzt wird er
+ * erst nach dem Emoji, und die 80 Zeichen zaehlen Emoji und Leerzeichen mit.
+ */
+export function withSingleEmoji(title: string): string {
+  const emoji = titleEmoji(title);
+  const plain = stripEmoji(title).replace(/\s+/g, " ").trim();
+  return truncateTitle(`${emoji} ${plain}`);
+}
+
 const SENTINEL_TITLE = /^(none|null|undefined)$/i;
 
 /** A model answer that could be written as a session name: no markup, no sentinel, some letter or digit. */
@@ -98,6 +167,8 @@ export function replanTitleSource(messages: AgentMessage[], firstSource: string)
  * is one-shot — and when the answer is unusable (see `isUsableSessionTitle`):
  * the two are reported the same way, because both mean "no title yet".
  * A declined source is retried once with `buildReplanTitleContext(messages)`.
+ * Every accepted title carries exactly one leading emoji, chosen by
+ * `withSingleEmoji` — user renames never go through here.
  *
  * `fallbackSource` covers the opening prompt of a brand-new session: omp
  * persists a user message on `message_end`, so the context is still empty right
@@ -149,5 +220,5 @@ export async function generateSessionTitle(
   // Measured 2026-11-12: the tiny→commit→smol chain (buds-gateway/qwen3.8-27b)
   // answered `<chat>` for 5 of 109 real sessions, URL-first openers among them.
   if (!isUsableSessionTitle(cleaned)) return null;
-  return { title: cleaned };
+  return { title: withSingleEmoji(cleaned) };
 }

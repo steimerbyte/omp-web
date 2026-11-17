@@ -164,6 +164,8 @@ const GIT_FILES = [
 
 let runningIds = [];
 const requests = [];
+/** Die Antwort der Inhaltssuche; jeder Test setzt sie vor dem Tippen. */
+let searchAnswer = null;
 function json(body, status = 200) {
   return { ok: status < 400, status, json: async () => body };
 }
@@ -173,6 +175,11 @@ function installFetch() {
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     requests.push({ url, method: init.method ?? "GET", body: init.body });
+    // Vor den Sessions-Pfaden: `/api/sessions/search` beginnt genauso.
+    if (url.startsWith("/api/sessions/search?")) {
+      if (searchAnswer?.error) return json({ error: searchAnswer.error }, 503);
+      return json(searchAnswer ?? { matches: [], truncated: false, scanned: 0 });
+    }
     if (url.startsWith("/api/sessions?archived=1")) return json({ sessions: [] });
     if (url.startsWith("/api/sessions")) return json({ sessions: [SESSION] });
     if (url.startsWith("/api/agent/running")) return json({ runningSessionIds: runningIds });
@@ -217,6 +224,22 @@ for (const proto of [window.HTMLInputElement?.prototype, window.HTMLTextAreaElem
 
 function settle(ms = 50) {
   return act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+}
+
+/** Den React-Handler direkt aufrufen: linkedom fuehrt kein `value`-Setter fuer jedes Feld. */
+function reactProps(element) {
+  const key = Object.keys(element).find((name) => name.startsWith("__reactProps"));
+  return key ? element[key] : null;
+}
+
+/** Tippt in das Suchfeld und wartet den Entpreller der Inhaltssuche ab. */
+async function search(container, value) {
+  const input = container.querySelector(".sidebar-search");
+  assert.ok(input, "das Suchfeld der Leiste fehlt");
+  await act(async () => {
+    reactProps(input)?.onChange?.({ target: { value }, currentTarget: input });
+  });
+  await settle(400);
 }
 
 const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
@@ -638,4 +661,93 @@ test("die sechs Navigations-Knoepfe stehen in fester Reihenfolge im Raster", asy
   assert.equal(newsletter.getAttribute("aria-pressed"), "false");
   await act(async () => { newsletter.click(); });
   assert.equal(opened, 1);
+});
+
+// --- Inhaltssuche -----------------------------------------------------------------
+//
+// Der Filter oben durchsucht die geladenen Titel; die Route durchsucht die
+// Transkripte. Beide antworten im selben Feld, und der Block ueber der Liste
+// ist die einzige Stelle, an der ein Inhaltstreffer landet.
+
+const CONTENT_MATCH = {
+  sessionId: "s1",
+  title: "hello there",
+  cwd: CWD,
+  projectRoot: CWD,
+  hits: 3,
+  snippet: "…the needle sits in the transcript…",
+};
+
+test("Inhaltstreffer stehen mit Titel, Pfad und Ausschnitt ueber der Liste", async () => {
+  storage.clear();
+  searchAnswer = { matches: [CONTENT_MATCH], truncated: true, scanned: 7 };
+  const { container, root } = await mount();
+
+  // Ohne Suchbegriff fragt niemand den Server.
+  assert.equal(requests.some((request) => request.url.startsWith("/api/sessions/search")), false);
+
+  await search(container, "needle");
+
+  assert.match(container.textContent, /Content matches \(1\)/);
+  assert.match(container.textContent, /the needle sits in the transcript/, "der Ausschnitt fehlt");
+  // Der Pfad ist um die Home gekuerzt — dieselbe Anzeige wie in der Zeile.
+  assert.match(container.textContent, /~\/work/);
+  assert.match(container.textContent, /Search limit reached/, "der Hinweis auf die Grenze fehlt");
+
+  // Der Block haengt vor der Liste, nicht in ihren Zeilen.
+  const text = container.textContent;
+  assert.ok(
+    text.indexOf("Content matches (1)") < text.indexOf("No matching projects"),
+    "die Treffer stehen nicht ueber der Liste",
+  );
+  await act(async () => { root.unmount(); });
+});
+
+test("ein Klick auf einen Treffer waehlt genau diese Session", async () => {
+  storage.clear();
+  searchAnswer = { matches: [CONTENT_MATCH], truncated: false, scanned: 1 };
+  const selected = [];
+  const { container, root } = await mount({ onSelectSession: (session) => selected.push(session) });
+
+  await search(container, "needle");
+
+  const row = [...container.querySelectorAll("button")].find((node) =>
+    (node.textContent ?? "").includes("the needle sits in the transcript"));
+  assert.ok(row, "die Trefferzeile fehlt");
+  assert.equal(row.getAttribute("title"), "~/work");
+
+  await act(async () => { row.click(); });
+  await settle();
+  assert.deepEqual(selected.map((session) => session.id), ["s1"]);
+  await act(async () => { root.unmount(); });
+});
+
+test("ein Treffer ohne geladene Session wird nicht gezeigt", async () => {
+  storage.clear();
+  searchAnswer = {
+    matches: [{ ...CONTENT_MATCH, sessionId: "ghost", snippet: "…ghost needle…" }],
+    truncated: false,
+    scanned: 1,
+  };
+  const { container, root } = await mount();
+
+  await search(container, "needle");
+
+  assert.equal(container.textContent.includes("ghost needle"), false);
+  assert.equal(container.textContent.includes("Content matches"), false, "der Block hat kein Ziel");
+  await act(async () => { root.unmount(); });
+});
+
+test("eine abgelehnte Inhaltssuche ist eine stille Zeile, kein Absturz", async () => {
+  storage.clear();
+  searchAnswer = { error: "index offline" };
+  const { container, root } = await mount();
+
+  await search(container, "needle");
+
+  assert.match(container.textContent, /The content search failed\. index offline/);
+  // Die Leiste steht weiter: das Suchfeld ist da, und die Auswahl bleibt
+  // bedienbar — ein Fehler der Inhaltssuche ist kein Fehler der Liste.
+  assert.ok(container.querySelector(".sidebar-search"), "die Leiste ist verschwunden");
+  await act(async () => { root.unmount(); });
 });

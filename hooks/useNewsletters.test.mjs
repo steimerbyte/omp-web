@@ -65,7 +65,7 @@ function newsletter(overrides = {}) {
     createdAt: "2026-11-01T00:00:00Z",
     updatedAt: "2026-11-01T00:00:00Z",
     issues: [],
-    schedule: { enabled: true, nextRun: 1_800_000_000_000, lastRunAt: null, lastRunStatus: null, cron: "0 8 * * *" },
+    schedule: { enabled: true, nextRun: 1_800_000_000_000, lastRunAt: null, lastRunStatus: null, cron: "0 8 * * *", cwd: null },
     ...overrides,
   };
 }
@@ -141,11 +141,11 @@ test("create posts the input and reloads the list", async () => {
 
   let created;
   await act(async () => {
-    created = await harness.value.create({ name: "New", topics: ["x"], cron: "0 8 * * *", provider: "test", modelId: "m1" });
+    created = await harness.value.create({ name: "New", topics: ["x"], cron: "0 8 * * *", provider: "test", modelId: "m1", cwd: "/home/alice/projekt" });
   });
 
   const post = requests.find((request) => request.method === "POST");
-  assert.deepEqual(post.body, { name: "New", topics: ["x"], cron: "0 8 * * *", provider: "test", modelId: "m1" });
+  assert.deepEqual(post.body, { name: "New", topics: ["x"], cron: "0 8 * * *", provider: "test", modelId: "m1", cwd: "/home/alice/projekt" });
   assert.equal(created.id, "n2");
   assert.ok(requests.filter((request) => request.method === "GET").length > before, "die Liste wurde nicht neu geladen");
   assert.equal(harness.value.newsletters.length, 2);

@@ -24,6 +24,7 @@ import {
   type ScheduledTaskInput,
 } from "@/lib/scheduled-tasks-store";
 import { scheduledTaskErrorResponse } from "@/lib/scheduled-tasks-http";
+import { assertUsableCwd } from "@/lib/scheduled-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -139,18 +140,26 @@ export async function POST(req: Request) {
   const id = randomUUID();
   const prompt = buildNewsletterPrompt({ id, name, topics });
 
-  const input: ScheduledTaskInput = {
-    name,
-    cron: typeof raw.cron === "string" ? raw.cron : "",
-    prompt,
-    provider,
-    modelId,
-    ...(raw.thinkingLevel === undefined
-      ? {}
-      : { thinkingLevel: raw.thinkingLevel as ScheduledTaskInput["thinkingLevel"] }),
-  };
-
   try {
+    // Der Ordner wird *vor* dem Speichern geprueft: `createTask` kennt nur die
+    // Konto-Home, nicht den Bestand des Kontos. Ein `null` heisst "keine
+    // Angabe" und wird deshalb gar nicht erst in die Eingabe geschrieben —
+    // sonst stuende ein Feld in der Datei, das der Nutzer nie gesetzt hat.
+    // Dieselbe Reihenfolge wie in `app/api/scheduled-tasks/route.ts`: faellt
+    // die Pruefung, ist noch keine Aufgabe entstanden.
+    const cwd = raw.cwd === undefined ? undefined : assertUsableCwd(raw.cwd, identity);
+    const input: ScheduledTaskInput = {
+      name,
+      cron: typeof raw.cron === "string" ? raw.cron : "",
+      prompt,
+      provider,
+      modelId,
+      ...(raw.thinkingLevel === undefined
+        ? {}
+        : { thinkingLevel: raw.thinkingLevel as ScheduledTaskInput["thinkingLevel"] }),
+      ...(cwd ? { cwd } : {}),
+    };
+
     const { modelRegistry } = await getOmpRuntime();
     const task = createTask(identity, input, (candidate, model) => modelRegistry.find(candidate, model) !== undefined);
     try {

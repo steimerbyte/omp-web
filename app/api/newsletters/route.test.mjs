@@ -21,7 +21,7 @@ const scheduler = await jiti.import("@/lib/scheduler.ts");
 scheduler.stopScheduler();
 
 const route = await jiti.import("./route.ts");
-const { getTask } = await jiti.import("@/lib/scheduled-tasks-store.ts");
+const { getTask, listTasks } = await jiti.import("@/lib/scheduled-tasks-store.ts");
 const { readNewsletterFile } = await jiti.import("@/lib/newsletter-store.ts");
 
 /**
@@ -127,6 +127,8 @@ test("a created newsletter carries a task, a schedule and no issue yet", async (
   assert.ok(newsletter.schedule.nextRun > Date.now(), "nextRun is in the future");
   assert.equal(newsletter.schedule.lastRunAt, null);
   assert.equal(newsletter.schedule.lastRunStatus, null);
+  // Ohne eigene Wahl gibt es keinen Ordner: der Kontostandard gilt.
+  assert.equal(newsletter.schedule.cwd, null);
 
   const task = getTask(headers, newsletter.taskId);
   assert.ok(task, "the scheduled task exists");
@@ -134,6 +136,32 @@ test("a created newsletter carries a task, a schedule and no issue yet", async (
   // Der Prompt traegt die Kennung, mit der das Werkzeug die Ausgabe ablegt.
   assert.equal(task.prompt.split(newsletter.id).length - 1, 1);
   assert.match(task.prompt, /KI-Regulierung/);
+});
+
+test("a chosen working folder lands on the task and in schedule.cwd", async () => {
+  const headers = createAccount("ordner");
+  const folder = join(HOME_ROOT, headers.username, "projekt");
+  mkdirSync(folder, { recursive: true });
+
+  const newsletter = await createNewsletter(headers, { cwd: folder });
+
+  assert.equal(newsletter.schedule.cwd, folder);
+  assert.equal(getTask(headers, newsletter.taskId).cwd, folder);
+});
+
+test("a working folder outside the home is a 400 that names the field", async () => {
+  const headers = createAccount("aussen");
+  const outside = mkdtempSync(join(tmpdir(), "omp-web-newsletters-outside-"));
+  try {
+    const response = await route.POST(post("/api/newsletters", headers, newsletterInput({ cwd: outside })));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).field, "cwd");
+    // Die Pruefung steht vor `createTask`: weder Datensatz noch Aufgabe.
+    assert.deepEqual(readNewsletterFile(headers).newsletters, []);
+    assert.deepEqual(listTasks(headers), []);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 test("the list returns the newsletter once", async () => {

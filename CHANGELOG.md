@@ -7,6 +7,15 @@ upstream line — see the Provenance section in the README.
 
 ### Neu
 
+- **Automatisch erzeugte Chat-Titel tragen genau ein Emoji.**
+  `withSingleEmoji` in `lib/session-title.ts` setzt vor jeden generierten
+  Titel genau ein Emoji: das erste, das das Modell selbst geschrieben hat
+  (ZWJ-Familien und Flaggen zählen als eins), sonst eins aus der geordneten
+  Schlüsselwort-Tabelle `TITLE_EMOJI_RULES` (Deploy 🚀, Fehler 🐛, Tests ✅,
+  Doku 📘, …), sonst 💬. Die 80-Zeichen-Grenze zählt das Emoji mit; ein Titel
+  aus nur Emoji bleibt eine Ablehnung, und selbst umbenannte Titel bleiben
+  unverändert.
+
 - **Die Newsletter-Ansicht zeigt die neueste Ausgabe als Dashboard.**
   `?view=newsletters` listet die Newsletter des Kontos mit ihren Themen und
   dem Zeitplan (nächster Lauf, letzter Status) und rendert die neueste Ausgabe
@@ -22,6 +31,24 @@ upstream line — see the Provenance section in the README.
   der geplante Agent erst Minuten nach dem Start, ein SSE-Strom wäre eine
   dauerhafte Verbindung für eine langsame Anzeige. Quellen werden nur als
   `http(s)` verlinkt und in einem neuen Tab geöffnet.
+
+- **Die Suche der Seitenleiste findet Sitzungen auch nach ihrem Inhalt.**
+  Der Filter oben durchsucht weiterhin sofort die geladenen Projektnamen und
+  Titel; zusätzlich fragt er nach 300 ms Ruhe `GET /api/sessions/search?q=`
+  und zeigt die Treffer mit Titel, gekürztem Pfad und Textausschnitt in einem
+  eigenen Block über der Liste. Die Route liest die Transkripte als Strom und
+  hält an 25 Treffern, 40 Sitzungen, 64 MiB oder 2 s an — ein Hinweis sagt,
+  wenn eine Grenze gegriffen hat; nur Nachrichtentext zählt, keine
+  Werkzeugaufrufe. Ein neuer Begriff bricht die alte Anfrage ab, und eine
+  verspätete Antwort überschreibt nie die neuere.
+
+- **Jeder Newsletter recherchiert in seinem gewählten Arbeitsordner.**
+  Der Dialog bietet dieselbe Ordnerwahl wie die geplanten Aufgaben (Home des
+  Kontos, die Projekte, ein eigener Pfad); die Route prüft sie mit
+  `assertUsableCwd` und legt sie auf der geplanten Aufgabe ab. `schedule.cwd`
+  verbindet den Ordner beim Lesen wie `cron` zurück, der Kopf der Ansicht
+  zeigt ihn (Home-Prefix als `~`), und `null` bedeutet weiterhin
+  „Kontostandard“. Ein späteres `cwd: null` räumt die Wahl wieder ab.
 
 - **Neue Sitzungen bekommen ihren Titel automatisch vom ersten Prompt.**
   `AgentSessionWrapper.send` startet beim ersten `prompt` genau einen

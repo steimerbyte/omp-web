@@ -66,6 +66,8 @@ export interface NewsletterInput {
   cron: string;
   provider: string;
   modelId: string;
+  /** Der Arbeitsordner des Laufs; `null` heisst "Kontostandard". */
+  cwd?: string | null;
 }
 
 export interface UseNewslettersResult {
