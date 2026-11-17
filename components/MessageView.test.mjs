@@ -121,17 +121,24 @@ test("uses i/title in the standard header for grep, read, write, glob, and eval 
 
 test("shows an operation icon beside every standard tool label", () => {
   const cases = [
-    ["read", "read", "var(--accent)"],
-    ["write", "write", "var(--warning)"],
-    ["glob", "glob", "var(--accent-hover)"],
-    ["grep", "grep", "var(--accent)"],
-    ["edit", "edit", "var(--warning)"],
-    ["eval", "eval", "var(--accent-hover)"],
-    ["functions.task", "task", "var(--accent)"],
-    ["unknown_tool", "generic", "var(--text-dim)"],
+    ["read", {}, "read", "var(--accent)", "read"],
+    ["write", {}, "write", "var(--warning)", "write"],
+    ["glob", {}, "glob", "var(--accent-hover)", "glob"],
+    ["grep", {}, "grep", "var(--accent)", "grep"],
+    ["edit", {}, "edit", "var(--warning)", "edit"],
+    ["eval", {}, "eval", "var(--accent-hover)", "eval"],
+    ["functions.task", {}, "task", "var(--accent)", "functions.task"],
+    ["unknown_tool", {}, "generic", "var(--text-dim)", "unknown_tool"],
+    // MCP tools: native `mcp__<server>_<tool>` names, and the same call made
+    // through the `xd://` transport (`write`/`read` with an xd:// path).
+    ["mcp__ghidra_mcp_get_functions", {}, "mcp", "var(--violet)", "mcp__ghidra_mcp_get_functions"],
+    ["write", { path: "xd://mcp__openrouter_ping", content: "{}" }, "mcp", "var(--violet)", "mcp__openrouter_ping"],
+    ["read", { path: "xd://mcp__openrouter_ping" }, "mcp", "var(--violet)", "mcp__openrouter_ping"],
+    // A non-MCP device keeps the transport's icon but shows its own name.
+    ["write", { path: "xd://sudo_run", content: "{}" }, "write", "var(--warning)", "sudo_run"],
   ];
 
-  for (const [toolName, iconKind, themeColor] of cases) {
+  for (const [toolName, input, iconKind, themeColor, label] of cases) {
     const html = renderMessage({
       role: "assistant",
       provider: "openai",
@@ -140,16 +147,17 @@ test("shows an operation icon beside every standard tool label", () => {
         type: "toolCall",
         toolCallId: `${toolName}-icon`,
         toolName,
-        input: {},
+        input,
       }],
     });
 
     const iconPosition = html.indexOf(`data-tool-icon="${iconKind}"`);
     const iconEnd = html.indexOf(">", iconPosition);
-    const toolPosition = html.indexOf(`>${toolName}</span>`);
+    const toolPosition = html.indexOf(`>${label}</span>`);
     assert.ok(iconPosition >= 0, `expected ${iconKind} icon for ${toolName}`);
     assert.ok(html.slice(iconPosition, iconEnd).includes(`color:${themeColor}`), `expected ${toolName} icon to use ${themeColor}`);
-    assert.ok(iconPosition < toolPosition, `expected ${iconKind} icon before ${toolName}`);
+    assert.ok(toolPosition >= 0, `expected ${toolName} to be labelled ${label}`);
+    assert.ok(iconPosition < toolPosition, `expected ${iconKind} icon before ${label}`);
   }
 });
 

@@ -327,23 +327,38 @@ post-compaction turns. It is not the LLM context, where the summary comes first.
 `entryIds` is a parallel array to `messages` and is walked locally because omp's
 `buildSessionContext` does not return entry ids.
 
-### Chat titles come from the button, and the source must survive a low-signal opener
-The auto-name button is the only title generator (web sessions pass no
-`autoTitle`). `lib/session-title.ts` takes the first operator turn whose text
-passes omp's `isLowSignalTitleInput`, else the compaction summary, else the raw
-first user turn — omp returns `null` for a low-signal source and a web session
-never sends the next user message its retry waits for, so when the opener yields
-nothing the module retries once with the SDK's own
-`buildReplanTitleContext(messages)`; measured on the prod host, that recovered 18
-of 19 sessions the tiny model and the session's own model had both declined
-(2026-11-12). Every source is capped at 2000 characters: a full 15 749 B summary
-produced `null`/`"<chat>"`, its head a title in ~200 ms (measured 2026-11-12).
-`setSessionName` refuses `"auto"` once the user renamed the session, so the
-button writes `"user"` and the route reports that refusal as 409. A title answer
-that is markup (`<chat>`, `<title/>`) or a sentinel is a decline, because omp's
-parser counts markup as a successful title and would otherwise never reach its
-fallback model (5 of 109 real sessions on the prod host answered `<chat>`,
-measured 2026-11-12).
+### Chat titles are automatic once on the first prompt, the button is the fallback
+`lib/rpc-manager.ts` (`maybeAutoTitle`, called fire-and-forget from the `prompt`
+case of `AgentSessionWrapper.send`) titles a fresh session from its opening
+prompt. The prompt text goes in as `generateSessionTitle`'s `fallbackSource`,
+because omp persists the user message only on `message_end` — right after
+`prompt()` the context is still empty; the context's own first message always
+wins when it exists, so a reopened session is titled from its real first turn.
+The attempt is latched in memory **before the first await**: one per wrapper,
+never retried after a decline. It returns early when the session already has a
+name, writes with source `"auto"`, and swallows a `false` from `setSessionName`
+(renamed meanwhile). A steer/follow-up is not an opener and is never titled.
+No SSE frame: the sidebar reloads on `agent_end`, and the title normally lands
+before the first turn ends.
+
+`lib/session-title.ts` takes the first operator turn whose text passes omp's
+`isLowSignalTitleInput`, else the compaction summary, else the raw first user
+turn. omp's own retry waits for the next user message, which the automatic
+attempt does not get, so when the opener yields nothing the module retries once
+with the SDK's own `buildReplanTitleContext(messages)` — only when the context
+has messages, i.e. on the button and on a reopened session; a brand-new
+session's first prompt has none and is declined outright. Measured on the prod
+host, that retry recovered 18 of 19 sessions the tiny model and the session's
+own model had both declined (2026-11-12). Every source is capped at 2000
+characters: a full 15 749 B summary produced `null`/`"<chat>"`, its head a title
+in ~200 ms (measured 2026-11-12).
+The auto-name button (`POST /api/sessions/[id]/auto-name`) remains the manual
+fallback for declined and old sessions; it writes `"user"` — `setSessionName`
+refuses `"auto"` once the user renamed the session, and the route reports that
+refusal as 409. A title answer that is markup (`<chat>`, `<title/>`) or a
+sentinel is a decline, because omp's parser counts markup as a successful title
+and would otherwise never reach its fallback model (5 of 109 real sessions on
+the prod host answered `<chat>`, measured 2026-11-12).
 
 ### Old chat output collapses to one line
 
@@ -380,6 +395,9 @@ module-level instances (`TIME_FORMAT` in `CollapsibleMessage.tsx`) and
 
 ### ToolCall field normalization
 omp stores toolCall blocks as `{type:"toolCall", id, name, arguments}` but `ToolCallContent` uses `{toolCallId, toolName, input}`. `normalizeToolCalls()` in `lib/normalize.ts` handles this — called in both `session-reader.ts` (file load) and `ChatWindow.handleAgentEvent()` (streaming).
+
+### MCP tools are named `mcp__<server>_<tool>`, and often arrive as an `xd://` write
+MCP tools register as `mcp__<server>_<tool>` (`createMCPToolName` in the SDK), but with `tools.xdev` on (the default) a discoverable MCP tool is mounted under `xd://` instead of the top-level schema, so the model reaches it as `write xd://mcp__<server>_<tool>` and the transcript holds a `write` toolCall whose `input.path` is the device URL. `lib/tool-names.ts` (`isMCPToolName`, `xdDeviceName`, `toolDisplayName`) resolves both shapes; `getToolIconKind` in `MessageView.tsx` draws them with the violet wrench (`var(--violet)`), while any other `xd://` device keeps its transport icon and is merely labelled with the device name. `lib/turn-written-files.ts` skips `xd://` paths: such a write runs a tool and touches no file.
 
 ### New session tool preset
 Tool names are passed at session creation (`POST /api/agent/new` → `toolNames[]`). For existing sessions, the active preset is inferred on mount via `get_tools` → `getPresetFromTools()`. When tools are fully disabled (`toolNames = []`), `rpc-manager.ts` passes `toolNames: []` with `restrictToolNames: true` and forces `agent.state.systemPrompt = []` after startup and reloads.

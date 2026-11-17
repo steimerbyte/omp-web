@@ -305,9 +305,11 @@ Die Lage ist zweigeteilt, und das ist der wichtigste Satz in diesem Dokument:
 ### Auto-Titel — `POST` `/api/sessions/[id]/auto-name`
 
 - **Kann**: Erzeugt per `generateSessionTitle` einen Titel, schreibt ihn mit
-  Quelle `"auto"` und invalidiert den Listen-Cache. Rückgabe: `{title}`, oder
+  Quelle `"user"` und invalidiert den Listen-Cache. Rückgabe: `{title}`, oder
   `{title: null, skipped: true}`, oder 409 wenn die Session währenddessen
-  geschlossen wurde.
+  geschlossen wurde. Der manuelle Weg für Sitzungen, deren erster Prompt
+  automatisch keinen Titel ergeben hat; der Regelfall läuft über
+  `AgentSessionWrapper.send` (Quelle `"auto"`, `lib/rpc-manager.ts`).
 - **Identität**: **keine**.
 - **Darf nicht**: Keinen bedeutungslosen Namen schreiben, wenn das Modell keinen
   liefert — deshalb der `skipped`-Zweig statt eines Leerstrings. IDOR-Familie

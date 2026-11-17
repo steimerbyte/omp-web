@@ -14,7 +14,9 @@ function isFileWritingToolName(toolName: string): boolean {
 function readToolPath(input: Record<string, unknown> | undefined): string | null {
   if (!input) return null;
   const value = input.file_path ?? input.path;
-  return typeof value === "string" && value.length > 0 ? value : null;
+  if (typeof value !== "string" || value.length === 0) return null;
+  // `write xd://<device>` runs a mounted tool; nothing on disk was written.
+  return value.toLowerCase().startsWith("xd://") ? null : value;
 }
 
 /**

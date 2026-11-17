@@ -28,6 +28,7 @@ import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
+import { generateSessionTitle } from "./session-title";
 import { prepareTenantSessionDir, tenantSessionsRoot, tightenTenantSessionTree } from "./tenant-sessions";
 import {
   createTenantWorkerHost,
@@ -406,6 +407,9 @@ export class AgentSessionWrapper {
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
   private promptRunning = false;
+  // One automatic title per wrapper. A declined opener is never retried; the
+  // manual auto-name button stays the fallback for that session.
+  private autoTitleAttempted = false;
   // Set while the handoff RPC is in flight so state polls and the running-set
   // stay honest during the long oneshot generation + session transition.
   private handoffRunning = false;
@@ -1189,6 +1193,9 @@ export class AgentSessionWrapper {
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
           notifyRunningChange();
         });
+        // Fire and forget like the prompt itself: a title must never delay a turn.
+        // No SSE frame either — the sidebar reloads on `agent_end`.
+        void this.maybeAutoTitle(command.message as string, streamingBehavior);
         return null;
       }
 
@@ -1599,6 +1606,42 @@ export class AgentSessionWrapper {
       } finally {
         notifyRunningChange();
       }
+    }
+  }
+
+  /**
+   * Give a fresh session its title from the opening prompt, exactly once.
+   *
+   * The prompt text is the source because omp persists the user message on
+   * `message_end`, which is after the run starts — the context is still empty
+   * here. `generateSessionTitle` prefers the context's first message whenever
+   * it exists, so a reopened session is titled from its real first turn.
+   * A steer/follow-up joins a turn already in flight and is no opener. The
+   * latch is set before the first await: a decline is not retried, the manual
+   * button covers that session. A failed title must never break or delay the
+   * prompt, so errors only warn.
+   */
+  private async maybeAutoTitle(
+    text: string,
+    streamingBehavior?: "steer" | "followUp",
+  ): Promise<void> {
+    if (streamingBehavior || !text?.trim() || this.autoTitleAttempted) return;
+    this.autoTitleAttempted = true;
+    try {
+      // A manager that cannot report its name is never titled: the name could be
+      // a manual rename, and `"auto"` must not overwrite it. A real untitled
+      // session still answers `""`/`undefined`, so it proceeds.
+      const manager = this.inner.sessionManager;
+      if (typeof manager.getSessionName !== "function") return;
+      if (manager.getSessionName()?.trim()) return;
+      const result = await generateSessionTitle(this.inner, text);
+      if (!result) return;
+      // `false` is a normal refusal, e.g. the session was renamed meanwhile.
+      if (await this.inner.sessionManager.setSessionName(result.title, "auto")) {
+        invalidateSessionListCache();
+      }
+    } catch (error) {
+      console.warn("[session-title] automatic title failed:", error);
     }
   }
 

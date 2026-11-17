@@ -94,16 +94,26 @@ export function replanTitleSource(messages: AgentMessage[], firstSource: string)
  * configured local tiny model), so a title generated from the browser costs the
  * same as one generated in the TUI and never burns the session's primary model.
  * Returns `null` when omp declines to title — greetings and other low-signal
- * first messages are deliberately left unnamed until the next real turn — and
- * when the answer is unusable (see `isUsableSessionTitle`): the two are
- * reported the same way, because both mean "no title yet".
+ * first messages are declined on purpose, and the browser's automatic attempt
+ * is one-shot — and when the answer is unusable (see `isUsableSessionTitle`):
+ * the two are reported the same way, because both mean "no title yet".
  * A declined source is retried once with `buildReplanTitleContext(messages)`.
+ *
+ * `fallbackSource` covers the opening prompt of a brand-new session: omp
+ * persists a user message on `message_end`, so the context is still empty right
+ * after the prompt is sent, and the wrapper passes that prompt here. The
+ * context's own first message always wins, so a reopened session is titled from
+ * its real first turn and never from a later prompt. The manual button passes
+ * no fallback at all.
  */
 export async function generateSessionTitle(
   session: AgentSessionLike,
+  fallbackSource?: string,
 ): Promise<GeneratedSessionTitle | null> {
   const context = session.sessionManager.buildSessionContext();
-  const firstMessage = findFirstTitleSource(context.messages);
+  const fallback = fallbackSource?.trim();
+  const firstMessage = findFirstTitleSource(context.messages)
+    ?? (fallback ? fallback.slice(0, MAX_TITLE_SOURCE_LENGTH) : undefined);
   if (!firstMessage) {
     throw new Error("The session has no user messages to name");
   }
@@ -116,8 +126,8 @@ export async function generateSessionTitle(
     session.model as never,
   );
   if (!title) {
-    // omp's own retry waits for the next user message; a web session sends none,
-    // so a declined opener gets one second chance with the `<chat>` envelope
+    // omp's own retry waits for the next user message, which the browser cannot
+    // rely on, so a declined opener gets one second chance with the `<chat>` envelope
     // AgentSession feeds its title model after a replan (not hand-rolled text).
     // Measured 2026-11-12 (prod host): 18 of the last 19 such sessions recovered.
     const replan = replanTitleSource(context.messages, firstMessage);

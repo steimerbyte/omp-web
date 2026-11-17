@@ -1,5 +1,6 @@
 import type { AgentMessage, AssistantContentBlock, CustomMessage } from "./types";
 import { getAssistantErrorMessage, getDisplayableAssistantBlocks } from "./message-display";
+import { toolDisplayName } from "./tool-names";
 
 /**
  * Die Regel, nach der eine Ausgabe im Transkript zu einer Zeile wird.
@@ -115,7 +116,9 @@ export function summarizeCollapsedOutput(message: AgentMessage, { t }: SummaryHe
   if (message.role === "assistant") {
     const toolNames: string[] = [];
     for (const block of message.content) {
-      if (block.type === "toolCall" && !toolNames.includes(block.toolName)) toolNames.push(block.toolName);
+      if (block.type !== "toolCall") continue;
+      const name = toolDisplayName(block.toolName, block.input);
+      if (!toolNames.includes(name)) toolNames.push(name);
     }
     const error = message.errorMessage ?? "";
     const body = firstNonEmptyText(message.content) ?? (/\S/.test(error) ? error : null);

@@ -17,6 +17,7 @@ import { normalizeCustomPanelLines, parseAnsiLine, stripAnsi } from "@/lib/ansi"
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import { PresentFiles } from "./PresentFiles";
 import { unwrapPresentFilesDetails } from "@/lib/present-files";
+import { isMCPToolName, toolDisplayName, xdDeviceName } from "@/lib/tool-names";
 import { motion } from "motion/react";
 import { PULSE_TRANSITION } from "./motion/animations";
 import { useAnimationMode } from "./motion/hooks";
@@ -969,7 +970,7 @@ function VibeToolCard({ block, result, duration }: { block: ToolCallContent; res
           minWidth: 0,
         }}
       >
-        <ToolBlockIcon toolName={block.toolName} isError={isError} />
+        <ToolBlockIcon toolName={block.toolName} input={block.input} isError={isError} />
         <span style={{ color: isError ? "var(--danger)" : "var(--accent)", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
           {block.toolName}
         </span>
@@ -1156,11 +1157,11 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
           minWidth: 0,
         }}
       >
-        <ToolBlockIcon toolName={block.toolName} isError={isError} />
+        <ToolBlockIcon toolName={block.toolName} input={block.input} isError={isError} />
 
 
         <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
-          {block.toolName}
+          {toolDisplayName(block.toolName, block.input)}
         </span>
         <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
           {headerPreview}
@@ -1225,7 +1226,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
     </div>
   );
 }
-type ToolIconKind = "read" | "write" | "glob" | "grep" | "edit" | "bash" | "todo" | "eval" | "task" | "browser" | "image" | "generic";
+type ToolIconKind = "read" | "write" | "glob" | "grep" | "edit" | "bash" | "todo" | "eval" | "task" | "browser" | "image" | "mcp" | "generic";
 
 const TOOL_ICON_COLORS: Record<ToolIconKind, string> = {
   read: "var(--accent)",
@@ -1239,6 +1240,7 @@ const TOOL_ICON_COLORS: Record<ToolIconKind, string> = {
   task: "var(--accent)",
   browser: "var(--accent-hover)",
   image: "var(--success)",
+  mcp: "var(--violet)",
   generic: "var(--text-dim)",
 };
 
@@ -1250,8 +1252,10 @@ function toolNameHasPart(toolName: string, part: string): boolean {
     normalized.split(/[.\s:_-]+/).includes(part);
 }
 
-function getToolIconKind(toolName: string): ToolIconKind {
+function getToolIconKind(toolName: string, input?: Record<string, unknown>): ToolIconKind {
   const normalized = toolName.trim().toLowerCase();
+  const device = xdDeviceName(toolName, input);
+  if (isMCPToolName(normalized) || (device !== null && isMCPToolName(device.toLowerCase()))) return "mcp";
   if (normalized.includes("str_replace") || normalized.includes("replace_editor") || toolNameHasPart(normalized, "edit")) return "edit";
   if (toolNameHasPart(normalized, "read") || toolNameHasPart(normalized, "cat")) return "read";
   if (toolNameHasPart(normalized, "write") || toolNameHasPart(normalized, "save")) return "write";
@@ -1267,8 +1271,8 @@ function getToolIconKind(toolName: string): ToolIconKind {
   return "generic";
 }
 
-function ToolBlockIcon({ toolName, isError }: { toolName: string; isError: boolean }) {
-  const kind = getToolIconKind(toolName);
+function ToolBlockIcon({ toolName, input, isError }: { toolName: string; input?: Record<string, unknown>; isError: boolean }) {
+  const kind = getToolIconKind(toolName, input);
   const color = isError ? "var(--danger)" : TOOL_ICON_COLORS[kind];
 
   return (
@@ -1378,6 +1382,12 @@ function ToolIconGlyph({ kind }: { kind: ToolIconKind }) {
           <rect x="1.75" y="2.25" width="10.5" height="9.5" rx="1.15" />
           <circle cx="4.8" cy="5.1" r="1" />
           <path d="m2.6 10 2.6-2.7 1.8 1.8 1.45-1.45 2.95 2.95" />
+        </>
+      );
+    case "mcp":
+      return (
+        <>
+          <path d="M8.35 4.15a0.5 0.5 0 0 0 0 0.7l0.8 0.8a0.5 0.5 0 0 0 0.7 0l1.89-1.89a3 3 0 0 1-3.97 3.97l-3.46 3.46a1.06 1.06 0 0 1-1.5-1.5l3.46-3.46a3 3 0 0 1 3.97-3.97l-1.88 1.88z" />
         </>
       );
     case "generic":

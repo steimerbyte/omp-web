@@ -3,6 +3,31 @@
 All notable changes to this distribution. Versions are independent of the
 upstream line — see the Provenance section in the README.
 
+## Unreleased
+
+### Neu
+
+- **Neue Sitzungen bekommen ihren Titel automatisch vom ersten Prompt.**
+  `AgentSessionWrapper.send` startet beim ersten `prompt` genau einen
+  Titelversuch (`lib/rpc-manager.ts`, `maybeAutoTitle`); Quelle ist der Prompt
+  selbst, weil omp die User-Nachricht erst bei `message_end` sichert und der
+  Kontext direkt nach `prompt()` noch leer ist. Ein vorhandener Name wird nie
+  überschrieben, ein abgelehnter Opener nicht erneut versucht, und ein Fehler
+  beim Titeln bricht den Turn nicht ab. Geschrieben wird mit Quelle `"auto"`;
+  der Auto-Name-Button bleibt der manuelle Weg für abgelehnte und alte
+  Sitzungen und schreibt weiter `"user"` (409, wenn die Session inzwischen
+  umbenannt wurde).
+
+### Behoben
+
+- **MCP-Aufrufe tragen das Werkzeugsymbol, nicht das Schreibsymbol.** Ein
+  MCP-Tool heißt `mcp__<server>_<tool>`; mit `tools.xdev` erreicht das Modell
+  es meist als `write` mit `path: "xd://mcp__…"` (auch `read`) und stand
+  deshalb gelb als Schreiben da. `lib/tool-names.ts` erkennt beide Formen: der
+  violette Schraubenschlüssel trägt den Gerätenamen (`MessageView.tsx`, auch
+  in der kollabierten Zeile), `xd://`-Pfade zählen nicht mehr als geschriebene
+  Datei (`lib/turn-written-files.ts`).
+
 ## v0.30.2
 Released 2026-11-14.
 
