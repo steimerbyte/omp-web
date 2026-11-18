@@ -480,9 +480,13 @@ test("today is dimmed and the chosen day is filled", async () => {
 
 test("the today marker stays dim next to another chosen day", async () => {
   const today = todayDateString();
+  // Der gewaehlte Tag muss ein anderer als heute sein, sonst traegt der
+  // heutige die Fuellung und der Test prueft die Blasse nicht. Ein festes
+  // Datum waere an genau diesem Kalendertag gruen-rot.
+  const chosenDay = today === "2026-11-20" ? "2026-11-21" : "2026-11-20";
   const recorderUnderTest = recorder();
   await mount(React.createElement(DatePickerDialog, {
-    value: "2026-11-18",
+    value: chosenDay,
     onCancel: recorderUnderTest.onCancel,
     onConfirm: recorderUnderTest.onConfirm,
   }));
