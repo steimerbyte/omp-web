@@ -163,6 +163,18 @@ upstream line — see the Provenance section in the README.
 
 ### Behoben
 
+- **Chat-Titel bekommen ein Emoji zum Thema statt der Sprechblase.** Auf dem
+  Produktionshost trugen 89,01 % der automatischen Titel (81/91) überhaupt kein
+  Emoji, und von den 10 Titeln mit Emoji waren 6 💬 — der Rückfall der
+  Schlüsselworttabelle, weil das winzige Titelmodell selbst nie eins schrieb.
+  Der Titel-Prompt verlangt jetzt genau ein führendes Emoji für das konkrete
+  Thema und nennt 💬 ausdrücklich den falschen Griff außer bei echten
+  Gesprächsthemen; 💬 zählt außerdem nicht mehr als Wahl des Modells, und der
+  Rest-Rückfall ist 📌 statt 💬. Die Tabelle schließt die sechs gemessenen
+  Lücken (Skills, Disk/Wartung, Sync, Termine, Modell/Config, Android/APK);
+  die sechs Titel ergeben jetzt sechs verschiedene Emoji (🧩 💽 🔄 📅 ⚙️ 📱).
+  A/B über 20 echte Eröffnungen: vorher 14/20 💬, nachher 0/20.
+
 - **Auf dem Telefon nahm der CPU/RAM-Badge den ersten Platz der Kopfleiste
   ein und schob den Seitenleisten-Knopf aus der linken Ecke.** Der Badge steht
   per `order: -1` vor den Werkzeugen, der Schalter hatte keinen eigenen Wert —
