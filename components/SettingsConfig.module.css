@@ -2,7 +2,6 @@
   position: fixed;
   inset: 0;
   background: color-mix(in srgb, #000 48%, transparent);
-  backdrop-filter: blur(8px);
 }
 
 .window {
@@ -27,10 +26,9 @@
   display: grid;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--bg);
   color: var(--text);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
 }
 
 /* Nur das Einstellungs-Fenster hat eine Navigationsspalte. Die Zeile muss
@@ -457,7 +455,7 @@
    jeder Breite, und eine zweite Groessenangabe an dieser Stelle wuerde sie bei
    gleicher Spezifitaet und spaeterer Position wieder ueberschreiben. */
 @media (max-width: 760px) {
-  .window { border-radius: 10px; }
+  .window { border-radius: var(--radius-panel); }
   .withRail { grid-template-columns: 82px minmax(0, 1fr); }
   .brand { padding: 14px 6px 9px; text-align: center; }
   .eyebrow, .context, .searchWrap, .navLabel, .closeButton span:first-child { display: none; }

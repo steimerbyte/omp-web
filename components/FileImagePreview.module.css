@@ -18,9 +18,8 @@
   max-height: calc(100vh - 32px);
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: var(--bg);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
 }
 
 .panel:focus {
@@ -149,7 +148,6 @@
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
   user-select: none;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CalendarEvent } from "@/lib/calendar";
 import { dueReminders, nextReminderAt, type ReminderEvent } from "@/lib/calendar-reminders";
 
@@ -134,10 +134,12 @@ export function useCalendarReminders(events: CalendarEvent[] | null): CalendarRe
     };
   }, []);
 
-  const hasUpcoming = useMemo(
-    () => nextReminderAt(events ?? [], Date.now()) !== null,
-    [events],
-  );
+  // react-hooks/purity rejects Date.now() during render; this is a display
+  // decision, so it settles after mount.
+  const [hasUpcoming, setHasUpcoming] = useState(false);
+  useEffect(() => {
+    setHasUpcoming(nextReminderAt(events ?? [], Date.now()) !== null);
+  }, [events]);
 
   useEffect(() => {
     // Ohne Erlaubnis gibt es nichts zu tun — und ohne Termine auch nicht.

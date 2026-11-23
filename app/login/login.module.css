@@ -3,9 +3,13 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: var(--bg);
+  background-color: var(--bg);
+  /* Dot dither on the surface behind the card. 6 % ink is enough to read as a
+     texture in both modes and never competes with the form. */
+  background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1.6px);
+  background-size: 4px 4px;
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
 }
 
 .card {
@@ -13,7 +17,7 @@
   max-width: 470px;
   padding: 26px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--bg-panel);
 }
 
@@ -252,6 +256,16 @@
    * gedaempfter Deckkraft, nicht das Nichts und nicht die volle Deckkraft:
    * bei opacity 1 lag es als graue Platte ueber dem Formular.
    *
+   * Und die FAHRT faehrt mit derselben gedaempften Deckkraft wie die Ruhe.
+   * Bis 2026-11-23 stand sie bei 8 %..70 % auf opacity 1; ueber dem
+   * Nothing-Panel (--bg-panel #0a0a0a, --text #f2f2f2) las sich das als
+   * graue Platte ueber dem halben Formular. Gemessen am Screenshot
+   * login-dark-desktop.png (mitten in der Fahrt): Bandspitze
+   * rgb(111,111,111) an der Unterkante des Bandes, Karte sonst #0b; hell
+   * dito rgb(214) auf #fff. Mit 0.22 bleibt die Spitze bei rgb(32) dunkel
+   * und rgb(232) hell — ein Band, keine Flaeche. `login-motion.test.mjs`
+   * haelt die Grenze fest.
+   *
    * Die Deckkraftstufen gegeneinander gemessen, Pixel der ruhenden Karte an
    * der hellsten Stelle des Bandes (y = 98 %) gegen dieselbe Stelle ohne
    * Band, Karte 410.06 px, Chromium 1237, Dev-Server auf Port 30161:
@@ -275,8 +289,7 @@
    * letzten Fahrt der Zustand der Karte ist, aber er traegt die Ruhe nicht
    * allein: 0.8 s sind kurz genug, dass das Fehlen nicht auffaellt. */
   0%     { transform: translateY(-100%); opacity: 0; }
-  8%     { opacity: 1; }
-  70%    { opacity: 1; }
+  8%     { opacity: 0.22; }
   75%    { transform: translateY(0); opacity: 0.22; }
   100%   { transform: translateY(0); opacity: 0.22; }
 }
@@ -332,8 +345,11 @@
 .field > span {
   display: block;
   margin-bottom: 5px;
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
@@ -342,7 +358,7 @@
   display: flex;
   align-items: stretch;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--bg);
   overflow: hidden;
 }
@@ -355,7 +371,7 @@
  * and `--bg-panel` is the card colour in either scheme. */
 .fieldGroup {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--bg);
   overflow: hidden;
 }
@@ -413,18 +429,30 @@
   width: 100%;
   height: 36px;
   margin-bottom: 14px;
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
   background: var(--accent);
   color: var(--bg);
   cursor: pointer;
   font: 700 11px var(--font-mono);
-  line-height: 36px;
+  line-height: 34px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
   text-align: center;
   text-decoration: none;
 }
 
-.primary:disabled { cursor: not-allowed; opacity: .5; }
+/* Ein deaktivierter Accent-Knopf ist kein halbtransparenter Accent, sondern
+ * eine gedaempfte Flaeche. `opacity: .5` ueber #0a0a0a bzw. #fff ergab
+ * rgb(128,128,128) — genau das Grau, das auf dem Login-Screenshot als Fehler
+ * gelesen wurde. Die Palette-Mitglieder sind --bg-hover (Flaeche), --border
+ * (Rahmen) und --text-dim (Schrift). */
+.primary:disabled {
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
 
 /* A rejected attempt replays the same press the 401 fallback page uses, but
    tinted with the theme's danger colour and with a short recoil at the end so

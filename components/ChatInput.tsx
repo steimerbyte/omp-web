@@ -415,7 +415,7 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
 }
 
 function ModelNoticeBanner({ tone, title, body }: { tone: "error" | "warning"; title: string; body: string }) {
-  const color = tone === "error" ? "239,68,68" : "234,179,8";
+  const color = tone === "error" ? "var(--danger)" : "var(--warning)";
   return (
     <div
       role="alert"
@@ -427,10 +427,10 @@ function ModelNoticeBanner({ tone, title, body }: { tone: "error" | "warning"; t
         marginBottom: 8,
         padding: "7px 10px",
         overflowY: "auto",
-        border: `1px solid rgba(${color},0.3)`,
+        border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
         borderRadius: "var(--radius-control)",
-        background: `rgba(${color},0.07)`,
-        color: `rgb(${color})`,
+        background: `color-mix(in srgb, ${color} 7%, transparent)`,
+        color,
         fontSize: 11,
         lineHeight: 1.45,
       }}
@@ -1865,8 +1865,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {retryInfo && (
           <div style={{
             marginBottom: 8, padding: "5px 10px",
-            background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.25)",
-            borderRadius: "var(--radius-control)", fontSize: 12, color: "rgba(180,130,0,0.9)",
+            background: "color-mix(in srgb, var(--warning) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--warning) 25%, transparent)",
+            borderRadius: "var(--radius-control)", fontSize: 12, color: "var(--warning)",
             display: "flex", alignItems: "center", gap: 6,
           }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -1879,8 +1879,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {compactResultText && (
           <div style={{
             marginBottom: 8, padding: "5px 10px",
-            background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.24)",
-            borderRadius: "var(--radius-control)", fontSize: 12, color: "rgba(5,150,105,0.95)",
+            background: "color-mix(in srgb, var(--success) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--success) 24%, transparent)",
+            borderRadius: "var(--radius-control)", fontSize: 12, color: "var(--success)",
             display: "flex", alignItems: "center", gap: 6,
           }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -2079,7 +2079,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 background: "var(--bg)",
                 border: "1px solid var(--border)",
                 borderRadius: 8,
-                boxShadow: "0 -6px 20px rgba(0,0,0,0.12)",
                 overflow: "hidden",
                 maxHeight: historyPlacement.maxHeight,
               }}
@@ -2173,7 +2172,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 background: "var(--bg)",
                 border: "1px solid var(--border)",
                 borderRadius: 8,
-                boxShadow: "0 -6px 20px rgba(0,0,0,0.12)",
                 overflow: "hidden",
                 maxHeight: slashPlacement.maxHeight,
               }}
@@ -2340,7 +2338,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   background: "var(--bg)",
                   border: "1px solid var(--border)",
                   borderRadius: 8,
-                  boxShadow: "0 -6px 20px rgba(0,0,0,0.12)",
                   overflow: "hidden",
                   maxHeight: atPlacement.maxHeight,
                 }}
@@ -2446,11 +2443,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 : `1px solid ${composerFocused
                   ? "var(--accent)"
                   : bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
-                    ? "rgba(234,179,8,0.4)"
+                    ? "color-mix(in srgb, var(--warning) 40%, transparent)"
                     : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: 14,
               padding: "10px 10px 10px 14px",
-              boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
               transition: "border-color var(--duration-hover), background var(--duration-hover), box-shadow var(--duration-hover)",
               ...gradientBorder.style,
             } as React.CSSProperties}
@@ -2527,10 +2523,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(234,179,8,0.12)" : "none",
-                    border: "1px solid rgba(234,179,8,0.35)",
+                    background: canQueueStreamingMessage ? "color-mix(in srgb, var(--warning) 12%, transparent)" : "none",
+                    border: "1px solid color-mix(in srgb, var(--warning) 35%, transparent)",
                     borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(180,130,0,1)" : "var(--text-dim)",
+                    color: canQueueStreamingMessage ? "var(--warning)" : "var(--text-dim)",
                     cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background var(--duration-hover)",
@@ -2550,10 +2546,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(129,140,248,0.12)" : "none",
-                    border: "1px solid rgba(129,140,248,0.35)",
+                    background: canQueueStreamingMessage ? "color-mix(in srgb, var(--violet) 12%, transparent)" : "none",
+                    border: "1px solid color-mix(in srgb, var(--violet) 35%, transparent)",
                     borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
+                    color: canQueueStreamingMessage ? "var(--violet)" : "var(--text-dim)",
                     cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background var(--duration-hover)",
@@ -2579,12 +2575,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 background: (value.trim() || attachedImages.length || uploadedFiles.length) ? "var(--accent)" : "var(--bg-panel)",
                 border: "none",
                 borderRadius: 8,
-                color: (value.trim() || attachedImages.length || uploadedFiles.length) ? "var(--bg)" : "var(--text-dim)",
+                color: (value.trim() || attachedImages.length || uploadedFiles.length) ? "var(--accent-fg, var(--bg))" : "var(--text-dim)",
                 cursor: (value.trim() || attachedImages.length || uploadedFiles.length) ? "pointer" : "not-allowed",
                 fontSize: 13,
                 fontWeight: 600,
                 letterSpacing: "-0.01em",
-                boxShadow: (value.trim() || attachedImages.length || uploadedFiles.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
                 transition: "background var(--duration-hover), box-shadow var(--duration-hover)",
               }}
             >
@@ -2798,7 +2793,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       ...sidePos,
                       ...panelPos,
                       zIndex: 500, background: "var(--bg)", border: "1px solid var(--border)",
-                      borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
+                      borderRadius: 8,
                       overflow: "hidden", maxHeight: maxH, display: "flex", flexDirection: "column",
                       }}>
                       {showModelFilter && (
@@ -3054,9 +3049,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 justifyContent: "flex-end",
                 border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
                 borderRadius: "var(--radius-panel)",
-                background: "color-mix(in srgb, var(--bg-panel) 92%, var(--bg))",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
-                backdropFilter: "blur(10px)",
+                background: "var(--bg-panel)",
               } : null),
             }}>
             {!isStreaming && onThinkingLevelChange && (
@@ -3101,7 +3094,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <div style={{
                     position: "absolute", bottom: "calc(100% + 6px)", right: 0,
                     zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
-                    borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
+                    borderRadius: 8,
                     overflow: "hidden", minWidth: 180,
                   }}>
                     {THINKING_LEVELS.filter((lvl) => {
@@ -3186,7 +3179,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <div style={{
                     position: "absolute", bottom: "calc(100% + 6px)", right: 0,
                     zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
-                    borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
+                    borderRadius: 8,
                     overflow: "hidden", minWidth: 120,
                   }}>
                     {TOOL_PRESETS.map((lvl) => {

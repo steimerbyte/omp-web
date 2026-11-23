@@ -318,7 +318,6 @@ export function SystemStatsBadge() {
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 8,
-            boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
             zIndex: 220,
             padding: "10px 12px 12px",
             transformOrigin: "top right",

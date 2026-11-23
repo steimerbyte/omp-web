@@ -211,7 +211,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal }: Props) {
               padding: "0 4px",
               borderRadius: 8,
               background: "var(--accent)",
-              color: "var(--accent-fg, #fff)",
+              color: "var(--accent-fg, var(--bg))",
               fontSize: 10,
               fontWeight: 600,
             }}
@@ -236,7 +236,6 @@ export function TerminalDropdown({ cwd, onOpenTerminal }: Props) {
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 6,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
             zIndex: 250,
           }}
         >
@@ -284,7 +283,7 @@ export function TerminalDropdown({ cwd, onOpenTerminal }: Props) {
             )}
           </Pressable>
           {error && (
-            <div style={{ padding: "8px 12px", color: "#f87171", fontSize: 11, background: "rgba(239,68,68,0.08)" }}>
+            <div style={{ padding: "8px 12px", color: "var(--danger)", fontSize: 11, background: "color-mix(in srgb, var(--danger) 8%, transparent)" }}>
               {error}
             </div>
           )}

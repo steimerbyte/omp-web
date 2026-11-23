@@ -73,7 +73,6 @@
   border: 1px solid color-mix(in srgb, var(--border) 82%, var(--accent));
   border-radius: 8px;
   background: var(--bg-panel);
-  box-shadow: 0 14px 34px color-mix(in srgb, var(--bg) 72%, transparent);
 }
 
 .searchWrap {

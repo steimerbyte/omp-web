@@ -118,7 +118,7 @@ export function ProjectCard({
           "--prio-color": priorityColor,
           position: "relative",
           overflow: "hidden",
-          borderRadius: 10,
+          borderRadius: "var(--radius-panel)",
           border: "1px solid var(--border)",
           background: "var(--bg)",
           padding: "14px 14px 12px 17px",

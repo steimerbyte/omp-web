@@ -569,7 +569,7 @@ function TaskRow({ task, nowMs, onToggle, onEdit, onRunNow, running, runError, r
       </div>
 
       {runError ? (
-        <p style={{ margin: 0, fontSize: 11, color: "var(--warning, #ffb347)" }} role="alert">
+        <p style={{ margin: 0, fontSize: 11, color: "var(--warning)" }} role="alert">
           {runError}
         </p>
       ) : null}
@@ -983,7 +983,7 @@ function TaskDialog({ task, busy, error, onCancel, onSave, onDelete, home, folde
                   der Ansicht: die liegt hinter dem Overlay und waere von hier
                   aus unerreichbar. */}
               {modelsError ? (
-                <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--warning, #ffb347)" }} role="alert">
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--warning)" }} role="alert">
                   {modelsError}
                 </p>
               ) : null}

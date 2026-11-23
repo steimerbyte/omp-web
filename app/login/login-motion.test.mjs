@@ -226,6 +226,29 @@ test("Die Fahrt deckt die ganze Kartenhoehe, nicht einen Bruchteil davon", () =>
   );
 });
 
+test("Die Fahrt faehrt nicht heller als die Ruhe", () => {
+  // Regression 2026-11-23: die Keyframes standen bei 8 %..70 % auf opacity 1,
+  // und die Spitze des Bandes (44 % `--text`) las sich ueber dem
+  // Nothing-Panel als graue Platte. Gemessen am Screenshot
+  // login-dark-desktop.png: rgb(111,111,111) auf einer #0b-Karte, hell
+  // rgb(214) auf #fff. Erlaubt ist hoechstens die Ruhe-Deckkraft 0.22.
+  const body = keyframeBody("login-scanline");
+  const opacities = [...body.matchAll(/opacity\s*:\s*([\d.]+)/g)].map((m) => Number(m[1]));
+  assert.ok(opacities.length >= 2, "die Keyframes aendern die Deckkraft nicht");
+  for (const value of opacities) {
+    assert.ok(
+      value <= 0.22,
+      `opacity ${value} im Keyframe liest ueber dem Panel als Platte; hoechstens 0.22`,
+    );
+  }
+  // Und der deaktivierte Knopf ist eine gedaempfte Flaeche, kein halb
+  // durchsichtiger Accent: `opacity: .5` ergab rgb(128,128,128), dasselbe
+  // Grau wie das Band.
+  const disabled = ruleBody(".primary:disabled");
+  assert.doesNotMatch(disabled, /\bopacity\b/, "der deaktivierte Knopf wird wieder halbtransparent");
+  assert.match(disabled, /background:\s*var\(--bg-hover\)/);
+});
+
 test("Der Kommentar nennt die Kollision und nicht das Gegenteil", () => {
   // Der alte Kommentar behauptete, `Reveal` fahre nur `opacity` und `filter`
   // und die beidenAnimationen griffen nicht in dieselbe Eigenschaft ein. Genau

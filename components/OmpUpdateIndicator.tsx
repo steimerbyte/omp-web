@@ -203,12 +203,11 @@ export function OmpUpdateIndicator() {
             flexDirection: "column",
             overflow: "hidden",
             border: "1px solid var(--border)",
-            borderRadius: 10,
+            borderRadius: "var(--radius-panel)",
             background: "var(--bg-panel)",
-            boxShadow: "0 18px 46px rgba(0,0,0,0.28)",
           }}
         >
-          <div style={{ padding: "13px 14px 11px", borderBottom: "1px solid var(--border)", background: "linear-gradient(135deg, color-mix(in srgb, var(--warning) 10%, var(--bg-panel)), var(--bg-panel) 65%)" }}>
+          <div style={{ padding: "13px 14px 11px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
               <div>
                 <div style={{ color: "var(--text-dim)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase" }}>{t("updates.dialogEyebrow")}</div>

@@ -183,13 +183,12 @@ export function FileContextMenu({ target, onClose, onMutated, onNotify, onOpenIm
   // Explorer. Grund ist das Koordinatensystem, nicht die Stapelebene:
   // `position: fixed` richtet sich nach dem Bezugssystem des Vorfahren, und
   // jeder Vorfahre mit `transform`, `filter`, `backdrop-filter`, `perspective`,
-  // `contain` oder `will-change` eroeffnet ein eigenes. Im grossen
-  // Explorer-Fenster tut das bereits der Backdrop (`backdrop-filter:
-  // blur(8px)`, `FileExplorerWindow.module.css:75`) und auch das Panel selbst.
-  // `left`/`top` waeren dann Koordinaten RELATIV ZU DIESEM FENSTER statt zum
-  // Viewport, und `window.innerWidth` waere die falsche Bezugsbreite. Das
-  // Menue stuende dann um genau den Fensterrand daneben — 5vh/5vw plus 1px
-  // Rahmen, im gemessenen Fall 48px in der Breite und 49px in der Hoehe.
+  // `contain` oder `will-change` eroeffnet ein eigenes. Traegt der umgebende
+  // Explorer einmal eine solche Eigenschaft, waeren `left`/`top` Koordinaten
+  // RELATIV ZU DIESEM FENSTER statt zum Viewport, und `window.innerWidth`
+  // waere die falsche Bezugsbreite. Das Menue stuende dann um genau den
+  // Fensterrand daneben — 5vh/5vw plus 1px Rahmen, im gemessenen Fall 48px in
+  // der Breite und 49px in der Hoehe.
   // Der Ziel wird beim ersten Render gelesen statt in einem Effekt nachgetragen:
   // auf dem Server ist `document` nicht da, im Browser schon beim ersten Render
   // — es gibt also keine Zwischenphase mehr, in der das Panel ohne Portal
@@ -694,7 +693,6 @@ export function FileActionToast({ notice, onDismiss }: { notice: FileActionNotic
         background: "var(--bg-panel)",
         border: `1px solid color-mix(in srgb, ${isError ? "var(--danger)" : "var(--accent)"} 52%, var(--border))`,
         borderRadius: 6,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.24)",
       }}
     >
       <span style={{ minWidth: 0, flex: 1, fontSize: 11, lineHeight: 1.35, color: isError ? "var(--danger)" : "var(--text)", overflowWrap: "anywhere" }}>
