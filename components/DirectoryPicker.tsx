@@ -209,7 +209,7 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
         <DialogPrimitive.Content
           data-slot="dialog-content"
           className="fixed top-1/2 left-1/2 z-50 flex w-auto max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 rounded-none p-0 outline-none ring-0 sm:max-w-none"
-          style={{ zIndex: PICKER_Z_INDEX, width: 520, maxWidth: "calc(100vw - 16px)", height: "min(620px, calc(100dvh - 16px))", maxHeight: "calc(100dvh - 16px)", flexDirection: "column", overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+          style={{ zIndex: PICKER_Z_INDEX, width: 520, maxWidth: "calc(100vw - 16px)", height: "min(620px, calc(100dvh - 16px))", maxHeight: "calc(100dvh - 16px)", flexDirection: "column", overflow: "hidden", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius-panel)" }}
           // Radix setzt beim Oeffnen sonst auf das erste fokussierbare Element,
           // und das ist der X-Knopf in der Kopfzeile. Das `autoFocus` am
           // Eingabefeld aus dem Handcode greift nicht, weil es im Portal-Mount
@@ -334,7 +334,7 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
             ) : (
               <div style={{ padding: 8, color: "var(--text-dim)", fontSize: 11 }}>{t("directoryPicker.noSubdirectories")}</div>
             )}
-            {(loadError || error) && <div style={{ padding: "8px", color: "#dc2626", fontSize: 11 }}>{loadError ?? error}</div>}
+            {(loadError || error) && <div style={{ padding: "8px", color: "var(--danger)", fontSize: 11 }}>{loadError ?? error}</div>}
           </div>
 
           <div className="directory-picker-footer" style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, flexShrink: 0, padding: "10px 18px", borderTop: "1px solid var(--border)" }}>
@@ -345,7 +345,7 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
               onClick={() => onSelect(currentPath)}
               disabled={!canSelect}
               title={hasUncommittedPath ? t("directoryPicker.openBeforeSelecting") : t("directoryPicker.selectCurrentDirectory")}
-              style={{ padding: "6px 16px", border: 0, borderRadius: 6, background: "var(--accent)", color: "#fff", fontSize: 13, fontWeight: 600, opacity: canSelect ? 1 : 0.6, cursor: canSelect ? "pointer" : "default" }}
+              style={{ padding: "6px 16px", border: 0, borderRadius: 6, background: "var(--accent)", color: "var(--accent-fg, var(--bg))", fontSize: 13, fontWeight: 600, opacity: canSelect ? 1 : 0.6, cursor: canSelect ? "pointer" : "default" }}
             >
               {busy ? t("i18n.checking") : t("directoryPicker.selectThisFolder")}
             </button>

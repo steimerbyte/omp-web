@@ -1793,7 +1793,6 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
                         background: "var(--bg)",
                         border: "1px solid var(--border)",
                         borderRadius: "var(--radius-panel)",
-                        boxShadow: "0 6px 20px rgba(0,0,0,0.14)",
                         boxSizing: "border-box",
                         overflow: "hidden",
                       }}

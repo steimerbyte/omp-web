@@ -142,7 +142,6 @@ export function ProjectTrustDialog({
             border: "1px solid var(--border)",
             borderRadius: 8,
             background: "var(--bg-panel)",
-            boxShadow: "0 12px 36px rgba(0,0,0,0.24)",
           }}
           onEscapeKeyDown={blockWhileBusy}
           onPointerDownOutside={blockWhileBusy}
@@ -166,7 +165,7 @@ export function ProjectTrustDialog({
               height="20"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="#f59e0b"
+              stroke="var(--warning)"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -208,7 +207,7 @@ export function ProjectTrustDialog({
                 {cwd}
               </code>
               {error && (
-                <div role="alert" style={{ marginTop: 10, color: "#ef4444", fontSize: 12, lineHeight: 1.5 }}>
+                <div role="alert" style={{ marginTop: 10, color: "var(--danger)", fontSize: 12, lineHeight: 1.5 }}>
                   {error}
                 </div>
               )}
@@ -250,7 +249,7 @@ export function ProjectTrustDialog({
                 border: "1px solid var(--accent)",
                 borderRadius: 5,
                 background: "var(--accent)",
-                color: "white",
+                color: "var(--accent-fg, var(--bg))",
                 cursor: busy ? "wait" : "pointer",
                 opacity: busy ? 0.7 : 1,
                 fontSize: 12,

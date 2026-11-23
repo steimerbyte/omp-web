@@ -3,9 +3,13 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: var(--bg);
+  background-color: var(--bg);
+  /* Dot dither on the surface behind the card. 6 % ink is enough to read as a
+     texture in both modes and never competes with the form. */
+  background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1.6px);
+  background-size: 4px 4px;
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
 }
 
 .card {
@@ -13,7 +17,7 @@
   max-width: 470px;
   padding: 26px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--bg-panel);
 }
 
@@ -332,8 +336,11 @@
 .field > span {
   display: block;
   margin-bottom: 5px;
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
@@ -342,7 +349,7 @@
   display: flex;
   align-items: stretch;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--bg);
   overflow: hidden;
 }
@@ -355,7 +362,7 @@
  * and `--bg-panel` is the card colour in either scheme. */
 .fieldGroup {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--bg);
   overflow: hidden;
 }
@@ -413,13 +420,15 @@
   width: 100%;
   height: 36px;
   margin-bottom: 14px;
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
   background: var(--accent);
   color: var(--bg);
   cursor: pointer;
   font: 700 11px var(--font-mono);
-  line-height: 36px;
+  line-height: 34px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
   text-align: center;
   text-decoration: none;
 }

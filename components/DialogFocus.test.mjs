@@ -350,21 +350,19 @@ test("Ein `bare`-Fenster liegt ueber seinem eigenen Hintergrund und mittig", asy
   }
 });
 
-test("Kein Overlay traegt ein backdrop-filter, das es vorher nicht gab", async () => {
+test("Kein Overlay weichzeichnet den Hintergrund", async () => {
   const { root } = await mount(React.createElement(pickerHarness()));
   await settle();
 
-  // `DialogOverlay` bringt `supports-backdrop-filter:backdrop-blur-xs` mit.
-  // Der alte Backdrop hatte keinen, deshalb hebt `NO_BACKDROP_BLUR` ihn auf.
+  // Die Nothing-Oberflaeche kennt keinen Blur: `DialogOverlay` bringt keinen
+  // mit. `NO_BACKDROP_BLUR` an einzelnen Aufrufern ist damit ein No-op, haelt
+  // die Zusage aber fuer den Fall, dass die Primaerebene wieder einen bekommt.
   // `linkedom` wertet Klassen nicht aus, deshalb wird die Kette hier als
-  // Zeichenkette geprueft: `backdrop-blur-xs` und `backdrop-blur-none` duerfen
-  // nie nebeneinander stehen, sonst entscheidet die Reihenfolge im Stylesheet
-  // und nicht mehr der Code.
+  // Zeichenkette geprueft; `backdrop-blur-none` bleibt erlaubt.
   for (const overlay of win.document.querySelectorAll('[data-slot="dialog-overlay"]')) {
     const className = String(overlay.getAttribute("class") ?? "");
-    assert.doesNotMatch(className, /backdrop-blur-xs(?![\s\S]*backdrop-blur-none)/,
+    assert.doesNotMatch(className, /backdrop-blur-(?!none)/,
       `das Overlay weichzeichnet ohne sichtbaren Grund: ${className}`);
-    assert.match(className, /backdrop-blur-none/);
   }
 
   await act(async () => { root.unmount(); });

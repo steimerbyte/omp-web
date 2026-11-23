@@ -588,7 +588,6 @@ function PropertiesDialog({ target, onClose, t }: { target: SelectionEntry; onCl
           background: "var(--bg)",
           border: "1px solid var(--border)",
           borderRadius: "var(--radius-panel)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.22)",
           outline: "none",
         }}
       >

@@ -182,7 +182,7 @@ export function TimePickerDialog({
         style={{
           background: "var(--bg-panel)",
           border: "1px solid var(--border)",
-          borderRadius: 14,
+          borderRadius: "var(--radius-panel)",
           color: "var(--text)",
           maxWidth: "calc(100vw - 16px)",
         }}

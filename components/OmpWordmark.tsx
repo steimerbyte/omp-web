@@ -1,4 +1,4 @@
-import { useId, type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode } from "react";
 
 type OmpWordmarkProps = {
   label?: ReactNode;
@@ -15,8 +15,6 @@ export function OmpWordmark({
   style,
   labelStyle,
 }: OmpWordmarkProps) {
-  const gradientId = `omp-pi-gradient-${useId().replaceAll(":", "")}`;
-
   return (
     <span
       style={{
@@ -35,21 +33,14 @@ export function OmpWordmark({
         aria-hidden="true"
         style={{ flexShrink: 0 }}
       >
-        <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="oklch(0.7 0.24 340)" />
-            <stop offset=".5" stopColor="oklch(0.62 0.21 295)" />
-            <stop offset="1" stopColor="oklch(0.81 0.14 200)" />
-          </linearGradient>
-        </defs>
-        <path fill={`url(#${gradientId})`} d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z" />
+        <path fill="currentColor" d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z" />
       </svg>
       <span
         style={{
           minWidth: 0,
           overflow: "hidden",
           color: "inherit",
-          fontFamily: '"Plus Jakarta Sans", Geist, ui-sans-serif, system-ui, sans-serif',
+          fontFamily: "var(--font-body)",
           fontSize: 15,
           fontWeight: 700,
           letterSpacing: "-0.025em",

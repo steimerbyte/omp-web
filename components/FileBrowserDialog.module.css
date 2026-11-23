@@ -24,7 +24,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
   background: var(--bg);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
 }
 
 /* ---- Kopfzeile ---- */

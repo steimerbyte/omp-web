@@ -1687,19 +1687,30 @@ browser-started session and a TUI session resume the same way. Do not strip
 
 ## CSS Variables (`app/globals.css`)
 
-Both themes come from omp's own theme files — `titanium` (omp's default dark
-theme) and `light` — so the browser and the TUI read as one product.
+The palette is the Nothing-OS design system (`~/.omp/agent/managed-skills/
+nothing-os-design/SKILL.md`): monochrome surfaces, OLED black `#000` for the
+dark mode and warm off-white `#f5f5f5` for the light one. `--accent` is the
+interactive colour and is deliberately monochrome (light `#111`, dark `#f2f2f2`)
+— links, focus and primary buttons invert instead of adding a second hue. Red
+is semantic only: `--danger` is the exact Nothing red `#d71921` in the light
+theme and a lighter red in the dark one, where the brand red falls below the
+contrast floor. An imported omp palette
+still wins at runtime (`applyOmpPalette`), so a component must never write a
+raw colour literal.
 
 ```
 --bg --bg-panel --bg-hover --bg-selected --border
 --text --text-muted --text-dim
 --accent --accent-hover --user-bg --assistant-bg --tool-bg --bg-subtle
---success --danger --warning
---font-mono
+--success --danger --warning --violet
+--font-body --font-mono --font-display
 ```
 
-`--font-mono` is a system stack on purpose: a local-first tool must not fetch a
-font from a CDN at build or at runtime.
+Typography has three layers: Space Grotesk (`--font-body`) for text, Space Mono
+(`--font-mono`) for labels and code, Doto (`--font-display`) only at 36 px and
+up. All three are self-hosted under `public/fonts/` (SIL OFL, licence files
+beside the WOFF2) — a local-first tool must not fetch a font from a CDN at build
+or at runtime.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

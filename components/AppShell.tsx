@@ -1400,7 +1400,7 @@ export function AppShell() {
           position: "fixed",
           inset: 0,
           zIndex: 199,
-          background: "rgba(0,0,0,0.4)",
+          background: "color-mix(in srgb, #000 40%, transparent)",
           opacity: sidebarOpen ? 1 : 0,
           pointerEvents: sidebarOpen ? "auto" : "none",
           /* Ein- und Abgang getrennt wie beim Datei-Panel-Backdrop in
@@ -1638,7 +1638,7 @@ export function AppShell() {
                 background: "none",
                 border: "none",
                 borderRight: "1px solid var(--border)",
-                color: "#d97706",
+                color: "var(--warning)",
                 cursor: "pointer",
                 flexShrink: 0,
                 fontSize: 11,
@@ -1760,7 +1760,7 @@ export function AppShell() {
                       background: "none", border: "none",
                       borderTop: "2px solid transparent",
                       borderRight: "1px solid var(--border)",
-                      color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+                      color: isError ? "var(--danger)" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
                       cursor: disabled ? "not-allowed" : "pointer",
                       opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
                       flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
@@ -1768,11 +1768,11 @@ export function AppShell() {
                     }}
                     onMouseEnter={(e) => {
                       if (disabled) return;
-                      e.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
+                      e.currentTarget.style.color = isError ? "var(--danger)" : "var(--text)";
                       e.currentTarget.style.background = "var(--bg-hover)";
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
+                      e.currentTarget.style.color = isError ? "var(--danger)" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
                       e.currentTarget.style.background = "none";
                     }}
                   >
@@ -1862,8 +1862,8 @@ export function AppShell() {
             let ctxStr: string | null = null;
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              if (pct !== null && pct > 90) ctxColor = "#ef4444";
-              else if (pct !== null && pct > 70) ctxColor = "rgba(234,179,8,0.95)";
+              if (pct !== null && pct > 90) ctxColor = "var(--danger)";
+              else if (pct !== null && pct > 70) ctxColor = "var(--warning)";
               const used = contextUsage.tokens !== null ? fmt(contextUsage.tokens) : "?";
               ctxStr = pct !== null
                 ? `${pct.toFixed(0)}% · ${used}/${fmt(contextUsage.contextWindow)}`
@@ -2049,7 +2049,6 @@ export function AppShell() {
                 <Reveal style={{
                   background: "var(--bg-panel)",
                   borderBottom: "1px solid var(--border)",
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
                   padding: "12px 16px",
                 }}>
                   {sessionStats ? (() => {
@@ -2316,7 +2315,7 @@ export function AppShell() {
               role="alert"
               style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
             >
-               <div style={{ fontSize: 14, color: "#dc2626" }}>{translate("workspace.unable")}</div>
+               <div style={{ fontSize: 14, color: "var(--danger)" }}>{translate("workspace.unable")}</div>
               <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
                 {initialNavigation.requestedCwd}
               </div>

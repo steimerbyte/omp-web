@@ -248,8 +248,7 @@ export function SkillsManagerView({
             width: 7,
             height: 7,
             borderRadius: "50%",
-            background: badge > 0 ? "#d97706" : "var(--accent)",
-            boxShadow: badge > 0 ? "none" : "0 0 4px var(--accent)",
+            background: badge > 0 ? "var(--warning)" : "var(--accent)",
           }}
         />
         <span style={{ minWidth: 0, flex: 1 }}>
@@ -270,7 +269,7 @@ export function SkillsManagerView({
             {badge > 0 && (
               <span
                 aria-label={`${t("skills.problem")}: ${badge}`}
-                style={{ color: "#d97706", fontSize: 11, flexShrink: 0 }}
+                style={{ color: "var(--warning)", fontSize: 11, flexShrink: 0 }}
               >
                 ⚠
               </span>
@@ -392,7 +391,7 @@ export function SkillsManagerView({
             fontSize: 12,
           }}
         >
-          <strong style={{ color: "#d97706" }}>{t("skills.storeProblem")}: </strong>
+          <strong style={{ color: "var(--warning)" }}>{t("skills.storeProblem")}: </strong>
           {data.diagnostics.map((diagnostic) => diagnostic.message).join(" · ")}
         </div>
       )}
@@ -417,7 +416,7 @@ export function SkillsManagerView({
                 {t("i18n.loading")}
               </div>
             ) : loadError ? (
-              <div role="alert" style={{ padding: "10px 8px", fontSize: 11, color: "#f87171" }}>
+              <div role="alert" style={{ padding: "10px 8px", fontSize: 11, color: "var(--danger)" }}>
                 {t("skills.loadFailed")} {loadError}
               </div>
             ) : skills.length === 0 ? (
@@ -442,8 +441,8 @@ export function SkillsManagerView({
                 marginBottom: 14,
                 padding: "10px 12px",
                 borderRadius: 7,
-                border: "1px solid rgba(217,119,6,0.5)",
-                background: "rgba(217,119,6,0.08)",
+                border: "1px solid color-mix(in srgb, var(--warning) 50%, transparent)",
+                background: "color-mix(in srgb, var(--warning) 8%, transparent)",
                 fontSize: 12,
               }}
             >
@@ -495,7 +494,7 @@ export function SkillsManagerView({
               </p>
             </div>
           ) : detailError ? (
-            <div role="alert" style={{ fontSize: 12, color: "#f87171" }}>
+            <div role="alert" style={{ fontSize: 12, color: "var(--danger)" }}>
               {detailError}
             </div>
           ) : detailLoading ? (
@@ -553,7 +552,7 @@ export function SkillsManagerView({
                       setDeleteError(null);
                       setDeleteOpen(true);
                     }}
-                    style={{ ...smallButton, color: "#f87171" }}
+                    style={{ ...smallButton, color: "var(--danger)" }}
                   >
                     {t("skills.delete")}
                   </button>
@@ -566,13 +565,13 @@ export function SkillsManagerView({
                   style={{
                     padding: "8px 10px",
                     borderRadius: 6,
-                    border: "1px solid rgba(217,119,6,0.45)",
-                    background: "rgba(217,119,6,0.07)",
+                    border: "1px solid color-mix(in srgb, var(--warning) 45%, transparent)",
+                    background: "color-mix(in srgb, var(--warning) 7%, transparent)",
                     fontSize: 12,
                     lineHeight: 1.5,
                   }}
                 >
-                  <strong style={{ color: "#d97706" }}>{t("skills.problem")}: </strong>
+                  <strong style={{ color: "var(--warning)" }}>{t("skills.problem")}: </strong>
                   {problems.map((diagnostic) => diagnostic.message).join(" · ")}
                 </div>
               )}
@@ -605,7 +604,7 @@ export function SkillsManagerView({
               />
 
               {saveError && (
-                <div role="alert" style={{ fontSize: 12, color: "#f87171" }}>
+                <div role="alert" style={{ fontSize: 12, color: "var(--danger)" }}>
                   {t("skills.saveFailed")} {saveError}{" "}
                   {saveError.includes("changed on disk") && (
                     <button type="button" onClick={() => setDetailKey((key) => key + 1)} style={linkButton}>
@@ -650,7 +649,7 @@ export function SkillsManagerView({
                   {t("skills.discard")}
                 </button>
                 {dirty && (
-                  <span style={{ fontSize: 11, color: "#d97706" }}>{t("skills.dirty")}</span>
+                  <span style={{ fontSize: 11, color: "var(--warning)" }}>{t("skills.dirty")}</span>
                 )}
               </div>
             </div>
@@ -686,12 +685,11 @@ export function SkillsManagerView({
               maxWidth: "100%",
               background: "var(--bg)",
               border: "1px solid var(--border)",
-              borderRadius: 10,
+              borderRadius: "var(--radius-panel)",
               padding: 18,
               display: "flex",
               flexDirection: "column",
               gap: 12,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.28)",
             }}
           >
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
@@ -701,7 +699,7 @@ export function SkillsManagerView({
               {t("skills.deleteBody")}
             </p>
             {deleteError && (
-              <div role="alert" style={{ fontSize: 12, color: "#f87171" }}>
+              <div role="alert" style={{ fontSize: 12, color: "var(--danger)" }}>
                 {t("skills.deleteFailed")} {deleteError}
               </div>
             )}
@@ -722,9 +720,9 @@ export function SkillsManagerView({
                 style={{
                   padding: "6px 12px",
                   borderRadius: 7,
-                  border: "1px solid rgba(248,113,113,0.6)",
-                  background: "rgba(248,113,113,0.12)",
-                  color: "#f87171",
+                  border: "1px solid color-mix(in srgb, var(--danger) 60%, transparent)",
+                  background: "color-mix(in srgb, var(--danger) 12%, transparent)",
+                  color: "var(--danger)",
                   cursor: deleting ? "wait" : "pointer",
                   fontSize: 12,
                   fontWeight: 600,

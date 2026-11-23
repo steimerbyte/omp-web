@@ -508,7 +508,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center text-red-400">
+      <div className="flex h-full items-center justify-center text-[var(--danger)]">
         {error}
       </div>
     );
@@ -525,7 +525,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
     >
       {isDragOver && !sessionBusy && (
         <motion.div
-          className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]"
+          className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center"
+          style={{ background: "color-mix(in srgb, var(--accent) 6%, transparent)" }}
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: DURATION_ENTER, ease: EASE_STANDARD }}
@@ -537,8 +538,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
                 fallen lassen" sagt. Ein Ring im selben Takt wie jeder andere
                 Wartezustand (`PULSE_TRANSITION`, 1.5 s) sagt dasselbe. */}
             <motion.div
-              className="absolute h-[720px] w-[720px] rounded-full border-[1.5px] border-solid border-[rgba(37,99,235,0.5)]"
-              style={{ transformOrigin: "center" }}
+              className="absolute h-[720px] w-[720px] rounded-full border-[1.5px] border-solid"
+              style={{ transformOrigin: "center", borderColor: "color-mix(in srgb, var(--accent) 50%, transparent)" }}
               initial={{ scale: 0, opacity: 0.6 }}
               // An endless ring must not survive the stand-still setting.
               animate={animationMode === "off" ? { opacity: 0.35 } : { scale: [0, 1], opacity: [0.6, 0] }}
@@ -551,12 +552,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
           </div>
           <svg
             width="280" height="280" viewBox="0 0 140 140" fill="none" xmlns="http://www.w3.org/2000/svg"
-            className="drop-shadow-[0_6px_18px_rgba(37,99,235,0.18)]"
           >
-            <rect x="28" y="44" width="84" height="60" rx="8" fill="rgba(37,99,235,0.08)" stroke="rgba(37,99,235,0.50)" strokeWidth="1.8"/>
-            <path d="M36 100 L54 72 L68 88 L80 74 L104 100Z" fill="rgba(37,99,235,0.16)" stroke="rgba(37,99,235,0.40)" strokeWidth="1.4" strokeLinejoin="round"/>
-            <circle cx="96" cy="58" r="8" fill="rgba(37,99,235,0.22)" stroke="rgba(37,99,235,0.55)" strokeWidth="1.6"/>
-            <g stroke="rgba(37,99,235,0.45)" strokeWidth="1.4" strokeLinecap="round">
+            <rect x="28" y="44" width="84" height="60" rx="8" style={{ fill: "color-mix(in srgb, var(--accent) 8%, transparent)", stroke: "color-mix(in srgb, var(--accent) 50%, transparent)" }} strokeWidth="1.8"/>
+            <path d="M36 100 L54 72 L68 88 L80 74 L104 100Z" style={{ fill: "color-mix(in srgb, var(--accent) 16%, transparent)", stroke: "color-mix(in srgb, var(--accent) 40%, transparent)" }} strokeWidth="1.4" strokeLinejoin="round"/>
+            <circle cx="96" cy="58" r="8" style={{ fill: "color-mix(in srgb, var(--accent) 22%, transparent)", stroke: "color-mix(in srgb, var(--accent) 55%, transparent)" }} strokeWidth="1.6"/>
+            <g style={{ stroke: "color-mix(in srgb, var(--accent) 45%, transparent)" }} strokeWidth="1.4" strokeLinecap="round">
               <line x1="96" y1="46" x2="96" y2="43"/>
               <line x1="96" y1="70" x2="96" y2="73"/>
               <line x1="84" y1="58" x2="81" y2="58"/>
@@ -947,7 +947,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
               fontSize: 11,
               fontFamily: "var(--font-mono)",
               cursor: "pointer",
-              boxShadow: "0 2px 10px rgba(0,0,0,0.28)",
             }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1121,11 +1120,11 @@ function NoticeShelf({ notices, floating = false, align = "left" }: { notices: N
       <AnimatePresence initial={false}>
         {notices.map((notice, index) => {
           const color = notice.type === "error"
-            ? "#ef4444"
+            ? "var(--danger)"
             : notice.type === "warning"
-              ? "#d97706"
+              ? "var(--warning)"
               : notice.type === "success"
-                ? "#10b981"
+                ? "var(--success)"
                 : "var(--accent)";
           return (
             <motion.div
@@ -1147,15 +1146,12 @@ function NoticeShelf({ notices, floating = false, align = "left" }: { notices: N
                 flexShrink: 0,
                 marginBottom: index === notices.length - 1 ? 0 : 6,
                 overflow: "hidden",
-                borderRadius: 14,
+                borderRadius: "var(--radius-panel)",
                 border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
                 background: "var(--bg)",
                 color: "var(--text-muted)",
                 width: "fit-content",
                 maxWidth: "min(100%, 620px)",
-                boxShadow: floating
-                  ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
-                  : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
                 fontSize: 18,
                 lineHeight: 1.45,
                 transformOrigin: "top center",
@@ -1276,7 +1272,6 @@ function ExtensionDialog({
           justifyContent: "center",
           padding: 16,
           background: "color-mix(in srgb, #000 26%, transparent)",
-          backdropFilter: "blur(2px)",
         }}
       >
         <div
@@ -1290,9 +1285,8 @@ function ExtensionDialog({
             maxHeight: "min(780px, calc(100dvh - 32px))",
             overflow: "hidden",
             border: "1px solid var(--border)",
-            borderRadius: 10,
+            borderRadius: "var(--radius-panel)",
             background: "var(--bg)",
-            boxShadow: "0 24px 80px rgba(0,0,0,0.32)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
@@ -1388,7 +1382,7 @@ function ExtensionDialog({
                                 border: `1px solid ${checked ? "var(--accent)" : "var(--text-dim)"}`,
                                 borderRadius: question.multi ? 4 : "50%",
                                 background: checked ? "var(--accent)" : "transparent",
-                                color: "#fff",
+                                color: "var(--accent-fg, var(--bg))",
                                 fontSize: 10,
                                 lineHeight: 1,
                               }}
@@ -1475,7 +1469,7 @@ function ExtensionDialog({
                 border: "1px solid var(--accent)",
                 borderRadius: 6,
                 background: "var(--accent)",
-                color: "#fff",
+                color: "var(--accent-fg, var(--bg))",
                 cursor: canSubmit ? "pointer" : "not-allowed",
                 opacity: canSubmit ? 1 : 0.45,
                 fontWeight: 650,
@@ -1501,7 +1495,6 @@ function ExtensionDialog({
           justifyContent: "center",
           padding: 16,
           background: "color-mix(in srgb, #000 30%, transparent)",
-          backdropFilter: "blur(2px)",
         }}
       >
         <div
@@ -1515,9 +1508,8 @@ function ExtensionDialog({
             height: "min(820px, calc(100dvh - 32px))",
             overflow: "hidden",
             border: "1px solid var(--border)",
-            borderRadius: 10,
+            borderRadius: "var(--radius-panel)",
             background: "var(--bg)",
-            boxShadow: "0 24px 80px rgba(0,0,0,0.34)",
           }}
         >
           <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
@@ -1571,7 +1563,7 @@ function ExtensionDialog({
               <button
                 type="button"
                 onClick={() => onRespond(request, { value: JSON.stringify({ action: "approve" }) })}
-                style={{ padding: "7px 12px", border: "1px solid var(--accent)", borderRadius: 6, background: "var(--accent)", color: "#fff", cursor: "pointer", fontWeight: 650 }}
+                style={{ padding: "7px 12px", border: "1px solid var(--accent)", borderRadius: 6, background: "var(--accent)", color: "var(--accent-fg, var(--bg))", cursor: "pointer", fontWeight: 650 }}
               >
                 {t("chat.approvePlan")}
               </button>
@@ -1593,7 +1585,7 @@ function ExtensionDialog({
         alignItems: "center",
         justifyContent: "center",
         padding: 20,
-        background: "rgba(0,0,0,0.18)",
+        background: "color-mix(in srgb, #000 18%, transparent)",
       }}
     >
       <div
@@ -1604,7 +1596,6 @@ function ExtensionDialog({
           border: "1px solid var(--border)",
           borderRadius: 8,
           background: "var(--bg)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
           overflow: "hidden",
         }}
       >
@@ -1711,7 +1702,7 @@ function ExtensionDialog({
                 borderRadius: 6,
                 border: "1px solid var(--accent)",
                 background: "var(--accent)",
-                color: "#fff",
+                color: "var(--accent-fg, var(--bg))",
                 cursor: "pointer",
               }}
             >
@@ -1725,7 +1716,7 @@ function ExtensionDialog({
                 borderRadius: 6,
                 border: "1px solid var(--accent)",
                 background: "var(--accent)",
-                color: "#fff",
+                color: "var(--accent-fg, var(--bg))",
                 cursor: "pointer",
               }}
             >
@@ -1774,7 +1765,7 @@ function ExtensionCustomPanel({
         alignItems: "center",
         justifyContent: "center",
         padding: 20,
-        background: "rgba(0,0,0,0.18)",
+        background: "color-mix(in srgb, #000 18%, transparent)",
       }}
     >
       <div
@@ -1790,7 +1781,6 @@ function ExtensionCustomPanel({
           border: "1px solid var(--border)",
           borderRadius: 8,
           background: "var(--bg)",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.28)",
           overflow: "hidden",
           outline: "none",
         }}

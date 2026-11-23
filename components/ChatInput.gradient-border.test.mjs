@@ -121,7 +121,7 @@ test("the ring replaces the border colour and keeps the border width", async () 
   assert.match(style, /padding:\s*10px 10px 10px 14px/, "the padding of the bar is untouched");
 });
 
-test("the amber border of a running agent is gone while the ring is on", async () => {
+test("the warning border of a running agent is gone while the ring is on", async () => {
   setAnimationMode("full");
   setGradientBorderSettings({ ...DEFAULT_GRADIENT_BORDER_SETTINGS, enabled: true });
   const container = await mountInput({
@@ -131,11 +131,11 @@ test("the amber border of a running agent is gone while the ring is on", async (
     onFollowUp() {},
   });
   const style = bar(container).getAttribute("style") ?? "";
-  assert.doesNotMatch(style, /rgba\(234,\s*179,\s*8/, "the amber border does not fight the ring");
+  assert.doesNotMatch(style, /border:[^;]*var\(--warning\)/, "the warning border does not fight the ring");
   assert.match(style, /border:\s*1px solid transparent/);
 });
 
-test("the amber border is still there when the ring is not", async () => {
+test("the warning border is still there when the ring is not", async () => {
   setAnimationMode("full");
   setGradientBorderSettings({ ...DEFAULT_GRADIENT_BORDER_SETTINGS, enabled: false });
   const container = await mountInput({
@@ -147,7 +147,7 @@ test("the amber border is still there when the ring is not", async () => {
   const element = bar(container);
   const style = element.getAttribute("style") ?? "";
   assert.doesNotMatch(element.getAttribute("class") ?? "", /omp-gradient-border/, "no ring without the effect");
-  assert.match(style, /rgba\(234,\s*179,\s*8,\s*0\.4\)/, "the amber border keeps its place");
+  assert.match(style, /border:\s*1px solid color-mix\(in srgb, var\(--warning\)/, "the warning border keeps its place");
 });
 
 test("an idle bar keeps its own border", async () => {

@@ -103,10 +103,10 @@ function SkillDetail({
               flexShrink: 0,
               background:
                 label === "project"
-                  ? "rgba(99,102,241,0.12)"
-                  : "rgba(120,120,120,0.12)",
+                  ? "color-mix(in srgb, var(--violet) 12%, transparent)"
+                  : "var(--bg-subtle)",
               color:
-                label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
+                label === "project" ? "var(--violet)" : "var(--text-dim)",
             }}
           >
             {sourceText}
@@ -148,7 +148,7 @@ function SkillDetail({
             </span>
           )}
           {saveError && (
-            <span style={{ fontSize: 12, color: "#f87171", overflowWrap: "anywhere" }}>
+            <span style={{ fontSize: 12, color: "var(--danger)", overflowWrap: "anywhere" }}>
               {saveError}
             </span>
           )}
@@ -239,7 +239,7 @@ function SkillDetail({
                 style={{
                   fontFamily: "var(--font-mono)",
                   fontSize: 12,
-                  color: "#d97706",
+                  color: "var(--warning)",
                 }}
               >
                 {shortVersion(updateStatus.latestVersion)}
@@ -253,9 +253,9 @@ function SkillDetail({
                   color: checkingUpdate
                     ? "var(--accent)"
                     : updateStatus?.state === "up-to-date"
-                      ? "#16a34a"
+                      ? "var(--success)"
                       : updateStatus?.state === "error"
-                          ? "#ef4444"
+                          ? "var(--danger)"
                           : "var(--text-dim)",
                 }}
               >
@@ -277,7 +277,7 @@ function SkillDetail({
                   border: "none",
                   borderRadius: 5,
                   background: "var(--accent)",
-                  color: "#fff",
+                  color: "var(--accent-fg, var(--bg))",
                   cursor: updating || checkingUpdate ? "not-allowed" : "pointer",
                   opacity: updating || checkingUpdate ? 0.5 : 1,
                   fontSize: 11,
@@ -289,7 +289,7 @@ function SkillDetail({
             )}
           </div>
           {updateError && (
-            <span style={{ fontSize: 12, color: "#ef4444" }}>{updateError}</span>
+            <span style={{ fontSize: 12, color: "var(--danger)" }}>{updateError}</span>
           )}
         </div>
       )}
@@ -461,7 +461,7 @@ function AddSkillPanel({
               borderRadius: 6,
               border: "none",
               background: "var(--accent)",
-              color: "#fff",
+              color: "var(--accent-fg, var(--bg))",
               cursor: searching || !query.trim() ? "not-allowed" : "pointer",
               opacity: searching || !query.trim() ? 0.5 : 1,
               flexShrink: 0,
@@ -523,11 +523,11 @@ function AddSkillPanel({
 
         {/* Errors */}
         {searchError && (
-          <div style={{ fontSize: 12, color: "#f87171" }}>{searchError}</div>
+          <div style={{ fontSize: 12, color: "var(--danger)" }}>{searchError}</div>
         )}
         {installError && (
           <div
-            style={{ fontSize: 12, color: "#f87171", wordBreak: "break-word" }}
+            style={{ fontSize: 12, color: "var(--danger)", wordBreak: "break-word" }}
           >
             {installError}
           </div>
@@ -628,9 +628,9 @@ function AddSkillPanel({
                       isInstalled || isInstalling || installing !== null
                         ? "not-allowed"
                         : "pointer",
-                    background: isInstalled ? "rgba(34,197,94,0.1)" : "none",
+                    background: isInstalled ? "color-mix(in srgb, var(--success) 10%, transparent)" : "none",
                     color: isInstalled
-                      ? "#16a34a"
+                      ? "var(--success)"
                       : isInstalling
                         ? "var(--accent)"
                         : "var(--text-muted)",
@@ -898,7 +898,6 @@ export function SkillsConfig({
           borderRadius: embedded ? 0 : 10,
           display: "flex",
           flexDirection: "column",
-          boxShadow: embedded ? "none" : "0 8px 32px rgba(0,0,0,0.18)",
           overflow: "hidden",
         }}
       >
@@ -1011,7 +1010,7 @@ export function SkillsConfig({
                   style={{
                     padding: "10px 8px",
                     fontSize: 11,
-                    color: "#f87171",
+                    color: "var(--danger)",
                   }}
                 >
                   {error}
@@ -1109,12 +1108,8 @@ export function SkillsConfig({
                             background: disabled
                               ? "var(--border)"
                               : "var(--accent)",
-                            boxShadow: disabled
-                              ? "none"
-                              : "0 0 4px var(--accent)",
                             transition:
-                              "background-color var(--duration-hover) var(--ease-standard), " +
-                              "box-shadow var(--duration-hover) var(--ease-standard)",
+                              "background-color var(--duration-hover) var(--ease-standard)",
                           }}
                         />
                         <span
@@ -1141,7 +1136,7 @@ export function SkillsConfig({
                             <span
                                title={t("i18n.updateAvailable")}
                               style={{
-                                color: "#d97706",
+                                color: "var(--warning)",
                                 fontSize: 13,
                                 lineHeight: 1,
                                 flexShrink: 0,
@@ -1371,7 +1366,7 @@ export function SkillsConfig({
             {Object.values(updateStatuses).filter(
               (status) => status.state === "update-available",
             ).length > 0 && (
-              <span style={{ fontSize: 12, color: "#d97706" }}>
+              <span style={{ fontSize: 12, color: "var(--warning)" }}>
                 {
                   Object.values(updateStatuses).filter(
                     (status) => status.state === "update-available",

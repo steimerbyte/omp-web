@@ -57,7 +57,6 @@ function Toggle({
           height: 16,
           borderRadius: "50%",
           background: "var(--bg)",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.22)",
           transform: checked ? "translateX(18px)" : "none",
           transition:
             "transform var(--duration-enter) var(--ease-standard), background-color var(--duration-enter) var(--ease-standard)",

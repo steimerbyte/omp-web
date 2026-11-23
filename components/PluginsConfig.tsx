@@ -62,9 +62,9 @@ function findInstalledPackage(
 
 function statusColor(status: PluginPackageInfo["status"]): string {
   if (status === "loaded") return "var(--accent)";
-  if (status === "installed") return "#f59e0b";
+  if (status === "installed") return "var(--warning)";
   if (status === "disabled") return "var(--text-dim)";
-  return "#ef4444";
+  return "var(--danger)";
 }
 
 function ResourceList({ pkg }: { pkg: PluginPackageInfo }) {
@@ -164,8 +164,8 @@ function ScopeTag({ scope }: { scope: PluginScope }) {
         padding: "1px 5px",
         borderRadius: 3,
         flexShrink: 0,
-        background: scope === "project" ? "rgba(99,102,241,0.12)" : "rgba(120,120,120,0.12)",
-        color: scope === "project" ? "rgba(99,102,241,0.85)" : "var(--text-dim)",
+        background: scope === "project" ? "color-mix(in srgb, var(--violet) 12%, transparent)" : "var(--bg-subtle)",
+        color: scope === "project" ? "var(--violet)" : "var(--text-dim)",
       }}
     >
       {scope}
@@ -176,10 +176,10 @@ function ScopeTag({ scope }: { scope: PluginScope }) {
 function buttonStyle(disabled?: boolean, danger?: boolean): React.CSSProperties {
   return {
     padding: "6px 12px",
-    background: danger ? "rgba(239,68,68,0.08)" : "none",
+    background: danger ? "color-mix(in srgb, var(--danger) 8%, transparent)" : "none",
     border: "1px solid var(--border)",
     borderRadius: 6,
-    color: danger ? "#ef4444" : "var(--text-muted)",
+    color: danger ? "var(--danger)" : "var(--text-muted)",
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 12,
     opacity: disabled ? 0.5 : 1,
@@ -288,11 +288,11 @@ function AddPluginPanel({
           >
             <svg width="28" height="28" viewBox="0 0 800 800" aria-hidden="true" focusable="false" style={{ flexShrink: 0 }}>
               <path
-                fill="#000"
+                fill="currentColor"
                 fillRule="evenodd"
                 d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
               />
-              <path fill="#000" d="M517.36 400H634.72V634.72H517.36Z" />
+              <path fill="currentColor" d="M517.36 400H634.72V634.72H517.36Z" />
             </svg>
             oh-my-pi plugins
           </a>
@@ -351,7 +351,7 @@ function AddPluginPanel({
           style={{
             ...buttonStyle(busy || !source.trim()),
             background: "var(--accent)",
-            color: "white",
+            color: "var(--accent-fg, var(--bg))",
             borderColor: "var(--accent)",
           }}
         >
@@ -398,7 +398,7 @@ function AddPluginPanel({
       </div>
 
       {actionError && (
-        <div style={{ fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap" }}>
+        <div style={{ fontSize: 12, color: "var(--danger)", whiteSpace: "pre-wrap" }}>
           {actionError}
         </div>
       )}
@@ -448,7 +448,7 @@ function PackageDetail({
                 fontSize: 10,
                 padding: "1px 5px",
                 borderRadius: 3,
-                background: "rgba(120,120,120,0.12)",
+                background: "var(--bg-subtle)",
                 color: "var(--text-dim)",
               }}
             >
@@ -460,8 +460,8 @@ function PackageDetail({
                 fontSize: 10,
                 padding: "1px 5px",
                 borderRadius: 3,
-                background: "rgba(245,158,11,0.12)",
-                color: "#d97706",
+                background: "color-mix(in srgb, var(--warning) 12%, transparent)",
+                color: "var(--warning)",
               }}
             >
               {t("i18n.filtered")}
@@ -529,7 +529,7 @@ function PackageDetail({
         <div style={{ color: "var(--text-dim)" }}>{t("i18n.installedPath")}</div>
         <div
           style={{
-            color: pkg.installedPath ? "var(--text-muted)" : "#ef4444",
+            color: pkg.installedPath ? "var(--text-muted)" : "var(--danger)",
             fontFamily: "var(--font-mono)",
             overflowWrap: "anywhere",
           }}
@@ -550,12 +550,12 @@ function PackageDetail({
       </div>
 
       {actionMessage && (
-        <div style={{ fontSize: 12, color: "#16a34a" }}>
+        <div style={{ fontSize: 12, color: "var(--success)" }}>
           {actionMessage}
         </div>
       )}
       {actionError && (
-        <div style={{ fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap" }}>
+        <div style={{ fontSize: 12, color: "var(--danger)", whiteSpace: "pre-wrap" }}>
           {actionError}
         </div>
       )}
@@ -733,7 +733,6 @@ export function PluginsConfig({
           borderRadius: embedded ? 0 : 8,
           display: "flex",
           flexDirection: "column",
-          boxShadow: embedded ? "none" : "0 8px 32px rgba(0,0,0,0.18)",
           overflow: "hidden",
         }}
       >
@@ -816,7 +815,7 @@ export function PluginsConfig({
                   ))}
                 </div>
               ) : error ? (
-                <div style={{ padding: "10px 8px", fontSize: 11, color: "#ef4444" }}>
+                <div style={{ padding: "10px 8px", fontSize: 11, color: "var(--danger)" }}>
                   {error}
                 </div>
               ) : packages.length === 0 ? (
@@ -1035,7 +1034,7 @@ export function PluginsConfig({
             {data?.diagnostics.length ? (
               <span
                 title={data.diagnostics.map((d) => `${d.type}: ${d.source ? `${d.source}: ` : ""}${d.message}`).join("\n")}
-                style={{ color: data.diagnostics.some((d) => d.type === "error") ? "#ef4444" : "#d97706" }}
+                style={{ color: data.diagnostics.some((d) => d.type === "error") ? "var(--danger)" : "var(--warning)" }}
               >
                 {data.diagnostics.length} diagnostic{data.diagnostics.length === 1 ? "" : "s"}
               </span>
