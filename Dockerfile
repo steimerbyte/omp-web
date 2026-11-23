@@ -2,6 +2,9 @@
 # published as TypeScript sources that import `bun:` builtins, so both stages
 # start from the Bun release that package.json's `engines.bun` floor requires.
 ARG BUN_VERSION=1.3.14
+# Runtime must satisfy package.json engines.bun (>=1.4.4); the build stage
+# stays on the older release so the 10-minute dependency layer survives.
+ARG BUN_RUNTIME_VERSION=1.4.4
 
 # ---------------------------------------------------------------------------
 # Build: install dependencies and produce the Next.js production build.
@@ -20,7 +23,7 @@ RUN bun run build
 # ---------------------------------------------------------------------------
 # Runtime: the built app, its dependencies, and the CLI that launches them.
 # ---------------------------------------------------------------------------
-FROM oven/bun:${BUN_VERSION}-debian AS runtime
+FROM oven/bun:${BUN_RUNTIME_VERSION}-debian AS runtime
 
 # git is a runtime dependency, not a build-time one: the worktree switcher, the
 # diff view and skill updates all shell out to it (lib/worktree.ts,
@@ -41,8 +44,8 @@ RUN apt-get update \
 # Docker Desktop on macOS and Windows remaps ownership itself and needs neither.
 ARG UID=1000
 ARG GID=1000
-RUN groupadd --gid "${GID}" omp \
- && useradd --uid "${UID}" --gid "${GID}" --create-home --home-dir /home/omp omp \
+RUN groupadd -o --gid "${GID}" omp \
+ && useradd -o --uid "${UID}" --gid "${GID}" --create-home --home-dir /home/omp omp \
  && mkdir -p /home/omp/.omp/agent /workspace \
  && chown -R omp:omp /home/omp /workspace
 
@@ -56,7 +59,9 @@ COPY --from=build --chown=omp:omp /app/node_modules ./node_modules
 COPY --from=build --chown=omp:omp /app/.next ./.next
 COPY --from=build --chown=omp:omp /app/public ./public
 COPY --from=build --chown=omp:omp /app/bin ./bin
-COPY --from=build --chown=omp:omp /app/next.config.ts /app/package.json ./
+# instrumentation.ts imports lib/*.ts by absolute file URL at runtime.
+COPY --from=build --chown=omp:omp /app/lib ./lib
+COPY --from=build --chown=omp:omp /app/next.config.ts /app/package.json /app/tsconfig.json ./
 
 # OMP_WEB_HOSTNAME binds every interface because a container is only reachable
 # from outside when it does; publish the port to 127.0.0.1 on the host to keep
