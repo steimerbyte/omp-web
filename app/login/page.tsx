@@ -112,7 +112,7 @@ export default function LoginPage() {
 
   return (
     <AnimationProvider>
-      <main className={styles.page}>
+      <main className={`${styles.page} dot-field`}>
         {/* Kein `Reveal`: die Karte betritt nichts, sie ist da. Die eine Bewegung
             der Seite ist die Scanline auf `::after` — eine Animation, ein Element,
             und nichts, womit ein Inline-`transform` kollidieren könnte. */}

@@ -1327,7 +1327,7 @@ export function SessionSidebar({ selectedSessionId, optimisticSession, onSelectS
           flexShrink: 0,
         }}
       >
-        <h2 style={{ margin: 0, flex: 1, minWidth: 0, color: "var(--text-muted)", fontSize: 13, fontWeight: 600, letterSpacing: "0.01em" }}>
+        <h2 style={{ margin: 0, flex: 1, minWidth: 0, color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", lineHeight: 1.2, textTransform: "uppercase" }}>
           {t("sidebar.projects")}
         </h2>
         {/* Der Aktualisieren-Knopf stand neben "Neu" in der Kopfzeile und hat

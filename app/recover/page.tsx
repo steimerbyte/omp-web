@@ -79,7 +79,7 @@ export default function RecoverPage() {
 
   return (
     <AnimationProvider>
-      <main className={styles.page}>
+      <main className={`${styles.page} dot-field`}>
       <div className={styles.card}>
         <div className={styles.eyebrow}>omp-web</div>
         <h1 className={styles.title}>Recover access</h1>

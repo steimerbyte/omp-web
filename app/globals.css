@@ -260,6 +260,49 @@ body::after {
   background-size: 128px 128px;
 }
 
+/* ---------------------------------------------------------------------------
+   Dither
+   ---------------------------------------------------------------------------
+   One pattern, three placements. `--dither-dot` is the single definition of
+   the Nothing dot grid — a 4-px tile at 6 % text ink, the numbers the login
+   page has carried since the palette landed — and every surface reads it
+   instead of writing a second gradient. `lib/theme-dither.test.mjs` holds
+   that: one declaration, and the surfaces name the class.
+
+   `.dot-field` paints it as a surface (login, recover, the empty chat stage,
+   a dialog's scrim). `.omp-project-card::after` lays it as a band across a
+   card's top edge. Both are static background images — nothing here
+   animates, so nothing here costs a frame, and `prefers-reduced-motion` has
+   nothing to switch off. */
+:root {
+  --dither-dot: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1.6px);
+  --dither-tile: 4px 4px;
+}
+
+.dot-field {
+  background-image: var(--dither-dot);
+  background-size: var(--dither-tile);
+}
+
+/* The card's header field: a dotted band across the top edge that fades out
+   downward. A corner patch read as a smudge at this card size (measured in
+   `docs/screenshots/nothing-effects`), while a band is the halftone idiom the
+   rest of the surface vocabulary uses. `overflow: hidden` on the card keeps it
+   inside, `pointer-events: none` keeps it out of the hit test. */
+.omp-project-card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 30px;
+  pointer-events: none;
+  background-image: var(--dither-dot);
+  background-size: var(--dither-tile);
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent);
+  mask-image: linear-gradient(180deg, #000, transparent);
+}
+
 body {
   display: flex;
   flex-direction: column;
@@ -471,7 +514,10 @@ pre, code {
   border: none;
   height: 1px;
   margin: 12px 0;
-  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  /* Ein Punktstrich statt eines Verlaufs nach transparent: die weiche Kante
+     war die einzige im Fliesstext, und das Nothing-Bild kennt sie nicht. */
+  background: none;
+  background-image: repeating-linear-gradient(90deg, var(--border) 0 1px, transparent 1px 3px);
 }
 .markdown-body .katex-display {
   margin: 0.6em 0;

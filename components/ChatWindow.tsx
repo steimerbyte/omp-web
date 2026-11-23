@@ -589,7 +589,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
            Feld bei offener Tastatur mittig im sichtbaren Bereich und springt
            beim Fokus um die halbe Hoehe. Desktop bleibt zentriert. */
         <div
-          className="flex flex-1 flex-col items-center overflow-y-auto px-4 py-8"
+          className="dot-field flex flex-1 flex-col items-center overflow-y-auto px-4 py-8"
           style={isMobile ? { justifyContent: "flex-end", paddingBottom: 0 } : { justifyContent: "center" }}
         >
           <div className="w-full max-w-[820px]">

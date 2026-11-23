@@ -1,7 +1,10 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, #000 48%, transparent);
+  /* `background-color`, nicht die Kurzform: die Kurzform setzt
+     `background-image: none` und loescht damit das Punktmuster von
+     `dot-field` (globals.css). */
+  background-color: color-mix(in srgb, #000 48%, transparent);
 }
 
 .window {

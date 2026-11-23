@@ -4,10 +4,8 @@
   place-items: center;
   padding: 24px;
   background-color: var(--bg);
-  /* Dot dither on the surface behind the card. 6 % ink is enough to read as a
-     texture in both modes and never competes with the form. */
-  background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1.6px);
-  background-size: 4px 4px;
+  /* Die Punktflaeche kommt aus `dot-field` in `globals.css` — eine Definition
+     fuer Login, Recover, leeren Chat und Dialog-Hintergrund. */
   color: var(--text);
   font-family: var(--font-body);
 }
@@ -307,10 +305,18 @@
   margin-bottom: 18px;
 }
 
+/* Doto ab 36 px ist die Anzeige-Ebene der Nothing-Typografie; darunter bleibt
+   Doto unlesbar und die Hierarchie erledigt Space Grotesk. Der Titel ist der
+   einzige Anzeige-Moment dieser Seite — die Karte selbst traegt keine Groesse
+   mehr als die ihres Inhalts, und `login-motion.test.mjs` haelt weiter fest,
+   dass sie ihre Box waehrend der Scanline nicht aendert. */
 .title {
   margin: 0 0 14px;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 36px;
   font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
 }
 
 .lead, .aside, .error {

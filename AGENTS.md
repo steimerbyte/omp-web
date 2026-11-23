@@ -1712,6 +1712,23 @@ up. All three are self-hosted under `public/fonts/` (SIL OFL, licence files
 beside the WOFF2) — a local-first tool must not fetch a font from a CDN at build
 or at runtime.
 
+### Texturen: ein Punktmuster, mehrere Flächen
+
+`--dither-dot` und `--dither-tile` in `app/globals.css` sind die **einzige**
+Definition des Nothing-Punktmusters (4-px-Raster, 6 % Textfarbe). `.dot-field`
+legt es als Fläche an — Login und Recover, der leere Chat hinter Wortmarke und
+Composer, der Dialog-Hintergrund —, `.omp-project-card::after` als maskiertes
+Band an den Kartenkopf. Eine zweite Kopie der Zahlen ist die
+Konvention, die `lib/theme-dither.test.mjs` verhindert; die Login-Fläche trug
+ihren eigenen Verlauf, bis die Klasse ihn ersetzte (gleiche Pixel).
+
+Die Texturen sind statisch (kein `animation`/`transition` im Muster) und
+`pointer-events: none`, damit sie keine Klicks fangen. Die Markdown-Trennlinie
+ist ein Punktstrich statt eines Verlaufs nach transparent — die einzige weiche
+Kante im Fließtext. Doto trägt die Anzeige-Typografie ab 36 px (Login- und
+Recover-Titel); Body bleibt Space Grotesk, Labels Space Mono CAPS mit
+`letter-spacing: .08em` (die „Projekte"-Überschrift der Seitenleiste).
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

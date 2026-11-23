@@ -1,0 +1,96 @@
+[
+  {
+    "label": "login-dark",
+    "card": {
+      "w": 470,
+      "h": 410.06
+    },
+    "titleFont": "\"Space Grotesk\"",
+    "titleSize": "18px",
+    "pageBgImage": "radial-gradient(circle at 1px 1px, color(srgb ",
+    "scrollWidth": 1280
+  },
+  {
+    "label": "hero-dark",
+    "getStarted": true,
+    "scrollWidth": 1280
+  },
+  {
+    "label": "projects-dark",
+    "cards": 3,
+    "cornerImage": "none",
+    "cornerSize": "auto autoxauto",
+    "sidebarLabel": "\"Space Grotesk\" 13px ls=0.13px tt=none",
+    "scrollWidth": 1280
+  },
+  {
+    "label": "composer-dark",
+    "stageDither": null,
+    "stageSize": null,
+    "composer": {
+      "top": 465,
+      "bottom": 489
+    },
+    "scrollWidth": 1280
+  },
+  {
+    "label": "dialog-dark",
+    "overlayImage": "none",
+    "overlaySize": "auto",
+    "overlayColor": "color(srgb 0 0 0 / 0.48)"
+  },
+  {
+    "label": "login-light",
+    "card": {
+      "w": 470,
+      "h": 410.06
+    },
+    "titleFont": "\"Space Grotesk\"",
+    "titleSize": "18px",
+    "pageBgImage": "radial-gradient(circle at 1px 1px, color(srgb ",
+    "scrollWidth": 1280
+  },
+  {
+    "label": "hero-light",
+    "getStarted": true,
+    "scrollWidth": 1280
+  },
+  {
+    "label": "projects-light",
+    "cards": 3,
+    "cornerImage": "none",
+    "cornerSize": "auto autoxauto",
+    "sidebarLabel": "\"Space Grotesk\" 13px ls=0.13px tt=none",
+    "scrollWidth": 1280
+  },
+  {
+    "label": "composer-light",
+    "stageDither": null,
+    "stageSize": null,
+    "composer": {
+      "top": 465,
+      "bottom": 489
+    },
+    "scrollWidth": 1280
+  },
+  {
+    "label": "dialog-light",
+    "overlayImage": "none",
+    "overlaySize": "auto",
+    "overlayColor": "color(srgb 0 0 0 / 0.48)"
+  },
+  {
+    "label": "mobile-dark",
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "cards": 3,
+    "dither": false
+  },
+  {
+    "label": "mobile-light",
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "cards": 3,
+    "dither": false
+  }
+]
