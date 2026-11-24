@@ -304,6 +304,13 @@ test("the composer bar shows its focus in the border colour", { timeout: 30_000 
   const ref = React.createRef();
   const { container, root } = await mount(ref);
   const bar = container.querySelector("textarea").parentElement;
+  // Der Arbeitsindikator sitzt als erstes Kind vor dem Feld und behaelt seine
+  // 20-px-Kante im Ruhezustand, damit die Bar beim Start der Arbeit nicht springt.
+  const dots = bar.querySelector(".omp-thinking-dots");
+  assert.ok(dots, "der Arbeitsindikator fehlt in der Bar");
+  assert.equal(bar.firstElementChild, dots, "der Indikator steht nicht vor dem Textfeld");
+  assert.equal(dots.style.width, "20px", "die Box hat im Ruhezustand eine andere Breite");
+  assert.equal(dots.style.height, "20px", "die Box hat im Ruhezustand eine andere Hoehe");
   assert.match(bar.getAttribute("style"), /color-mix\(in srgb, var\(--border\)/, "untätig trägt die Bar ihren eigenen Rand");
 
   // Fokus und Blur bubblen vom Textfeld an die Bar; der Handler wird direkt
@@ -314,6 +321,16 @@ test("the composer bar shows its focus in the border colour", { timeout: 30_000 
 
   await act(async () => { reactProps(bar).onBlur({}); });
   assert.match(bar.getAttribute("style"), /color-mix\(in srgb, var\(--border\)/, "Blur nimmt die Farbe zurück");
+
+  // Ein laufender Turn faerbt den Rand nicht ein: Steer/Follow-up ist ein Modus,
+  // keine Warnung. Der alte Zweig lag in --warning (Amber) und war der letzte
+  // farbige Rahmen ums Eingabefeld — der Arbeitszustand zeigt sich allein in
+  // der Animation links.
+  const streaming = await mount(ref, { isStreaming: true, onSteer: () => {}, onFollowUp: () => {} });
+  const streamingBar = streaming.container.querySelector("textarea").parentElement;
+  assert.match(streamingBar.getAttribute("style"), /color-mix\(in srgb, var\(--border\)/, "streaming traegt den neutralen Rand");
+  assert.doesNotMatch(streamingBar.getAttribute("style"), /--warning/, "kein Warn-Ring waehrend eines Turns");
+  await act(async () => { streaming.root.unmount(); });
   await act(async () => { root.unmount(); });
 });
 

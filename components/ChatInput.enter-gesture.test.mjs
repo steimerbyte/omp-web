@@ -16,7 +16,7 @@ import { createJiti } from "jiti";
  * noch denselben `value`, und ohne die Sperre ginge derselbe Text zweimal
  * hinaus. Ein Test der reinen Funktion kann das nicht finden.
  *
- * Der Aufbau ist derselbe wie in `ChatInput.gradient-border.test.mjs`:
+ * Der Aufbau ist derselbe wie in `ChatInput.unit.test.mjs`:
  * linkedom, `act`, ein gemountetes `ChatInput` mit Attrappen fuer `onSend`,
  * `onSteer` und `onFollowUp`.
  */

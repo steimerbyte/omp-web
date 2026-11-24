@@ -121,5 +121,16 @@ export const SWEEP_DURATION = 0.72;
 /** Eine volle Umdrehung. Spinner und Zahnrad teilen sie, damit sie im Takt bleiben. */
 export const SPIN_TRANSITION = { repeat: Infinity, duration: 0.8, ease: "linear" } as const;
 
+/**
+ * Ein Lauf eines einzelnen Punkts im Arbeitsindikator, in Sekunden.
+ *
+ * Die 49 Zellen teilen sich diesen Takt und fächern ihn nur ein wenig auf
+ * (0.7x bis 1.3x): genug, dass das Raster nie als ein Block atmet, wenig genug,
+ * dass der Indikator als ein Ding liest. `ThinkingDots.tsx` schreibt die
+ * Per-Cell-Dauer als Custom Property; `app/globals.css` trägt sie als Fallback
+ * in derselben Zahl.
+ */
+export const THINKING_DOT_DURATION = 2.4;
+
 /** Das Atmen der Deckkraft, das „arbeitet gerade" bedeutet. */
 export const PULSE_TRANSITION = { duration: 1.5, repeat: Infinity, ease: "easeInOut" } as const;

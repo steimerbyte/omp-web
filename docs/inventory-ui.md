@@ -460,7 +460,7 @@ shadcn/radix-Umstellung entstanden ist und das beim Refactor wieder „repariert
   Tool-Roster-, Session-Agent-Notices), wieder als zugeklappte Box im Transkript. Standard ist
   **aus**: solche Meldungen sind Kontext, keine Unterhaltung.
 - **Tastatur**: Ein nativer `<button className={styles.switch}>` mit `aria-pressed` und
-  `aria-label` (Muster `GradientBorderConfig.tsx:58-60`), keine eigene Tastenbindung.
+  `aria-label` (Muster `SettingsConfig.tsx:438-440`), keine eigene Tastenbindung.
 - **Darf nicht**: Der Wert geht **nicht** über `/api/settings` — dort projiziert der Server ein
   fremdes Schema aus dem gepinnten SDK. Er liegt als Oberflächen-Präferenz im `localStorage`
   (`omp-show-hidden-messages`, `hooks/useShowHiddenMessages.ts`) wie `omp-animations` und

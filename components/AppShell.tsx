@@ -31,6 +31,7 @@ import { SettingsConfig } from "./SettingsConfig";
 import { Reveal } from "./motion/Reveal";
 import { Shimmer } from "./motion/Shimmer";
 import { Pressable } from "./motion/Pressable";
+import { Spin } from "./motion/Enter";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { OmpUpdateIndicator } from "./OmpUpdateIndicator";
 import { BranchNavigator } from "./BranchNavigator";
@@ -1777,10 +1778,12 @@ export function AppShell() {
                     }}
                   >
                     {autoNameStatus.kind === "naming" ? (
-                      <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
+                      <Spin style={{ display: "flex", width: 13, height: 13 }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                          <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                      </Spin>
                     ) : isSuccess ? (
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <polyline points="20 6 9 17 4 12" />

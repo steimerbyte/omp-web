@@ -1416,40 +1416,38 @@ TypeScript half type-checks against — keep the two in sync.
   (`FileImagePreview.module.css`); it is gone, because the forced layer on a
   full-size photo cost more than the promotion Chrome does on its own.
 
-### The gradient border on the chat input
-- **The ring is a band around the bar, and it never eats the content's
-  padding.** The containing block of an absolutely positioned element is the
-  **padding box** of its positioned ancestor, not the border box, and the bar
-  carries a one pixel border — so the bar's padding box starts one pixel
-  inside the bar's border box. `inset: -O` puts the layer's border box at
-  `1 - O`, `padding: P` puts its padding box at `1 - O + P`, and the band that
-  is left over between them is the ring. With `O = P = W + 1` the band runs
-  from `1 - (W + 1)` to `1`: it covers the bar's border and reaches no pixel
-  into the padding, at any width. The offsets are written down by
-  `gradientBorderRingGeometry()` in
-  `components/motion/gradient-border-settings.ts` and held down by
-  `components/motion/gradient-border-settings.test.mjs`; the stylesheet only
-  reads the two variables it writes.
-- **The ring replaces the amber border, it does not sit next to it.** While an
-  agent works the bar's border colour becomes transparent and the ring takes
-  its place; the border's width stays one pixel, so the bar does not move.
-  Two signals on the same edge compete visibly, and the ring covers the
-  border anyway. The amber border is still there when the effect is off.
+### The working indicator
+
+- **There is exactly one "an agent is working" animation: `ThinkingDots`.**
+  A 7×7 dither grid whose cells twinkle out of step. It is used in three
+  places — the composer bar, the chat's phase line and the session and project
+  rows — so a second indication of the same state is a defect, not a variant.
+- **Only `opacity` animates.** The glow is a static `box-shadow` on each cell,
+  so it fades with the cell instead of being a second animated property; the
+  grid layer itself animates nothing. Colours come only from `var(--accent)`
+  and `color-mix`, because `applyOmpPalette` rewrites the palette at runtime.
+  `lib/theme-dither.test.mjs` keeps the texture selectors static and the
+  indicator animated, so the two point grids cannot be merged by accident.
+- **The fan is deterministic, never `Math.random()`.** A random field differs
+  between the server render and the browser's first render and React throws the
+  tree away; `dotTiming()` uses an integer hash of the index instead, and its
+  test pins the same numbers.
+- **The box is always mounted and always the same size.** 20×20 in the
+  composer, smaller fixed sizes in the rows, `flexShrink: 0`,
+  `aria-hidden="true"`, no `role="status"`. Hiding the dots is an opacity
+  change on the grid, never a conditional render, so the composer does not jump
+  when work starts.
+- **`off` is read in the component and covered in the stylesheet.** A CSS loop
+  is outside `MotionConfig`'s reach (`repeat: Infinity` is not a layout
+  animation), so the component asks `useAnimationMode()` and drops the
+  `is-live` class; `app/globals.css` shortens the class in both
+  `html[data-omp-animations="off"]` and
+  `@media (prefers-reduced-motion: reduce)`.
 - **The animated state is separate from `isStreaming`.** `isStreaming` is the
   busy state of the whole surface and is true while a shell command runs; the
-  ring is about an agent working, so `ChatInput` gets its own
+  indicator is about an agent working, so `ChatInput` gets its own
   `isAgentRunning` flag, which `ChatWindow` fills from `useAgentSession`'s
   `agentRunning`.
-- **The surface preference lives in `localStorage` under
-  `omp-gradient-border`**, not in `/api/settings` — the same line as
-  `omp-sound-enabled` and `omp-theme`, for the same reason. The rules are in
-  `components/motion/gradient-border-settings.ts` without React, the binding
-  is `components/motion/GradientBorder.tsx`, and the panel is the group in the
-  Animations section of the settings.
-- **The halo has to lie outside the ring.** The ring ends `W` pixels beyond
-  the bar's border box, so the halo's spread follows from the ring's width
-  (`gradientBorderGlowSpread()`); a halo inside the ring is not a halo but a
-  smear.
 
 ### A pasted image is a file in the session's `local://` root
 

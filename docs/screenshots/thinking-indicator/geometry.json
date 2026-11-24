@@ -1,0 +1,715 @@
+{
+  "sessionId": "01a20ea8-4c14-777c-8d0a-dac80c43e440",
+  "states": [
+    {
+      "tag": "dark-1280",
+      "theme": "dark",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "idle": {
+        "bar": {
+          "x": 359.98,
+          "y": 788.5,
+          "width": 820,
+          "height": 55.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.14902 0.14902 0.14902 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 374.98,
+            "y": 806.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 402.98,
+            "y": 804.25,
+            "width": 663.47,
+            "height": 24,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "button",
+            "cls": "",
+            "x": 1074.45,
+            "y": 799.5,
+            "width": 94.53,
+            "height": 33.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "7px",
+            "paddingBottom": "7px",
+            "fontSize": "13px"
+          }
+        ],
+        "dots": {
+          "x": 374.98,
+          "y": 806.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 0,
+          "visibility": "visible",
+          "dataWorking": "false",
+          "liveCells": 0,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 1280,
+        "bodyScrollHeight": 900,
+        "themeMode": "dark",
+        "htmlHasDarkClass": true,
+        "viewport": {
+          "width": 1280,
+          "height": 900
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      },
+      "working": {
+        "bar": {
+          "x": 359.98,
+          "y": 786.5,
+          "width": 820,
+          "height": 57.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.14902 0.14902 0.14902 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 374.98,
+            "y": 805.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 402.98,
+            "y": 803.25,
+            "width": 552.95,
+            "height": 24,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "div",
+            "cls": "",
+            "x": 963.94,
+            "y": 797.5,
+            "width": 205.05,
+            "height": 35.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          }
+        ],
+        "dots": {
+          "x": 374.98,
+          "y": 805.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 1,
+          "visibility": "visible",
+          "dataWorking": "true",
+          "liveCells": 49,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 1280,
+        "bodyScrollHeight": 900,
+        "themeMode": "dark",
+        "htmlHasDarkClass": true,
+        "viewport": {
+          "width": 1280,
+          "height": 900
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      }
+    },
+    {
+      "tag": "light-1280",
+      "theme": "light",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "idle": {
+        "bar": {
+          "x": 359.98,
+          "y": 788.5,
+          "width": 820,
+          "height": 55.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.839216 0.839216 0.839216 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 374.98,
+            "y": 806.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 402.98,
+            "y": 804.25,
+            "width": 663.47,
+            "height": 24,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "button",
+            "cls": "",
+            "x": 1074.45,
+            "y": 799.5,
+            "width": 94.53,
+            "height": 33.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "7px",
+            "paddingBottom": "7px",
+            "fontSize": "13px"
+          }
+        ],
+        "dots": {
+          "x": 374.98,
+          "y": 806.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 0,
+          "visibility": "visible",
+          "dataWorking": "false",
+          "liveCells": 0,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 1280,
+        "bodyScrollHeight": 900,
+        "themeMode": "light",
+        "htmlHasDarkClass": false,
+        "viewport": {
+          "width": 1280,
+          "height": 900
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      },
+      "working": {
+        "bar": {
+          "x": 359.98,
+          "y": 786.5,
+          "width": 820,
+          "height": 57.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.839216 0.839216 0.839216 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 374.98,
+            "y": 805.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 402.98,
+            "y": 803.25,
+            "width": 552.95,
+            "height": 24,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "div",
+            "cls": "",
+            "x": 963.94,
+            "y": 797.5,
+            "width": 205.05,
+            "height": 35.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          }
+        ],
+        "dots": {
+          "x": 374.98,
+          "y": 805.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 1,
+          "visibility": "visible",
+          "dataWorking": "true",
+          "liveCells": 49,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 1280,
+        "bodyScrollHeight": 900,
+        "themeMode": "light",
+        "htmlHasDarkClass": false,
+        "viewport": {
+          "width": 1280,
+          "height": 900
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      }
+    },
+    {
+      "tag": "dark-390",
+      "theme": "dark",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "idle": {
+        "bar": {
+          "x": 16,
+          "y": 780.5,
+          "width": 358,
+          "height": 55.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.14902 0.14902 0.14902 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 31,
+            "y": 798.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 59,
+            "y": 795.45,
+            "width": 201.47,
+            "height": 25.59,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "16px"
+          },
+          {
+            "tag": "button",
+            "cls": "",
+            "x": 268.47,
+            "y": 791.5,
+            "width": 94.53,
+            "height": 33.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "7px",
+            "paddingBottom": "7px",
+            "fontSize": "13px"
+          }
+        ],
+        "dots": {
+          "x": 31,
+          "y": 798.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 0,
+          "visibility": "visible",
+          "dataWorking": "false",
+          "liveCells": 0,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 390,
+        "bodyScrollHeight": 844,
+        "themeMode": "dark",
+        "htmlHasDarkClass": true,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      },
+      "working": {
+        "bar": {
+          "x": 16,
+          "y": 778.5,
+          "width": 358,
+          "height": 57.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.14902 0.14902 0.14902 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 31,
+            "y": 797.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 59,
+            "y": 794.45,
+            "width": 90.95,
+            "height": 25.59,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "16px"
+          },
+          {
+            "tag": "div",
+            "cls": "",
+            "x": 157.95,
+            "y": 789.5,
+            "width": 205.05,
+            "height": 35.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          }
+        ],
+        "dots": {
+          "x": 31,
+          "y": 797.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 1,
+          "visibility": "visible",
+          "dataWorking": "true",
+          "liveCells": 49,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 390,
+        "bodyScrollHeight": 844,
+        "themeMode": "dark",
+        "htmlHasDarkClass": true,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      }
+    },
+    {
+      "tag": "light-390",
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "idle": {
+        "bar": {
+          "x": 16,
+          "y": 780.5,
+          "width": 358,
+          "height": 55.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.839216 0.839216 0.839216 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 31,
+            "y": 798.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 59,
+            "y": 795.45,
+            "width": 201.47,
+            "height": 25.59,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "16px"
+          },
+          {
+            "tag": "button",
+            "cls": "",
+            "x": 268.47,
+            "y": 791.5,
+            "width": 94.53,
+            "height": 33.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "7px",
+            "paddingBottom": "7px",
+            "fontSize": "13px"
+          }
+        ],
+        "dots": {
+          "x": 31,
+          "y": 798.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 0,
+          "visibility": "visible",
+          "dataWorking": "false",
+          "liveCells": 0,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 390,
+        "bodyScrollHeight": 844,
+        "themeMode": "light",
+        "htmlHasDarkClass": false,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      },
+      "working": {
+        "bar": {
+          "x": 16,
+          "y": 778.5,
+          "width": 358,
+          "height": 57.5
+        },
+        "barBorder": {
+          "top": "1px",
+          "color": "color(srgb 0.839216 0.839216 0.839216 / 0.7)"
+        },
+        "barChildren": [
+          {
+            "tag": "span",
+            "cls": "omp-thinking-dots",
+            "x": 31,
+            "y": 797.25,
+            "width": 20,
+            "height": 20,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          },
+          {
+            "tag": "textarea",
+            "cls": "",
+            "x": 59,
+            "y": 794.45,
+            "width": 90.95,
+            "height": 25.59,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "16px"
+          },
+          {
+            "tag": "div",
+            "cls": "",
+            "x": 157.95,
+            "y": 789.5,
+            "width": 205.05,
+            "height": 35.5,
+            "borderTop": "0px",
+            "borderBottom": "0px",
+            "paddingTop": "0px",
+            "paddingBottom": "0px",
+            "fontSize": "14px"
+          }
+        ],
+        "dots": {
+          "x": 31,
+          "y": 797.25,
+          "width": 20,
+          "height": 20,
+          "opacity": 1,
+          "visibility": "visible",
+          "dataWorking": "true",
+          "liveCells": 49,
+          "cells": 49
+        },
+        "activeElement": "body.notranslate",
+        "documentScrollWidth": 390,
+        "bodyScrollHeight": 844,
+        "themeMode": "light",
+        "htmlHasDarkClass": false,
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "url": "http://127.0.0.1:30342/?session=01a20ea8-4c14-777c-8d0a-dac80c43e440"
+      }
+    }
+  ],
+  "consoleEvents": [
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/recover?_rsc=_H_fFy2_Q06N8BA7 net::ERR_ABORTED"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/recover?_rsc=_H_fFy2_Q06N8BA7 net::ERR_ABORTED"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/recover?_rsc=_H_fFy2_Q06N8BA7 net::ERR_ABORTED"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme"
+    },
+    {
+      "kind": "requestfailed",
+      "text": "GET http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web net::ERR_FAILED"
+    },
+    {
+      "kind": "console.error",
+      "text": "Failed to load resource: net::ERR_FAILED",
+      "location": "http://127.0.0.1:30342/api/theme?cwd=%2Fhome%2Fsteimer%2Fworkspace%2Fomp-web"
+    }
+  ]
+}

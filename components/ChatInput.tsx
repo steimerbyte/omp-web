@@ -39,7 +39,7 @@ import { computePopupPlacement, preferredPopupHeight, POPUP_GAP_PX, type PopupSi
 import { Pressable } from "./motion/Pressable";
 import { Spin } from "./motion/Enter";
 import { Skeleton } from "./motion/Skeleton";
-import { useGradientBorderBar } from "./motion/GradientBorder";
+import { ThinkingDots } from "./motion/ThinkingDots";
 import { Kbd } from "@/components/ui/kbd";
 import { useI18n } from "@/hooks/useI18n";
 import { useQuickPhrases } from "@/hooks/useQuickPhrases";
@@ -71,7 +71,7 @@ interface Props {
    * Whether an agent is working right now.
    *
    * `isStreaming` is the busy state of the whole surface — it is also true
-   * while a shell command runs. The gradient border is about the agent, so it
+   * while a shell command runs. The working indicator is about the agent, so it
    * gets its own flag instead of guessing from the busy state.
    */
   isAgentRunning?: boolean;
@@ -565,10 +565,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
-  // The rotating gradient around the bar. It replaces the border colour while
-  // an agent works, and it leaves the bar's own box alone: the ring is painted
-  // over the border box and the interior back over it.
-  const gradientBorder = useGradientBorderBar({ running: isAgentRunning === true, suppressed: bashMode });
   // Fokus-React-State statt `:focus-within`: die Bar ist inline gestylt, und
   // die Regel in globals.css gehoert nicht diesem Bauteil.
   const [composerFocused, setComposerFocused] = useState(false);
@@ -2424,7 +2420,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             );
           })()}
           <div
-            className={gradientBorder.className}
             // `onFocus`/`onBlur` bubblen von den Kindern hierher; damit traegt
             // die ganze Bar den Fokuszustand, nicht nur das Textfeld.
             onFocus={() => setComposerFocused(true)}
@@ -2435,27 +2430,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               gap: 8,
               alignItems: "center",
               background: "var(--bg)",
-              // The gradient ring takes the place of the border colour while an
-              // agent works. The width of the border stays, so the bar keeps
-              // its box and nothing shifts.
-              border: gradientBorder.active
-                ? "1px solid transparent"
-                : `1px solid ${composerFocused
-                  ? "var(--accent)"
-                  : bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
-                    ? "color-mix(in srgb, var(--warning) 40%, transparent)"
-                    : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
+              border: `1px solid ${composerFocused
+                ? "var(--accent)"
+                : bashMode ? "var(--tool-bg)"
+                  : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
               borderRadius: 14,
               padding: "10px 10px 10px 14px",
               transition: "border-color var(--duration-hover), background var(--duration-hover), box-shadow var(--duration-hover)",
-              ...gradientBorder.style,
             } as React.CSSProperties}
           >
-          {gradientBorder.active && gradientBorder.variant === "rotate" && (
-            <span className="omp-gradient-rotate-clip" aria-hidden="true">
-              <span className="omp-gradient-rotate-layer" />
-            </span>
-          )}
+          {/* The one working indicator. It is mounted while idle as well, so the
+              bar keeps its box when an agent starts and stops. */}
+          <ThinkingDots isWorking={isAgentRunning === true} style={{ alignSelf: "center" }} />
           <textarea
             ref={textareaRef}
             aria-label={t("chat.messagePlaceholder")}

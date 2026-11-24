@@ -14,8 +14,8 @@ import { CONTENT_SEARCH_MIN_LENGTH, useSessionContentSearch } from "@/hooks/useS
 import { useCalendarText } from "./calendar/useCalendarText";
 import { Pressable } from "./motion/Pressable";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
-import { Spin } from "./motion/Enter";
 import { Skeleton } from "./motion/Skeleton";
+import { ThinkingDots } from "./motion/ThinkingDots";
 import { useAnimationPreference } from "./motion/AnimationProvider";
 import { DURATION_EXIT } from "./motion/animations";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -2353,16 +2353,7 @@ function RunningSessionIndicator() {
         color: "var(--accent)",
       }}
     >
-      <Spin style={{ display: "flex", width: 14, height: 14 }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-          <path
-            d="M21 12a9 9 0 1 1-3.8-7.4"
-            stroke="currentColor"
-            strokeWidth="2.8"
-            strokeLinecap="round"
-          />
-        </svg>
-      </Spin>
+      <ThinkingDots isWorking size={12} />
     </span>
   );
 }
@@ -2420,11 +2411,7 @@ function showProjectActivity(
           aria-label={`${t("sidebar.agentRunning")} (${activity.running})`}
           style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "var(--accent)", fontSize: 10, fontFamily: "var(--font-mono)" }}
         >
-          <Spin style={{ display: "flex", width: 10, height: 10 }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-              <path d="M21 12a9 9 0 1 1-3.8-7.4" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" />
-            </svg>
-          </Spin>
+          <ThinkingDots isWorking size={12} />
           {activity.running}
         </span>
       )}

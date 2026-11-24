@@ -10,7 +10,7 @@ import { createJiti } from "jiti";
  * after a lock). The static-markup tests above it render on the server and
  * never touch these globals; `useIsMobile` guards every window access behind
  * `window.matchMedia`, so a browser-like window changes nothing for them.
- * The setup mirrors `ChatInput.gradient-border.test.mjs`.
+ * The setup mirrors `ChatInput.unit.test.mjs`.
  */
 const dom = linkedom.parseHTML(`<!doctype html><html><body></body></html>`);
 const fakeNavigator = { userAgent: "test", languages: ["en-US"], language: "en-US", platform: "linux" };

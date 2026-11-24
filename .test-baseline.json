@@ -638,11 +638,6 @@
       "functionsHit": 7,
       "uncovered": 0
     },
-    "components/GradientBorderConfig.tsx": {
-      "functionsFound": 13,
-      "functionsHit": 12,
-      "uncovered": 1
-    },
     "components/MarkdownBody.tsx": {
       "functionsFound": 9,
       "functionsHit": 9,
@@ -691,16 +686,6 @@
     "components/motion/Enter.tsx": {
       "functionsFound": 5,
       "functionsHit": 5,
-      "uncovered": 0
-    },
-    "components/motion/gradient-border-settings.ts": {
-      "functionsFound": 18,
-      "functionsHit": 18,
-      "uncovered": 0
-    },
-    "components/motion/GradientBorder.tsx": {
-      "functionsFound": 15,
-      "functionsHit": 15,
       "uncovered": 0
     },
     "components/motion/hooks.ts": {

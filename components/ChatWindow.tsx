@@ -30,8 +30,8 @@ import {
   EASE_STANDARD,
   PULSE_TRANSITION,
 } from "./motion/animations";
-import { Shimmer } from "./motion/Shimmer";
 import { Skeleton } from "./motion/Skeleton";
+import { ThinkingDots } from "./motion/ThinkingDots";
 import { useAnimationMode } from "./motion/hooks";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
@@ -886,24 +886,22 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
              *  nicht mehr (Bedingung oben), deshalb sitzt hier der eigene
              *  Indikator. Ohne ihn ist ein Stream ohne Bash unsichtbar. */}
             {streamState.isStreaming && !pendingBash && (
-              <div className="flex items-center gap-[5px] py-2" aria-hidden="true">
-                <Shimmer radius={999} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  {[0, 1, 2].map((dot) => (
-                    <span key={dot} style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--accent)" }} />
-                  ))}
-                </Shimmer>
+              <div className="flex items-center py-2">
+                <ThinkingDots isWorking size={14} />
               </div>
             )}
 
             {agentRunning && !streamState.streamingMessage && agentPhase && (
-              <div className="py-2 text-[13px] text-text-muted">
-                <Shimmer>{phaseLabel(agentPhase, t)}</Shimmer>
+              <div className="flex items-center gap-2 py-2 text-[13px] text-text-muted">
+                <ThinkingDots isWorking size={14} />
+                <span>{phaseLabel(agentPhase, t)}</span>
               </div>
             )}
 
             {bashRunning && !pendingBash && (
-              <div className="py-2 text-[13px] text-text-muted">
-                 <Shimmer>{t("chat.runningCommand")}</Shimmer>
+              <div className="flex items-center gap-2 py-2 text-[13px] text-text-muted">
+                <ThinkingDots isWorking size={14} />
+                <span>{t("chat.runningCommand")}</span>
               </div>
             )}
 

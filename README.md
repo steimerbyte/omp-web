@@ -52,8 +52,8 @@ work described here. Releases are cut from this repository only. Current release
 - **[The login page](#the-login-page)** — cookie sessions instead of the browser's
   native Basic-Auth dialog.
 - **[Settings](#settings)** — one panel, and which section is admin-only.
-- **[Motion and the gradient border](#motion)** — one animation source, a global
-  switch, and an optional ring around the composer.
+- **[Motion and the working indicator](#motion)** — one animation source, a
+  global switch, and the one indicator that means "an agent is working".
 - **[Layout fixes](#layout-fixes)** — four defects that cost real usability, each
   with the measurement that found it.
 - **[What is in flight](#what-is-in-flight)** — unreleased work, marked as such.
@@ -564,34 +564,24 @@ loading shows three skeleton lines, the file explorer shows ten skeleton rows, t
 terminal's "connecting…" chip runs as a shimmer, and the models, skills and
 plugins panels render skeletons instead of leaving the whole area empty.
 
-### The gradient border
+### The working indicator
 
-A ring around the composer bar whose colours turn while an agent is working, and
-which is gone the moment the agent stops. It is a new look, so it is **off by
-default**. The user switches it on in **Settings → Animations**.
+One animation means "an agent is working": a 7×7 dither grid whose cells twinkle
+out of step behind a soft glow. It sits left of the composer's text field, beside
+the chat's phase line (`Waiting for model`, `Running read…`, `Running command`),
+and in the session and project rows.
 
-The defaults are a **6 px** ring, a **2.4 s** turn, the **Omphie** palette
-(amber, green, blue, violet) and a glow at **0.25** with a **4 px** blur. The
-panel offers four colour pickers, five presets, sliders for the width, the
-rotation speed and the glow, and two ways of turning the gradient.
+It replaces every spinner and dot that used to stand for the same state, because
+two signals for one state compete visibly. The colours are `var(--accent)` and
+`color-mix` only — a literal would be wrong in the next theme.
 
-**A colour that vanishes on white is a colour that is not there.** The first
-palette was measured against the two surfaces the bar stands on, and its green
-reaches **1.34:1** against white — invisible as a line. A second palette,
-**Omphie Light**, carries the same hues with depth: the four colours reach
-3.19:1 at the weakest against white and keep 3.11:1 against the dark surface. The
-glow was pulled back to 0.25 and its blur to 4 px for the same reason: at the
-earlier values the halo, not the ring, was what the eye saw.
+The grid never jumps: the box is mounted while idle too, at a fixed size, and
+only the dots' opacity changes. Its phase comes from an integer hash of the cell
+index rather than `Math.random()`, so the server render and the browser's first
+render agree; with **Off** the cells stand still at their resting opacity, and
+`prefers-reduced-motion` does the same.
 
-The ring is a band, not a frame. It lies outside the bar, covers the one pixel
-border the bar has, and reaches **no pixel into the padding** the text lives in,
-at any width. Getting that right took the geometry apart: the containing block of
-an absolutely positioned layer is the **padding box** of its positioned ancestor,
-not the border box, so the offsets have to be the width plus the border on both
-sides. The formula lives in `components/motion/gradient-border-settings.ts` and a
-test holds it down.
-
-The rotation runs **only while an agent is working** — a running shell command
+The indicator runs **only while an agent is working** — a running shell command
 does not light it up, because the busy state of the surface and the state of the
 agent are not the same thing.
 

@@ -1871,196 +1871,12 @@ html.dark .chat-session-column::before {
   }
 }
 
-/* The gradient border around the chat input.
- *
- * The ring is a ring, not a frame. The bar keeps its own padding and its own
- * border; the gradient is painted over its border box by a pseudo element and
- * the interior is painted back over it, so the bar does not move by a pixel
- * when the effect comes and goes. The bar sets its own border colour to
- * transparent while the ring is painted — the width stays, so nothing shifts.
- *
- * The angle is a registered custom property, and it inherits: the ring and the
- * halo are two pseudo elements of the same bar, and both read the angle the
- * bar animates. Without the registration the angle would jump from one end
- * to the other instead of turning.
- *
- * The halo is a second copy of the same gradient, blurred and held behind the
- * bar. The ring above it paints the middle over, so the light stays outside
- * the edge.
- *
- * The rules live here and not in a motion primitive because the gradient and
- * the movement have to live in one place: a class that carries both comes and
- * goes together, and the bar keeps painting the same thing whether the
- * movement is running or not. `GradientBorder.tsx` decides whether the class
- * is there at all. */
-@property --bg-angle {
-  syntax: "<angle>";
-  inherits: true;
-  initial-value: 0deg;
-}
 
-@keyframes omp-gradient-spin {
-  to { --bg-angle: 360deg; }
-}
-
-@keyframes omp-gradient-rotate {
-  from { transform: translate(-50%, -50%) rotate(0deg); }
-  to { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
-@supports (background-image: conic-gradient(from 0deg,#000,#fff)) {
-  .omp-gradient-border {
-    --omp-gradient-bg: conic-gradient(
-      from var(--bg-angle, 0deg),
-      var(--omp-gradient-c1, var(--accent)),
-      var(--omp-gradient-c2, var(--accent)),
-      var(--omp-gradient-c3, var(--accent)),
-      var(--omp-gradient-c4, var(--accent)),
-      var(--omp-gradient-c1, var(--accent))
-    );
-    position: relative;
-    isolation: isolate;
-  }
-
-  /* The ring.
-   *
-   * The ring is a band around the bar, and it must not eat into the padding
-   * the content lives in — not at any width. The numbers below are the
-   * geometry, and they are worth writing down, because the two boxes of this
-   * layer are one pixel apart from what one would guess.
-   *
-   * The containing block of an absolutely positioned element is the PADDING
-   * box of its positioned ancestor, not the border box. The bar's border is
-   * one pixel, so the bar's padding box starts one pixel inside the bar's
-   * border box.
-   *
-   * `inset: -O` puts the layer's border box O pixels outside the bar's
-   * padding box, so it starts at 1 - O in the bar's border box.
-   * `padding: P` puts the layer's padding box P pixels inside that, so it
-   * starts at 1 - O + P. The gradient is clipped to the border box, the
-   * solid cover to the padding box, and the band that is left over between
-   * them is the ring.
-   *
-   * With O = P = W + 1:
-   *
-   *   W = 2:  the band runs from 1 - 3 = -2 to 1 - 3 + 3 = 1.
-   *           Two pixels outside the bar's border box, over its one pixel
-   *           border, and not one pixel into the padding.
-   *   W = 6:  the band runs from 1 - 7 = -6 to 1 - 7 + 7 = 1.
-   *           Six pixels outside, over the border, and not one pixel into
-   *           the padding.
-   *
-   * So the ring always ends at the inner edge of the bar's border and never
-   * reaches into the content. The old form, `inset: -1px` with the same
-   * padding as the width, put the band from the bar's edge to W pixels
-   * inside it — at W = 6 that ate four pixels of the padding and pushed the
-   * text to the left.
-   *
-   * The layer reaches W pixels beyond the bar's border box, so it is asked
-   * for by name: `GradientBorder.tsx` writes the two offsets down as
-   * variables and `gradient-border-settings.ts` holds the formula that
-   * computes them. */
-  .omp-gradient-border::after {
-    content: "";
-    position: absolute;
-    inset: var(--omp-gradient-ring-inset, -7px);
-    border-radius: inherit;
-    padding: var(--omp-gradient-ring-padding, 7px);
-    background:
-      linear-gradient(var(--bg), var(--bg)) padding-box,
-      var(--omp-gradient-bg) border-box;
-    z-index: 1;
-    pointer-events: none;
-  }
-
-  /* The content sits over the layer that paints the interior back over. */
-  .omp-gradient-border > *:not(.omp-gradient-rotate-clip) {
-    position: relative;
-    z-index: 2;
-  }
-
-  /* The halo behind the bar. It is the same gradient in a box that reaches
-   * past the ring, blurred, and the ring above it paints the middle over —
-   * so the light stays outside the edge without a mask whose middle would
-   * have to know how wide the bar is.
-   *
-   * The spread is not a free number: it is derived from the width of the
-   * ring, because a halo that lies inside the ring is not a halo but a
-   * smear. The ring ends W pixels beyond the bar's border box, so the halo
-   * has to start further out than that; `GradientBorder.tsx` writes the sum
-   * down as a variable. */
-  .omp-gradient-border::before {
-    content: "";
-    position: absolute;
-    inset: calc(-1 * var(--omp-gradient-glow-spread, 0px));
-    border-radius: inherit;
-    background: var(--omp-gradient-bg);
-    filter: blur(var(--omp-gradient-glow-blur, 0px));
-    opacity: var(--omp-gradient-glow-opacity, 0);
-    z-index: -1;
-    pointer-events: none;
-  }
-
-  /* The turning layer, for a browser that cannot animate a custom property.
-   * It is a square so that its corners cover the whole frame at every
-   * angle, and the frame clips it. Its box is the ring's box, so the band
-   * that is left over is the same band the angle variant paints. */
-  .omp-gradient-rotate-clip {
-    position: absolute;
-    inset: var(--omp-gradient-ring-inset, -7px);
-    border-radius: inherit;
-    overflow: hidden;
-    z-index: 0;
-    pointer-events: none;
-  }
-  .omp-gradient-rotate-layer {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 115%;
-    aspect-ratio: 1 / 1;
-    min-height: 100%;
-    transform: translate(-50%, -50%);
-    background: var(--omp-gradient-bg);
-  }
-
-  .omp-gradient-border.is-running {
-    animation: omp-gradient-spin var(--omp-gradient-duration, 2400ms) linear infinite;
-  }
-  .omp-gradient-border.is-running .omp-gradient-rotate-layer {
-    animation: omp-gradient-rotate var(--omp-gradient-duration, 2400ms) linear infinite;
-  }
-
-  /* In the layer variant the ring comes from the turning layer, so the
-   * pseudo element only has to paint the interior back over it. */
-  .omp-gradient-border.omp-gradient-rotate::after {
-    background: linear-gradient(var(--bg), var(--bg)) padding-box;
-  }
-}
-
-/* The halo is the one part that is not a border but a light, and it is gone
- * when the animations are off. The rotation itself is stopped by the block at
- * the end of this file that shortens every animation, so a `transitionend`
- * still fires. */
-html[data-omp-animations="off"] .omp-gradient-border::before {
-  opacity: 0;
-}
-
-/* An operating system that asks for reduced motion gets a border that does
- * not turn and no halo. */
-@media (prefers-reduced-motion: reduce) {
-  .omp-gradient-border.is-running {
-    animation: none;
-  }
-  .omp-gradient-border::before {
-    opacity: 0;
-  }
-}
 
 /* Der heutige Tag im Kalender: ein harter Ring auf der Zellkante.
  *
- * Vorher lag ein Conic-Verlauf im Zellhintergrund und drehte ueber
- * `--bg-angle`. Ein Verlauf deckt die ganze Zelle, also wanderte ein Keil
+ * Vorher lag ein Conic-Verlauf im Zellhintergrund und drehte ueber einen
+ * animierten Winkel. Ein Verlauf deckt die ganze Zelle, also wanderte ein Keil
  * unter Tageszahl und Terminen hindurch — man sah die Flaeche atmen, nicht den
  * Tag markiert. Jetzt sitzt die Markierung auf der Zellkante und der Inhalt
  * bleibt unbewegt. Ein Element traegt `data-cal-today` — die Monatszelle oder
@@ -2169,6 +1985,14 @@ html[data-omp-animations="off"] .omp-gradient-border::before {
   100% { background-position: -90% 0%; }
 }
 
+/* One cell of the working indicator. Only `opacity` moves: the glow is the
+ * cell's own static `box-shadow`, so it rises and falls with the cell and never
+ * costs a second animated property. */
+@keyframes omp-thinking-dot {
+  0%, 100% { opacity: 0.22; }
+  50%      { opacity: 1; }
+}
+
 .omp-shimmer {
   background-image: linear-gradient(
     90deg,
@@ -2209,6 +2033,49 @@ html[data-omp-animations="off"] .omp-gradient-border::before {
   animation: omp-shimmer-wash var(--omp-shimmer-duration, 1.6s) linear infinite;
 }
 
+/* The working indicator: a 7x7 dither field whose cells twinkle out of step.
+ *
+ * One grid layer, one cell per grid area, and a cell animates nothing but its
+ * own opacity. The glow is a static `box-shadow` on the cell, so it fades with
+ * the cell — no animated spread and no animated `filter`. The colours are
+ * `--accent` and `color-mix` only, because `applyOmpPalette` rewrites the
+ * palette at runtime and a literal would be wrong in the next theme.
+ *
+ * `ThinkingDots.tsx` writes the per-cell delay and period as custom properties.
+ * The fallback duration here is the same number as `THINKING_DOT_DURATION`, and
+ * `ThinkingDots.test.mjs` reads both so they cannot drift.
+ *
+ * The box is invisible while no agent works, but it stays in the layout — that
+ * is what keeps the composer from jumping when work starts and ends. */
+.omp-thinking-dots {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-template-rows: repeat(7, 1fr);
+  place-items: center;
+  flex-shrink: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+.omp-thinking-dots[data-working="true"] {
+  opacity: 1;
+}
+
+.omp-thinking-dot {
+  width: 64%;
+  aspect-ratio: 1 / 1;
+  /* Rounded squares, as in the reference: at this cell size a 50 % radius
+     reads as a circle, and dotted grids are a square motif. */
+  border-radius: 22%;
+  background: color-mix(in srgb, var(--accent) 80%, transparent);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0.22;
+}
+
+.omp-thinking-dot.is-live {
+  animation: omp-thinking-dot var(--omp-thinking-dot-duration, 2.4s) ease-in-out infinite;
+  animation-delay: var(--omp-thinking-dot-delay, 0s);
+}
+
 /* Animations off.
  *
  * `AnimationProvider` sets `data-omp-animations` on the root element, and
@@ -2235,12 +2102,25 @@ html[data-omp-animations="off"] .omp-shimmer {
   background-image: none;
 }
 
+/* The working indicator is a loop the catch-all above only shortens. In this
+ * mode the class is not rendered at all; the rule is the second line for a page
+ * that set the attribute without React, and it keeps the 1 ms run the rest of
+ * the block uses so an animationend still arrives. */
+html[data-omp-animations="off"] .omp-thinking-dot.is-live {
+  animation-duration: 1ms;
+  animation-iteration-count: 1;
+}
+
 /* An OS that asks for reduced motion gets no loop either, and again without
  * the gradient, because a motionless band is the very defect this replaced. */
 @media (prefers-reduced-motion: reduce) {
   .omp-shimmer {
     animation: none;
     background-image: none;
+  }
+  .omp-thinking-dot.is-live {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
   }
 }
 

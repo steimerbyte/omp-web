@@ -7,6 +7,22 @@ upstream line — see the Provenance section in the README.
 
 ### Neu
 
+- **Ein gemeinsamer „Agent arbeitet"-Indikator ersetzt jeden Spinner und
+  jeden Punkt für denselben Zustand.** `components/motion/ThinkingDots.tsx`
+  ist ein 7×7-Dither-Raster, dessen 49 Zellen versetzt aufleuchten; die Phase
+  kommt aus einem ganzzahligen Hash des Zellindex statt aus `Math.random()`,
+  damit Server-Render und erster Client-Render dieselben Zahlen sehen. Er
+  steht links vor dem Composer-Textfeld, an der Phasenzeile des Chats
+  („Waiting for model", „Running read…", „Running command" — der Text bleibt)
+  und in den Session- und Projektzeilen der Seitenleiste. Die Box ist immer
+  gemountet und hat eine feste Kante, damit beim Start und Ende der Arbeit
+  nichts springt; nur `opacity` animiert, das Glühen ist ein statischer
+  `box-shadow` in `var(--accent)`, und mit **Off** oder
+  `prefers-reduced-motion` stehen die Zellen still. — Der bisherige
+  Verlaufsrand um die Eingabe (Ring, Halo, Presets, Einstellungsgruppe,
+  `localStorage`-Schlüssel, sechs Testdateien und ein Prototyp) ist damit
+  ersatzlos entfernt.
+
 - **Datei-Uploads gehen bis 10 GB, ohne den Server-Speicher zu füllen.** Die
   Grenze von Composer und Dateiablage steigt von 8 MB auf 10 GiB
   (`MAX_UPLOAD_FILE_BYTES`/`MAX_CHAT_UPLOAD_BYTES`, Meldung „10 GB“), und der
