@@ -1694,7 +1694,10 @@ is semantic only: `--danger` is the exact Nothing red `#d71921` in the light
 theme and a lighter red in the dark one, where the brand red falls below the
 contrast floor. An imported omp palette
 still wins at runtime (`applyOmpPalette`), so a component must never write a
-raw colour literal.
+raw colour literal. The app ships two own palettes next to omp's — `noctalia`
+(dark) and `noctalia-light` (light), both in `lib/omp-theme.ts` and offered in
+Settings → Themes; `lib/omp-theme.unit.test.mjs` compares them key by key with
+`app/globals.css`, because the login page paints before `/api/theme` is asked.
 
 ```
 --bg --bg-panel --bg-hover --bg-selected --border

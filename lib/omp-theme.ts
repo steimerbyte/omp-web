@@ -66,7 +66,70 @@ function ensureContrast(color: string, target: string, backgrounds: string[], mi
   return mixHex(color, target, high);
 }
 
+/**
+ * The app's own palettes, selectable in Settings -> Themes next to omp's.
+ *
+ * They are the same values as `app/globals.css` (the login page renders before
+ * `/api/theme` is asked, so the stylesheet cannot be derived from here), and
+ * `lib/omp-theme.unit.test.mjs` compares the two — a drift fails the suite
+ * instead of showing up as a login page in another palette.
+ */
+const APP_THEMES: Record<string, WebThemePalette> = {
+  noctalia: {
+    name: "noctalia",
+    colorScheme: "dark",
+    variables: {
+      "--bg": "#15162e",
+      "--bg-panel": "#20213d",
+      "--bg-hover": "#27284a",
+      "--bg-selected": "#2e2f58",
+      "--border": "#3e4166",
+      "--text": "#ece9f4",
+      "--text-muted": "#a5a7c6",
+      "--text-dim": "#8c8eac",
+      "--accent": "#f7e9a8",
+      "--accent-fg": "#302c1e",
+      "--accent-hover": "#f9f0c2",
+      "--user-bg": "#1a1b35",
+      "--assistant-bg": "#15162e",
+      "--tool-bg": "#171831",
+      "--bg-subtle": "rgba(236,233,244,0.06)",
+      "--success": "#a0ddc0",
+      "--danger": "#ed8296",
+      "--warning": "#f4c5a2",
+      "--violet": "#b3b8ed",
+    },
+  },
+  "noctalia-light": {
+    name: "noctalia-light",
+    colorScheme: "light",
+    variables: {
+      "--bg": "#dcddea",
+      "--bg-panel": "#cfd2e4",
+      "--bg-hover": "#c2c6dd",
+      "--bg-selected": "#b5bad5",
+      "--border": "#a4aac9",
+      "--text": "#292b45",
+      "--text-muted": "#414765",
+      "--text-dim": "#505675",
+      "--accent": "#5058b1",
+      "--accent-fg": "#f0eff7",
+      "--accent-hover": "#373b91",
+      "--user-bg": "#d5d7e7",
+      "--assistant-bg": "#dcddea",
+      "--tool-bg": "#cfd2e4",
+      "--bg-subtle": "rgba(41,43,69,0.05)",
+      "--success": "#4b6056",
+      "--danger": "#a53c59",
+      "--warning": "#685b1b",
+      "--violet": "#555e88",
+    },
+  },
+};
+
 export async function getWebThemePalette(name: string): Promise<WebThemePalette> {
+  const appTheme = APP_THEMES[name];
+  if (appTheme) return appTheme;
   const [colors, exported] = await Promise.all([
     getResolvedThemeColors(name),
     getThemeExportColors(name),
@@ -126,5 +189,10 @@ export async function getWebThemeConfig(settings: Settings): Promise<WebThemeCon
 
 export async function getAvailableWebThemes(): Promise<Array<{ name: string; colorScheme: "dark" | "light" }>> {
   const names = await getAvailableThemes();
-  return names.map((name) => ({ name, colorScheme: isLightTheme(name) ? "light" : "dark" }));
+  return [
+    ...Object.values(APP_THEMES).map((theme) => ({ name: theme.name, colorScheme: theme.colorScheme })),
+    ...names
+      .filter((name) => !(name in APP_THEMES))
+      .map((name) => ({ name, colorScheme: isLightTheme(name) ? "light" as const : "dark" as const })),
+  ];
 }
