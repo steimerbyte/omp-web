@@ -2257,9 +2257,8 @@ html[data-omp-animations="off"] .omp-thinking-dot.is-live {
    Die Radix-Flächen (Dialog, Menü, Tooltip)
    ---------------------------------------------------------------------------
    Diese Flächen laufen über `tw-animate-css` und nicht über
-   `components/motion/` — die Zustände (`data-open` / `data-closed`) gehören
-   Radix, und ein zweiter Fahrweg daneben wäre genau die Doppelung, die es
-   nicht geben soll. Die Taktung kommt trotzdem aus derselben Tabelle:
+   `components/motion/` — die Zustände (`data-state`) gehören Radix, und ein
+   zweiter Fahrweg daneben wäre genau die Doppelung, die es nicht geben soll. Die Taktung kommt trotzdem aus derselben Tabelle:
    `tw-animate-css` liest seine Dauer aus `--tw-animation-duration` und seine
    Kurve aus `--tw-ease`, und beide Variablen lassen sich hier setzen.
 

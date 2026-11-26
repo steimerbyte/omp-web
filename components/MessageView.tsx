@@ -656,7 +656,6 @@ function AssistantMessageView({
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: "0.14em",
-          textTransform: "uppercase",
           color: "var(--text-dim)",
           marginBottom: 6,
           display: "flex",
@@ -675,7 +674,7 @@ function AssistantMessageView({
           }}
         />
         {message.provider && (
-          <span>{modelNames?.[`${message.provider}:${message.model}`] ?? modelNames?.[message.model] ?? message.model}</span>
+          <span style={{ textTransform: "uppercase" }}>{modelNames?.[`${message.provider}:${message.model}`] ?? modelNames?.[message.model] ?? message.model}</span>
         )}
         {isStreaming && (() => {
           const est = Math.round(estimatedTokens);
