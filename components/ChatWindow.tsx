@@ -592,7 +592,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
           className="dot-field flex flex-1 flex-col items-center overflow-y-auto px-4 py-8"
           style={isMobile ? { justifyContent: "flex-end", paddingBottom: 0 } : { justifyContent: "center" }}
         >
-          <div className="w-full max-w-[820px]">
+          <div className="w-full max-w-[760px]">
             <div
               className="mb-3"
               style={{
@@ -635,13 +635,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
             pointerEvents: "none",
           }}
         >
-          <div style={{ maxWidth: 820, margin: "0 auto" }}>
+          <div style={{ maxWidth: 760, margin: "0 auto" }}>
             <NoticeShelf notices={notices} floating align="right" />
           </div>
         </div>
         <div ref={scrollContainerRef} className="chat-session-scroll min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
+            <div style={{ width: "100%", minWidth: 0, maxWidth: 760, margin: "0 auto" }}>
               <ExtensionWidgets widgets={aboveEditorWidgets} />
 
             {(() => {
@@ -962,7 +962,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onAttentionNeed
             padding: `0 ${CHAT_COLUMN_PADDING}px`,
           }}
         >
-          <div style={{ maxWidth: 820, margin: "0 auto" }}>
+          <div style={{ maxWidth: 760, margin: "0 auto" }}>
             <GoalBar goal={goalStatus} t={t} />
             {/* Die Zeile ueber dem Composer: Vibe-Leiste links, der eine
                 Einstieg in laufende Hintergrundarbeit rechts. Der Platzhalter

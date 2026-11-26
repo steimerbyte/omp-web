@@ -1785,7 +1785,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       {/* Mobil stapelt dieser Wrapper um: Textfeld als letztes Element, die
           Leisten darueber (`order`). Die Desktop-Reihenfolge bleibt, weil er
           dort kein Flex ist. */}
-      <div style={{ maxWidth: 820, margin: "0 auto", ...(isMobile ? { display: "flex" as const, flexDirection: "column" as const } : {}) }}>
+      <div style={{ maxWidth: 760, margin: "0 auto", ...(isMobile ? { display: "flex" as const, flexDirection: "column" as const } : {}) }}>
         <ModelErrorBanner error={modelError} />
         <ModelSwitchErrorBanner failure={modelSwitchError} onDismiss={() => onDismissModelSwitchError?.()} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
@@ -2429,12 +2429,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               display: "flex",
               gap: 8,
               alignItems: "center",
-              background: "var(--bg)",
+              background: "var(--bg-panel)",
               border: `1px solid ${composerFocused
                 ? "var(--accent)"
                 : bashMode ? "var(--tool-bg)"
                   : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
-              borderRadius: 14,
+              borderRadius: 12,
               padding: "10px 10px 10px 14px",
               transition: "border-color var(--duration-hover), background var(--duration-hover), box-shadow var(--duration-hover)",
             } as React.CSSProperties}

@@ -344,15 +344,15 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 6, maxWidth: "85%" }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 6, maxWidth: "78%" }}>
         <div
           style={{
             flex: 1,
             minWidth: 0,
             background: "var(--user-bg)",
             border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: "8px 12px",
+            borderRadius: "12px 12px 3px 12px",
+            padding: "12px 16px",
             fontSize: 14,
             lineHeight: 1.6,
             color: "var(--text)",
@@ -649,17 +649,31 @@ function AssistantMessageView({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Model label */}
+      {/* Model label: Mono-Caps mit Dither-Tick, wie die Abschnittslabels im Comp. */}
       <div
         style={{
-          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
           color: "var(--text-dim)",
-          marginBottom: 4,
+          marginBottom: 6,
           display: "flex",
           alignItems: "center",
           gap: 6,
         }}
       >
+        <span
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            width: 6,
+            height: 6,
+            backgroundImage: "radial-gradient(var(--text-dim) 1px, transparent 1.2px)",
+            backgroundSize: "4px 4px",
+          }}
+        />
         {message.provider && (
           <span>{modelNames?.[`${message.provider}:${message.model}`] ?? modelNames?.[message.model] ?? message.model}</span>
         )}
@@ -1138,11 +1152,11 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
   return (
     <div
       style={{
-        borderRadius: 7,
+        borderRadius: 12,
         overflow: "hidden",
         fontSize: 12,
-        border: isError ? "1px solid color-mix(in srgb, var(--danger) 45%, transparent)" : "1px solid color-mix(in srgb, var(--success) 25%, transparent)",
-        background: isError ? "color-mix(in srgb, var(--danger) 5%, transparent)" : "color-mix(in srgb, var(--success) 4%, transparent)",
+        border: isError ? "1px solid color-mix(in srgb, var(--danger) 45%, transparent)" : "1px solid var(--border)",
+        background: isError ? "color-mix(in srgb, var(--danger) 5%, transparent)" : "var(--tool-bg)",
       }}
     >
 
@@ -1167,7 +1181,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         <ToolBlockIcon toolName={block.toolName} input={block.input} isError={isError} />
 
 
-        <span style={{ color: isError ? "var(--danger)" : "var(--success)", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+        <span style={{ color: isError ? "var(--danger)" : "var(--text)", fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 11, letterSpacing: "0.06em", flexShrink: 0 }}>
           {toolDisplayName(block.toolName, block.input)}
         </span>
         <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
@@ -1639,8 +1653,8 @@ function PairedDiffResult({ diff }: {
   return (
     <div
       style={{
-        borderTop: "1px solid color-mix(in srgb, var(--success) 15%, transparent)",
-        background: "var(--bg)",
+        borderTop: "1px solid var(--border)",
+        background: "var(--tool-bg)",
       }}
     >
       <SplitPatchView text={diff.text} />
@@ -1655,7 +1669,7 @@ function SplitPatchView({ text }: { text: string }) {
   const showFileHeaders = files.length > 1;
 
   return (
-    <div style={{ background: "var(--bg)" }}>
+    <div style={{ background: "transparent" }}>
       {files.map((file, fileIndex) => (
         <div
           key={fileIndex}

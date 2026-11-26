@@ -769,7 +769,7 @@ pre, code {
   margin: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 78%, var(--text-muted));
-  border-radius: 6px;
+  border-radius: 12px;
   background: var(--tool-bg);
   color: var(--text-muted);
   font-family: var(--font-mono);
