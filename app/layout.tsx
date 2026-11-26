@@ -36,15 +36,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  // Matches --bg in app/globals.css: omp's `light` page surface and the
-  // `titanium` brushed-titanium surface.
+  // Matches --bg in app/globals.css: Noctalia's light and dark page surface.
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
   interactiveWidget: "resizes-content",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f5f5" },
-    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+    { media: "(prefers-color-scheme: light)", color: "#dcddea" },
+    { media: "(prefers-color-scheme: dark)", color: "#15162e" },
   ],
 };
 

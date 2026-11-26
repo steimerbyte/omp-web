@@ -50,30 +50,48 @@
      Tailwind as `brand`, the hover surface stays `accent`. */
   --color-accent: var(--bg-hover);
   --color-accent-hover: var(--bg-selected);
+  --color-accent-fg: var(--accent-fg);
   --color-brand: var(--accent);
   --color-brand-hover: var(--accent-hover);
   --color-user-bg: var(--user-bg);
   --color-assistant-bg: var(--assistant-bg);
   --color-tool-bg: var(--tool-bg);
   --color-bg-subtle: var(--bg-subtle);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-violet: var(--violet);
   --font-mono-font: var(--font-mono);
   --font-body: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
   --font-display: 'Doto', 'Space Mono', monospace;
 }
 
 /* ---------------------------------------------------------------------------
-   Nothing palette
+   Noctalia palette
    ---------------------------------------------------------------------------
-   Monochrome surfaces with one signal colour: red marks destructive intent and
-   errors, never decoration and never a primary action. `--accent` is the
-   interactive colour and is deliberately monochrome — links, focus rings,
-   active rows and the primary button invert to text-on-surface instead of
-   introducing a second hue.
+   The palette is the Noctalia shell's (noctalia 5.6.0, builtin theme
+   "Noctalia"), taken from `lib/ui/palette.h` and
+   `src/theme/builtin_palettes.cpp` through the design-token styleguide. Both
+   modes are documented there: dark is the builtin theme, light the same
+   theme's light projection. A value marked `derived` follows one of the
+   styleguide's three derivation rules — the 30 % accent-in-surface mix, the
+   surface ladder, contrast forced by shifting Oklch lightness — and is held
+   by lib/theme-contrast.test.mjs.
 
-   Both modes are first-class: warm off-white `#f5f5f5` by day, OLED black
-   `#000` by night. `--danger` is the exact Nothing red `#d71921` in the light
-   theme and a lighter red in the dark one, where the brand red falls below the
-   contrast floor. Contrast is held by lib/theme-contrast.test.mjs.
+   Roles, not shades: `--accent` is the interactive colour (Noctalia
+   `primary`); `--success`, `--danger` and `--warning` are the semantic status
+   colours. Noctalia has no `warning` role, so it is the 35 % mix of primary
+   and error — inside the palette instead of a hue the shell does not own.
+   `--violet` is Noctalia's `secondary`, the fifth calendar preset.
+
+   The role names follow Noctalia's own Tailwind site (`@theme`:
+   `--color-void`/`-surface-raised`/`-fg`/`-fg-dim`/`-accent`/`-accent-2`/
+   `-accent-3`/`-on-accent`, light block on the theme selector): `--bg` is
+   `void`, `--bg-panel` is `surface-raised`, `--accent-fg` is `on-accent`.
+   Its `--m*` shell aliases are for plugin pages that build their own HTML;
+   omp-web has no such consumer. The theme selector stays `html.dark` — that
+   is what `useTheme` and the SSR bootstrap toggle, and the site's
+   `data-theme="light"` is the same switch with the other default.
    --------------------------------------------------------------------------- */
 
 :root {
@@ -81,50 +99,61 @@
      writes the same property inline when an imported palette is active, so
      this is the fallback for the built-in themes. */
   color-scheme: light;
-  --bg: #f5f5f5;
-  --bg-panel: #ffffff;
-  --bg-hover: #ececec;
-  --bg-selected: #e3e3e3;
-  --border: #d6d6d6;
-  --text: #111111;
-  --text-muted: #5f5f5f;
+  /* Noctalia light: the surface ladder from #dcddea (page) down to #b5bad5
+     (selected). A surface separates by lightness, never by a shadow. */
+  --bg: #dcddea;
+  --bg-panel: #cfd2e4;
+  --bg-hover: #c2c6dd;
+  --bg-selected: #b5bad5;
+  --border: #a4aac9;
+  --text: #292b45;
+  --text-muted: #414765;
   /* Dim is still text (11-px labels) and doubles as the file-icon colour, so it
-     has to clear 4.5:1 on --bg. Held by lib/theme-contrast.test.mjs. */
-  --text-dim: #6b6b6b;
-  --accent: #111111;
-  --accent-hover: #333333;
-  --user-bg: #ebebeb;
-  --assistant-bg: #ffffff;
-  --tool-bg: #efefef;
-  --bg-subtle: rgba(0,0,0,0.04);
-  --success: #1f7a3d;
-  --danger: #d71921;
-  --warning: #7a5b16;
-  /* Git status in the explorer tree. Renamed stays monochrome: the letter
-     carries the meaning, the colour is not an accent. Letters are 11 px, so
-     every value has to clear 4.5:1 on --bg-panel. */
-  --git-modified: #7a5b16;
-  --git-added: #1f7a3d;
-  --git-deleted: #d71921;
-  --git-renamed: #5f5f5f;
-  /* The calendar's fifth preset colour, desaturated to sit inside the
-     monochrome language. `applyOmpPalette` does not map this colour (that
-     mapper knows accent, success, error and warning only), so an imported
-     theme keeps the application value. */
-  --violet: #5b5563;
+     has to clear 4.5:1 on --bg. derived: on_surface_variant lightened until it
+     sits at 5.3:1 on --bg. Held by lib/theme-contrast.test.mjs. */
+  --text-dim: #505675;
+  --accent: #5058b1;
+  /* Text on the accent fill — Noctalia's `on_primary`. The palette carried the
+     slot all along: eleven call sites already ask for
+     `var(--accent-fg, var(--bg))`. */
+  --accent-fg: #f0eff7;
+  /* derived: primary darkened until it clears 7:1 on --bg. */
+  --accent-hover: #373b91;
+  --user-bg: #d5d7e7;
+  --assistant-bg: #dcddea;
+  --tool-bg: #cfd2e4;
+  --bg-subtle: rgba(41,43,69,0.05);
+  /* derived: Noctalia's dark tertiary mint, lightness shifted down to 4.5:1 on
+     --bg-panel; the palette's only green. */
+  --success: #4b6056;
+  --danger: #a53c59;
+  /* derived: primary's yellow shifted down to 4.5:1 on --bg-panel. */
+  --warning: #685b1b;
+  /* Git status in the explorer tree; the letter carries the meaning. Letters
+     are 11 px, so every value has to clear 4.5:1 on --bg-panel. `git-deleted`
+     is `derived`: error shifted down to the same floor. */
+  --git-modified: #685b1b;
+  --git-added: #4b6056;
+  --git-deleted: #9e3653;
+  --git-renamed: #414765;
+  /* The calendar's fifth preset colour. `applyOmpPalette` does not map this
+     colour (that mapper knows accent, success, error and warning only), so an
+     imported theme keeps the application value. */
+  --violet: #555e88;
   /* Geometry, not colour, but declared in both blocks for the same reason as
      `--violet`: a value that exists in one theme only would be invisible in
-     the other. `--radius-control` is the radius of buttons, inputs and the
-     rows of the dense lists, `--radius-panel` that of menus, dialogs and
-     cards, `--duration-hover` the one duration of a hover or state change.
+     the other. The scale is Noctalia's — radii 3/6/9/12, of which the two
+     roles below are 6 (buttons, inputs, the rows of the dense lists) and 12
+     (menus, dialogs, cards); `--duration-hover` is the styleguide's fast
+     100 ms.
 
      Exceptions stay numbers because they are tied to a size, not a role:
      `4` for the 24/28-px tree and dialog rows, `1` for hairline bars, `0`
      for flush edges, `14` and `999` for the composer bar and the pills.
      Held by lib/theme-tokens.test.mjs. */
   --radius-control: 6px;
-  --radius-panel: 16px;
-  --duration-hover: 120ms;
+  --radius-panel: 12px;
+  --duration-hover: 100ms;
 
   /* Die Taktung der Bewegung, gespiegelt aus `components/motion/animations.ts`.
      Sie steht nur hier und nicht auch im dunklen Block: Bewegung hängt nicht
@@ -134,55 +163,54 @@
      Sekunden. `components/motion/motion.test.mjs` rechnet beide Seiten
      gegeneinander und schlägt fehl, sobald sie sich unterscheiden.
 
-     Rollen:
-       --duration-enter        Menü, Popover, Backdrop (180 ms)
-       --duration-enter-panel  Panel, Dialog, Karte (220 ms)
-       --duration-exit         alles, was verschwindet (140 ms)
-       --duration-alert        die Login-Rückweisung (360 ms)
-       --ease-standard         Hover, Zustand, kleine Einblenden
-       --ease-emphasized       große Flächen, weite Wege
-       --ease-exit             Abgänge (beschleunigt weg) */
-  --duration-enter: 180ms;
-  --duration-enter-panel: 220ms;
-  --duration-exit: 140ms;
+     Rollen (Noctalia: fast 100, base 200, slow 400):
+       --duration-hover        reagieren (100 ms, fast)
+       --duration-enter        Menü, Popover, Backdrop (200 ms, base)
+       --duration-enter-panel  Panel, Dialog, Karte (400 ms, slow)
+       --duration-exit         alles, was verschwindet (100 ms, fast)
+       --duration-alert        die Login-Rückweisung (360 ms, omp-web-eigen)
+       --ease-standard         EaseOutQuad, Noctalias Default
+       --ease-emphasized       EaseOutCubic, Noctalias Kurve für weite Wege
+       --ease-exit             Abgänge; Noctalia hat keine eigene Abgangskurve */
+  --duration-enter: 200ms;
+  --duration-enter-panel: 400ms;
+  --duration-exit: 100ms;
   --duration-alert: 360ms;
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.33, 0.66, 0.66, 1);
+  --ease-emphasized: cubic-bezier(0.33, 1, 0.68, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
 html.dark {
   color-scheme: dark;
-  --bg: #000000;
-  --bg-panel: #0a0a0a;
-  --bg-hover: #161616;
-  --bg-selected: #1f1f1f;
-  --border: #262626;
-  --text: #f2f2f2;
-  --text-muted: #a3a3a3;
-  --text-dim: #8c8c8c;    /* must clear 4.5:1 on --bg like the light one */
-  --accent: #f2f2f2;
-  --accent-hover: #ffffff;
-  --user-bg: #0a0a0a;
-  --assistant-bg: #000000;
-  --tool-bg: #0e0e0e;
-  --bg-subtle: rgba(255,255,255,0.06);
-  --success: #4a9e5c;
-  --danger: #ff5a5f;
-  --warning: #d4a843;
-  /* The status hues are the readable variants for a black surface; renamed
-     stays monochrome, as in the light theme. */
-  --git-modified: #d4a843;
-  --git-added: #4a9e5c;
-  --git-deleted: #ff5a5f;
-  --git-renamed: #a3a3a3;
-  /* Same fifth preset colour, lightened for the black surface. Both blocks
-     define it because the calendar's colour swatches read the variable. */
-  --violet: #9b94a6;
+  /* Noctalia dark, the builtin theme's raw values. */
+  --bg: #15162e;
+  --bg-panel: #20213d;
+  --bg-hover: #27284a;
+  --bg-selected: #2e2f58;
+  --border: #3e4166;
+  --text: #ece9f4;
+  --text-muted: #a5a7c6;
+  --text-dim: #8c8eac;      /* derived: variant darkened to 5.5:1 on --bg */
+  --accent: #f7e9a8;
+  --accent-fg: #302c1e;     /* Noctalia `on_primary` */
+  --accent-hover: #f9f0c2;  /* derived: 30 % white into primary */
+  --user-bg: #1a1b35;
+  --assistant-bg: #15162e;
+  --tool-bg: #171831;
+  --bg-subtle: rgba(236,233,244,0.06);
+  --success: #a0ddc0;
+  --danger: #ed8296;
+  --warning: #f4c5a2;       /* derived: 35 % error into primary */
+  --git-modified: #f4c5a2;
+  --git-added: #a0ddc0;
+  --git-deleted: #ed8296;
+  --git-renamed: #a5a7c6;
+  --violet: #b3b8ed;
   /* Same geometry as the light theme; see the long note in `:root`. */
   --radius-control: 6px;
-  --radius-panel: 16px;
-  --duration-hover: 120ms;
+  --radius-panel: 12px;
+  --duration-hover: 100ms;
 }
 
 .catppuccin-file-icon {
@@ -306,6 +334,7 @@ body::after {
 body {
   display: flex;
   flex-direction: column;
+  font-size: var(--fs-body);
 }
 
 ::-webkit-scrollbar {
@@ -345,10 +374,20 @@ body {
 }
 
 :root {
-  /* Nothing's three layers: Doto for display (36 px and up only), Space
-     Grotesk for body, Space Mono for labels and code. The stack keeps CJK
-     fallbacks last; the terminal-native faces remain available behind Space
-     Mono. */
+  /* Noctalia's type scale (Pango sizes, base 14) and its spacing grid — these
+     four steps only, plus the 14-px card and panel padding. The families stay
+     the self-hosted Nothing faces: Noctalia asks for Noto Sans, a system font,
+     and a local tool must not depend on one being installed. */
+  --fs-mini: 11px;
+  --fs-caption: 13px;
+  --fs-body: 14px;
+  --fs-title: 16px;
+  --fs-header: 20px;
+  --s-xs: 4px;
+  --s-sm: 8px;
+  --s-md: 12px;
+  --s-lg: 16px;
+  --pad: 14px;
   --font-mono: 'Space Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Noto Sans Mono', 'DejaVu Sans Mono', Consolas, 'Liberation Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
 }
 

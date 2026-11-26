@@ -21,25 +21,22 @@
    -------------------------------------------------------------------------- */
 
 /**
- * Die Standardkurve (`cubic-bezier(0.2, 0, 0, 1)`): sanfter Beginn, die
- * Strecke liegt in der Mitte. Kurvenprofil — Strecke in Prozent nach 5 / 10 /
- * 20 / 40 / 60 % der Zeit: 3 / 16 / 50 / 80 / 93. Kein Überschwinger, deshalb
- * dürfen Text und Symbole mit ihr fahren. Sie ist für die kurzen Wege gedacht —
- * Hover, Zustandswechsel, Backdrop: bei 120 ms ist der leise Beginn nicht als
- * Verzögerung zu sehen.
+ * Die Standardkurve (`cubic-bezier(0.33, 0.66, 0.66, 1)`): Noctalias Default,
+ * die CSS-Näherung der EaseOutQuad `t(2−t)`. Sanfter Beginn, die Strecke liegt
+ * in der Mitte, kein Überschwinger — deshalb dürfen Text und Symbole mit ihr
+ * fahren. Sie ist für die kurzen Wege gedacht: Hover, Zustandswechsel,
+ * Backdrop.
  */
-export const EASE_STANDARD = [0.2, 0, 0, 1] as const;
+export const EASE_STANDARD = [0.33, 0.66, 0.66, 1] as const;
 
 /**
  * Die betonte Kurve für Flächen, die weit fahren: Panels, Dialoge, Karten,
- * Schubladen (`cubic-bezier(0.16, 1, 0.3, 1)`). Sie fährt sofort los — 28 %
- * der Strecke nach 5 % der Zeit, 49 % nach 10 % — und hat danach eine lange
+ * Schubladen (`cubic-bezier(0.33, 1, 0.68, 1)`). Noctalia benutzt diese
+ * EaseOutCubic für weite Wege — sie fährt sofort los und hat danach eine lange
  * Bremse. Das ist der Unterschied, der zählt: eine 470-px-Karte, die 40 ms
- * lang kaum anfährt, liest sich als Verzögerung, und 220 ms sind lang genug,
- * dass man diese 40 ms sieht. Ein 120-ms-Hover sieht sie nicht, deshalb
- * bleiben sich die beiden Kurven dort auch nicht in die Quere.
+ * lang kaum anfährt, liest sich als Verzögerung.
  */
-export const EASE_EMPHASIZED = [0.16, 1, 0.3, 1] as const;
+export const EASE_EMPHASIZED = [0.33, 1, 0.68, 1] as const;
 
 /**
  * Die Abgangskurve: beschleunigt weg (`cubic-bezier(0.4, 0, 1, 1)`).
@@ -52,28 +49,28 @@ export const EASE_EXIT = [0.4, 0, 1, 1] as const;
    Dauern
    -------------------------------------------------------------------------- */
 
-/** Hover und Zustandswechsel: 120 ms, dieselben wie `--duration-hover`. */
-export const DURATION_HOVER = 0.12;
+/** Hover und Zustandswechsel: 100 ms, Noctalias `fast`, wie `--duration-hover`. */
+export const DURATION_HOVER = 0.1;
 
 /**
- * Kleine Flächen, die auftreten: Menüs, Popover, Backdrops. 180 ms liegt in
- * der Mitte des 160–240-ms-Fensters, in dem ein Einblenden als sofort und
- * nicht als Verzögerung gelesen wird.
+ * Kleine Flächen, die auftreten: Menüs, Popover, Backdrops. 200 ms ist
+ * Noctalias `base` und liegt im 160–240-ms-Fenster, in dem ein Einblenden als
+ * sofort und nicht als Verzögerung gelesen wird.
  */
-export const DURATION_ENTER = 0.18;
+export const DURATION_ENTER = 0.2;
 
 /**
- * Große Flächen, die auftreten: Panels, Dialoge, Karten. 220 ms, das obere
- * Ende desselben Fensters — eine große Fläche darf etwas länger brauchen als
- * ein Menü, sonst springt sie ins Bild.
+ * Große Flächen, die auftreten: Panels, Dialoge, Karten. 400 ms ist Noctalias
+ * `slow`; eine große Fläche darf länger brauchen als ein Menü, sonst springt
+ * sie ins Bild.
  */
-export const DURATION_ENTER_PANEL = 0.22;
+export const DURATION_ENTER_PANEL = 0.4;
 
 /**
- * Alles, was verschwindet: 140 ms, deutlich unter dem Auftritt. Der Abgang
- * muss nicht erklärt werden, er soll nur nicht schneiden.
+ * Alles, was verschwindet: 100 ms, Noctalias `fast` — der Abgang bleibt
+ * deutlich unter dem Auftritt, er soll nur nicht schneiden.
  */
-export const DURATION_EXIT = 0.14;
+export const DURATION_EXIT = 0.1;
 
 /**
  * Die eine Ausnahme: die Rückweisung auf der Login-Seite. Sie erzählt eine

@@ -564,7 +564,7 @@ export function CalendarView() {
               cursor: "pointer",
               border: "1px solid var(--accent)",
               background: "var(--accent)",
-              color: "var(--bg)",
+              color: "var(--accent-fg, var(--bg))",
               fontFamily: "inherit",
               whiteSpace: "nowrap",
               flexShrink: 0,

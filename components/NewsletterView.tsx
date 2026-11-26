@@ -151,7 +151,7 @@ const primaryButton = {
   cursor: "pointer",
   border: "1px solid var(--accent)",
   background: "var(--accent)",
-  color: "var(--bg)",
+  color: "var(--accent-fg, var(--bg))",
   borderRadius: 7,
 } as const;
 
